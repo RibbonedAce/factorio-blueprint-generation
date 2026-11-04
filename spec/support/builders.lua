@@ -101,13 +101,18 @@ end
 --   pole_supply_radius   default 2.5
 --   pole_wire_reach      default 7.5
 --   machine_needs_power  default false
----@param options? {pole_supply_radius?: number, pole_wire_reach?: number, machine_needs_power?: boolean}
+--   machine_size         tiles wide and tall, default 2
+---@param options? {pole_supply_radius?: number, pole_wire_reach?: number, machine_needs_power?: boolean, machine_size?: integer}
 ---@return table<string, bpgen.CatalogEntry>
 function builders.a_catalog(options)
   options = options or {}
   local names = builders.NAMES
   return {
-    [names.machine] = {kind = "machine", width = 2, height = 2, needs_power = options.machine_needs_power or false},
+    [names.machine] = {
+      kind = "machine",
+      width = options.machine_size or 2, height = options.machine_size or 2,
+      needs_power = options.machine_needs_power or false,
+    },
     [names.belt] = {kind = "belt", width = 1, height = 1},
     [names.inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true},
     [names.pole] = {
@@ -145,19 +150,33 @@ function builders.a_recipe(options)
   }
 end
 
+-- A crafting machine prototype, for `fake_prototypes{machines = ...}`.
+-- `crafting_speed = false` makes an entity that cannot craft.
+--     a_machine{crafting_speed = 0.5, size = 3}
+---@param options {crafting_speed: number|false, size: integer, height?: integer}  `height` defaults to `size`; give it for a machine that is not square
+---@return table
+function builders.a_machine(options)
+  return {crafting_speed = options.crafting_speed, width = options.size, height = options.height or options.size}
+end
+
 -- A stand-in for the game's `prototypes` table. What exists is what the test
 -- says: no recipe is there unless the test lists it.
 --
 -- Options (all optional):
---   recipes           recipes by name, each made with `a_recipe`; default none
---   furnace_speed     the stone furnace's crafting speed, default 1;
---                     `false` makes it an entity that cannot craft
---   belt_speed        the transport belt's speed, default 0.03125;
---                     `false` makes it an entity without a belt speed
---   missing_entities  names of buildings the game does not have, default none
+--   recipes                 recipes by name, each made with `a_recipe`; default none
+--   furnace_speed           the stone furnace's crafting speed, default 1;
+--                           `false` makes it an entity that cannot craft
+--   machines                other crafting machines by name, each made with `a_machine`
+--                           (the stone furnace is always there, 2 x 2); default none
+--   belt_speed              the transport belt's speed, default 0.03125;
+--                           `false` makes it an entity without a belt speed
+--   inserter_rotation_speed the inserter's rotation speed, default 0.014 (the basic
+--                           inserter, 50.4 items a minute); `false` makes it an
+--                           entity that is not an inserter
+--   missing_entities        names of buildings the game does not have, default none
 -- The buildings the layout uses (furnace, belt, inserter, pole) exist unless
 -- listed as missing. Every item a recipe mentions exists, and so does coal, the fuel.
----@param options? {recipes?: table<string, table>, furnace_speed?: number|false, belt_speed?: number|false, missing_entities?: string[]}
+---@param options? {recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, missing_entities?: string[]}
 ---@return table  a stand-in for the game's `prototypes`
 function builders.fake_prototypes(options)
   options = options or {}
@@ -169,12 +188,17 @@ function builders.fake_prototypes(options)
   end
   local furnace_speed = option(options.furnace_speed, 1)
   local belt_speed = option(options.belt_speed, 0.03125)
+  local rotation_speed = option(options.inserter_rotation_speed, 0.014)
 
-  local function entity(name, crafting_speed, speed)
+  local function entity(name, fields)
+    fields = fields or {}
     return {
       localised_name = {"entity-name." .. name},
-      get_crafting_speed = function() return crafting_speed or nil end,
-      belt_speed = speed or nil,
+      get_crafting_speed = function() return fields.crafting_speed or nil end,
+      get_inserter_rotation_speed = function() return fields.rotation_speed or nil end,
+      belt_speed = fields.belt_speed or nil,
+      tile_width = fields.width or 1,
+      tile_height = fields.height or 1,
     }
   end
   local function item(name)
@@ -182,11 +206,14 @@ function builders.fake_prototypes(options)
   end
 
   local entities = {
-    ["stone-furnace"] = entity("stone-furnace", furnace_speed, nil),
-    ["transport-belt"] = entity("transport-belt", nil, belt_speed),
-    ["inserter"] = entity("inserter", nil, nil),
-    ["small-electric-pole"] = entity("small-electric-pole", nil, nil),
+    ["stone-furnace"] = entity("stone-furnace", {crafting_speed = furnace_speed, width = 2, height = 2}),
+    ["transport-belt"] = entity("transport-belt", {belt_speed = belt_speed}),
+    ["inserter"] = entity("inserter", {rotation_speed = rotation_speed}),
+    ["small-electric-pole"] = entity("small-electric-pole"),
   }
+  for name, machine in pairs(options.machines or {}) do
+    entities[name] = entity(name, machine)
+  end
   for _, name in ipairs(options.missing_entities or {}) do
     entities[name] = nil
   end

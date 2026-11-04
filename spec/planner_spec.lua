@@ -177,6 +177,76 @@ describe("planner", function()
     end)
   end)
 
+  describe("plan, with inserters that limit how fast a machine can be fed and emptied", function()
+    it("needs one inserter on each side for a recipe far below an inserter's throughput", function()
+      local recipe = {energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
+      local inserters = {items_per_minute = 50, max_per_side = 3}
+
+      local plan = planner.plan("iron-plate", 18.75, recipe, 1, 450, inserters)
+
+      assert.are.equal(1, plan.input_inserters) -- 18.75 ore a minute
+      assert.are.equal(1, plan.output_inserters) -- 18.75 plates a minute
+    end)
+
+    it("needs more inserters on the busier side: three in and two out for a machine that eats 120 and makes 60", function()
+      local recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+      local inserters = {items_per_minute = 50, max_per_side = 3}
+
+      local plan = planner.plan("iron-gear-wheel", 60, recipe, 0.5, 450, inserters)
+
+      assert.are.equal(3, plan.input_inserters) -- 60 x 0.5 / 0.5 = 60 crafts x 2 plates = 120; 120 / 50 = 2.4, rounded up
+      assert.are.equal(2, plan.output_inserters) -- 60 gears; 60 / 50 = 1.2, rounded up
+    end)
+
+    it("does not add an inserter because of float noise in an exact fit", function()
+      local recipe = {energy = 0.35, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+      local inserters = {items_per_minute = 60, max_per_side = 3}
+
+      local plan = planner.plan("iron-gear-wheel", 60, recipe, 0.35, 450, inserters)
+
+      assert.are.equal(2, plan.input_inserters) -- 120 plates a minute, written by the computer as 120.00000000000001
+    end)
+
+    it("refuses when the inserters needed on a side do not fit around the machine", function()
+      local recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+      local inserters = {items_per_minute = 50, max_per_side = 2}
+
+      local plan, reason = planner.plan("iron-gear-wheel", 60, recipe, 0.5, 450, inserters)
+
+      assert.is_nil(plan)
+      assert.are.equal("inserters-do-not-fit", reason) -- 3 input inserters are needed, 2 fit
+    end)
+
+    it("refuses when only the output side needs more inserters than fit", function()
+      local recipe = {energy = 1, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(4, "iron-plate")}}
+      local inserters = {items_per_minute = 100, max_per_side = 2}
+
+      local plan, reason = planner.plan("iron-plate", 60, recipe, 1, 450, inserters)
+
+      assert.is_nil(plan)
+      assert.are.equal("inserters-do-not-fit", reason) -- 60 in needs 1 inserter, 240 out needs 3, 2 fit
+    end)
+
+    it("counts one inserter per side when no inserter limit is given", function()
+      local recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+      local plan = planner.plan("iron-gear-wheel", 60, recipe, 0.5, 450)
+
+      assert.are.equal(1, plan.input_inserters)
+      assert.are.equal(1, plan.output_inserters)
+    end)
+  end)
+
+  describe("inserter_items_per_minute", function()
+    it("gives about 50 items a minute for the basic inserter's rotation speed of 0.014", function()
+      local basic_rotation_speed = 0.014
+
+      local per_minute = planner.inserter_items_per_minute(basic_rotation_speed)
+
+      assert.near(50.4, per_minute, 1e-6) -- 0.014 swings a tick x 60 ticks x 60 seconds, one item a swing
+    end)
+  end)
+
   describe("lane_items_per_minute", function()
     it("gives 450 items a minute per lane for a belt of speed 0.03125", function()
       local standard_belt_speed = 0.03125

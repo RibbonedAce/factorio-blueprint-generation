@@ -21,11 +21,13 @@ local config = {
   },
 
   -- What can be generated: the product item, and how it is made.
-  -- `recipe` and `machine` are prototype names; `fuel` is the item the machine burns.
+  -- `recipe` and `machine` are prototype names; `fuel` is the item the machine burns
+  -- (leave it out for an electric machine).
   products = {
     ["iron-plate"] = {recipe = "iron-plate", machine = "stone-furnace", fuel = "coal"},
     ["copper-plate"] = {recipe = "copper-plate", machine = "stone-furnace", fuel = "coal"},
     ["stone-brick"] = {recipe = "stone-brick", machine = "stone-furnace", fuel = "coal"},
+    ["iron-gear-wheel"] = {recipe = "iron-gear-wheel", machine = "assembling-machine-1"}, -- electric: no fuel
   },
 
   -- The item already picked when the window opens.

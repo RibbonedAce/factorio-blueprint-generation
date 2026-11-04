@@ -80,55 +80,64 @@ end
 describe("layout", function()
   describe("how many of each thing", function()
     it("gives three furnaces three furnaces", function()
-      local entities = layout.build(3, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(3, NAMES, shape)
 
       assert.are.equal(3, count_named(entities, NAMES.machine))
     end)
 
     it("gives three furnaces eleven belts: six for the output, five for the input that stops at the last inserter", function()
-      local entities = layout.build(3, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(3, NAMES, shape)
 
       assert.are.equal(11, count_named(entities, NAMES.belt)) -- 3 furnaces x 2 rows = 6 output; the last inserter is in row 4, so 5 input
     end)
 
     it("gives three furnaces six inserters, one in and one out each", function()
-      local entities = layout.build(3, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(3, NAMES, shape)
 
       assert.are.equal(6, count_named(entities, NAMES.inserter))
     end)
 
     it("gives one furnace two poles, one on each side", function()
-      local entities = layout.build(1, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(1, NAMES, shape)
 
       assert.are.equal(2, count_named(entities, NAMES.pole))
     end)
 
     it("lets two furnaces share their poles, so they still need only two", function()
-      local entities = layout.build(2, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(2, NAMES, shape)
 
       assert.are.equal(2, count_named(entities, NAMES.pole))
     end)
 
     it("needs a new pair of poles for a third furnace", function()
-      local entities = layout.build(3, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(3, NAMES, shape)
 
       assert.are.equal(4, count_named(entities, NAMES.pole))
     end)
 
     it("needs six poles for five furnaces", function()
-      local entities = layout.build(5, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(5, NAMES, shape)
 
       assert.are.equal(6, count_named(entities, NAMES.pole))
     end)
 
     it("makes exactly 24 entities for three furnaces, with nothing else added", function()
-      local entities = layout.build(3, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(3, NAMES, shape)
 
       assert.are.equal(24, #entities) -- 3 furnaces + 11 belts + 6 inserters + 4 poles
     end)
 
     it("numbers the entities 1 to n in order, one number each", function()
-      local entities = layout.build(1, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(1, NAMES, shape)
 
       local numbers = {}
       for _, entity in ipairs(entities) do
@@ -140,7 +149,8 @@ describe("layout", function()
 
   describe("where things stand", function()
     it("makes the output belt four tiles long for two furnaces and the input belt three, ending at the last input inserter", function()
-      local entities = layout.build(2, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(2, NAMES, shape)
 
       local belts = entities_named(entities, NAMES.belt)
 
@@ -151,7 +161,8 @@ describe("layout", function()
     end)
 
     it("makes the input belt a single tile for one furnace, level with its input inserter", function()
-      local entities = layout.build(1, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(1, NAMES, shape)
 
       local belts = entities_named(entities, NAMES.belt)
 
@@ -162,7 +173,8 @@ describe("layout", function()
     end)
 
     it("makes every belt run south", function()
-      local entities = layout.build(1, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(1, NAMES, shape)
 
       local belts = entities_named(entities, NAMES.belt)
 
@@ -171,7 +183,8 @@ describe("layout", function()
     end)
 
     it("reads input belt, input inserter, furnace, output inserter, output belt along the first furnace's top row", function()
-      local entities = layout.build(1, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(1, NAMES, shape)
 
       assert.are.equal(NAMES.belt, name_at(entities, 0, 0))
       assert.are.equal(NAMES.inserter, name_at(entities, 1, 0))
@@ -181,14 +194,16 @@ describe("layout", function()
     end)
 
     it("puts the second furnace two tiles below the first", function()
-      local entities = layout.build(2, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(2, NAMES, shape)
 
       assert.are.equal(NAMES.machine, name_at(entities, 2, 0, 2))
       assert.are.equal(NAMES.machine, name_at(entities, 2, 2, 2))
     end)
 
     it("makes both inserters face west, picking up from the west and dropping to the east", function()
-      local entities = layout.build(1, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(1, NAMES, shape)
 
       local input_direction = direction_at(entities, 1, 0) -- picks up from the input belt, drops into the furnace
       local output_direction = direction_at(entities, 4, 0) -- picks up from the furnace, drops onto the output belt
@@ -198,7 +213,8 @@ describe("layout", function()
     end)
 
     it("puts poles in the free tile below each inserter, for every second furnace", function()
-      local entities = layout.build(3, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(3, NAMES, shape)
 
       local poles = entities_named(entities, NAMES.pole)
 
@@ -211,24 +227,164 @@ describe("layout", function()
 
   describe("wires", function()
     it("joins one furnace's two poles with a single wire", function()
-      local entities = layout.build(1, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(1, NAMES, shape)
 
       assert.are.equal(1, count_wires(entities))
     end)
 
     it("joins four poles with three wires: one down each side and one across the top", function()
-      local entities = layout.build(3, NAMES)
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(3, NAMES, shape)
 
       assert.are.equal(3, count_wires(entities))
     end)
   end)
 
+  describe("a 3x3 machine fed by three inserters and emptied by two", function()
+    it("puts the machine's three input inserters in the machine's three rows, west of it", function()
+      local shape = {machine_size = 3, input_inserters = 3, output_inserters = 2}
+
+      local entities = layout.build(1, NAMES, shape)
+
+      assert.are.equal(NAMES.machine, name_at(entities, 2, 1, 3)) -- the machine starts below the top row of poles
+      assert.are.equal(NAMES.inserter, name_at(entities, 1, 1))
+      assert.are.equal(NAMES.inserter, name_at(entities, 1, 2))
+      assert.are.equal(NAMES.inserter, name_at(entities, 1, 3))
+    end)
+
+    it("puts two output inserters in the machine's first two rows, east of it", function()
+      local shape = {machine_size = 3, input_inserters = 3, output_inserters = 2}
+
+      local entities = layout.build(1, NAMES, shape)
+
+      assert.are.equal(NAMES.inserter, name_at(entities, 5, 1))
+      assert.are.equal(NAMES.inserter, name_at(entities, 5, 2))
+      assert.is_nil(name_at(entities, 5, 3))
+    end)
+
+    it("separates machines with a row of poles, because the inserters leave no free tile beside a machine", function()
+      local shape = {machine_size = 3, input_inserters = 3, output_inserters = 2}
+
+      local entities = layout.build(2, NAMES, shape)
+
+      local poles = entities_named(entities, NAMES.pole)
+      assert.are.same({
+        {x = 1, y = 0}, {x = 5, y = 0}, -- above the first machine
+        {x = 1, y = 4}, {x = 5, y = 4}, -- between the machines
+        {x = 1, y = 8}, {x = 5, y = 8}, -- below the second machine
+      }, tiles_of(poles))
+    end)
+
+    it("starts the second machine one row below the pole row that follows the first", function()
+      local shape = {machine_size = 3, input_inserters = 3, output_inserters = 2}
+
+      local entities = layout.build(2, NAMES, shape)
+
+      assert.are.equal(NAMES.machine, name_at(entities, 2, 1, 3))
+      assert.are.equal(NAMES.machine, name_at(entities, 2, 5, 3))
+    end)
+
+    it("runs the input belt from the first machine's top row to the last input inserter, and the output belt to the bottom pole row", function()
+      local shape = {machine_size = 3, input_inserters = 3, output_inserters = 2}
+
+      local entities = layout.build(2, NAMES, shape)
+
+      local belts = entities_named(entities, NAMES.belt)
+      assert.are.same({
+        {x = 0, y = 1}, {x = 0, y = 2}, {x = 0, y = 3}, {x = 0, y = 4}, {x = 0, y = 5}, {x = 0, y = 6}, {x = 0, y = 7}, -- last input inserter is in row 7
+        {x = 6, y = 1}, {x = 6, y = 2}, {x = 6, y = 3}, {x = 6, y = 4}, {x = 6, y = 5}, {x = 6, y = 6}, {x = 6, y = 7}, {x = 6, y = 8},
+      }, tiles_of(belts))
+    end)
+
+    it("makes every inserter face west, picking up from the west", function()
+      local shape = {machine_size = 3, input_inserters = 3, output_inserters = 2}
+
+      local entities = layout.build(1, NAMES, shape)
+
+      local inserters = entities_named(entities, NAMES.inserter)
+      local west = defines.direction.west
+      assert.are.same({west, west, west, west, west}, directions_of(inserters))
+    end)
+  end)
+
+  describe("a 3x3 machine with a free tile beside it, fed by two inserters and emptied by one", function()
+    it("puts each side's pole in the first free tile after that side's inserters", function()
+      local shape = {machine_size = 3, input_inserters = 2, output_inserters = 1}
+
+      local entities = layout.build(2, NAMES, shape)
+
+      local poles = entities_named(entities, NAMES.pole)
+      assert.are.same({
+        {x = 1, y = 2}, -- after the two input inserters in rows 0 and 1
+        {x = 5, y = 1}, -- after the one output inserter in row 0
+      }, tiles_of(poles)) -- one pair serves both machines
+    end)
+  end)
+
+  describe("supports_machine_size", function()
+    it("supports machines 2 and 3 tiles wide", function()
+      assert.is_true(layout.supports_machine_size(2))
+      assert.is_true(layout.supports_machine_size(3))
+    end)
+
+    it("does not support machines 1 or 4 tiles wide, whose poles would not reach", function()
+      assert.is_false(layout.supports_machine_size(1))
+      assert.is_false(layout.supports_machine_size(4))
+    end)
+  end)
+
   describe("the whole blueprint, checked by the generic validator", function()
+    for _, machine_count in ipairs({1, 2, 3, 4, 5, 24}) do
+      it("passes the validator for " .. machine_count .. " powered 3x3 machines with a pole row between them", function()
+        local shape = {machine_size = 3, input_inserters = 3, output_inserters = 2}
+        local powered_catalog = builders.a_catalog{machine_size = 3, machine_needs_power = true}
+
+        local entities = layout.build(machine_count, NAMES, shape)
+        local problems = validator.validate(entities, powered_catalog)
+
+        assert.are.same({}, problems)
+      end)
+
+      it("passes the validator for " .. machine_count .. " powered 3x3 machines fed by two inserters and emptied by three", function()
+        local shape = {machine_size = 3, input_inserters = 2, output_inserters = 3}
+        local powered_catalog = builders.a_catalog{machine_size = 3, machine_needs_power = true}
+
+        local entities = layout.build(machine_count, NAMES, shape)
+        local problems = validator.validate(entities, powered_catalog)
+
+        assert.are.same({}, problems)
+      end)
+
+      it("passes the validator for " .. machine_count .. " powered 3x3 machines with free tiles beside them", function()
+        local shape = {machine_size = 3, input_inserters = 2, output_inserters = 1}
+        local powered_catalog = builders.a_catalog{machine_size = 3, machine_needs_power = true}
+
+        local entities = layout.build(machine_count, NAMES, shape)
+        local problems = validator.validate(entities, powered_catalog)
+
+        assert.are.same({}, problems)
+      end)
+
+      it("passes the validator for " .. machine_count .. " powered 2x2 machines with two inserters on each side", function()
+        local shape = {machine_size = 2, input_inserters = 2, output_inserters = 2}
+        local powered_catalog = builders.a_catalog{machine_size = 2, machine_needs_power = true}
+
+        local entities = layout.build(machine_count, NAMES, shape)
+        local problems = validator.validate(entities, powered_catalog)
+
+        assert.are.same({}, problems)
+      end)
+    end
+  end)
+
+  describe("the whole blueprint of furnaces, checked by the generic validator", function()
     for _, furnace_count in ipairs({1, 2, 3, 4, 5, 24}) do
       it("passes the validator for " .. furnace_count .. " furnaces", function()
         local small_pole_catalog = builders.a_catalog{pole_supply_radius = 2.5, pole_wire_reach = 7.5}
 
-        local entities = layout.build(furnace_count, NAMES)
+        local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+        local entities = layout.build(furnace_count, NAMES, shape)
         local problems = validator.validate(entities, small_pole_catalog)
 
         assert.are.same({}, problems)

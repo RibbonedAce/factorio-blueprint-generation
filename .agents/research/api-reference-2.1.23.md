@@ -114,3 +114,8 @@ Source: `runtime-api.json` and `prototype-api.json`, supplied by the owner on 20
 - Poles: `get_supply_area_distance(quality?)` and `get_max_wire_distance(quality?)` exist on `LuaEntityPrototype`. In the prototype stage, `supply_area_distance` is the "radius" (3.5 means a 7x7 area) and `maximum_wire_distance` is the wire reach in tiles.
 - Inserters: `LuaEntityPrototype` has `inserter_pickup_position` and `inserter_drop_position` (vectors), and `LuaEntity` has `pickup_position` and `drop_position`. The docs do not say which side an inserter's `direction` refers to. **Unverified (memory):** the direction is the side it picks up from. The generator relies on this; see `../project-status.md`.
 - Blueprint wires: `BlueprintEntity.wires` is described only as "wires connected to this entity in the blueprint", and a `BlueprintWire` is a four-entry tuple (source entity number, source connector, target entity number, target connector). Whether a wire appears on one entity or both is **unverified**. The generator lists each wire once, on the source entity.
+
+## Added 2026-10-31 (iron gear iteration)
+
+- **Verified** (`runtime-api.json` 2.1.23): `LuaEntityPrototype.tile_width` and `tile_height` (uint32); `get_inserter_rotation_speed(quality?)` and `get_inserter_extension_speed(quality?)` (optional double: nil when the entity is not an inserter); `inserter_stack_size_bonus` (optional); `get_crafting_speed(quality?)`.
+- **Unverified**: the unit of the rotation speed. The JSON gives no unit; the code assumes turns per tick (see `project-status.md`).

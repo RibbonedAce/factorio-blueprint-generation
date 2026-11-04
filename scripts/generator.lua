@@ -59,31 +59,62 @@ local function names_for(product)
   }
 end
 
+---@param names bpgen.Names
+---@return boolean
+local function all_entities_exist(names)
+  for _, entity_name in pairs(names) do
+    if not prototypes.entity[entity_name] then
+      return false
+    end
+  end
+  return true
+end
+
+-- The machine's size in tiles, when it is square (the layout only handles square machines).
+---@param machine LuaEntityPrototype
+---@return integer|nil
+local function square_size(machine)
+  if machine.tile_width == machine.tile_height then
+    return machine.tile_width
+  end
+  return nil
+end
+
 -- Everything about the game that generating needs, copied into plain values.
 -- Returns nil if something is missing (another mod could have removed or renamed
--- it): a building, the recipe, the machine's speed, or the belt's speed.
+-- it): a building, the recipe, the machine's speed, the belt's speed or the
+-- inserter's rotation speed.
 ---@class bpgen.GameData  the game values generating needs, as plain data
 ---@field recipe bpgen.Recipe
 ---@field machine_speed number
+---@field machine_size integer|nil  nil when the machine is not square
 ---@field belt_speed number
+---@field inserter_rotation_speed number
 
 ---@param product bpgen.Product
 ---@param names bpgen.Names
 ---@return bpgen.GameData|nil
 local function read_game_data(product, names)
-  for _, entity_name in pairs(names) do
-    if not prototypes.entity[entity_name] then
-      return nil
-    end
-  end
-  local recipe = read_recipe(product.recipe)
-  local machine_speed = prototypes.entity[names.machine].get_crafting_speed()
-  -- `belt_speed` is nil unless the entity really is a transport belt.
-  local belt_speed = prototypes.entity[names.belt].belt_speed
-  if not recipe or not machine_speed or not belt_speed then
+  if not all_entities_exist(names) then
     return nil
   end
-  return {recipe = recipe, machine_speed = machine_speed, belt_speed = belt_speed}
+  local machine = prototypes.entity[names.machine]
+  local recipe = read_recipe(product.recipe)
+  local machine_speed = machine.get_crafting_speed()
+  -- `belt_speed` is nil unless the entity really is a transport belt, and
+  -- the rotation speed is nil unless it really is an inserter.
+  local belt_speed = prototypes.entity[names.belt].belt_speed
+  local rotation_speed = prototypes.entity[names.inserter].get_inserter_rotation_speed()
+  if not (recipe and machine_speed and belt_speed and rotation_speed) then
+    return nil
+  end
+  return {
+    recipe = recipe,
+    machine_speed = machine_speed,
+    machine_size = square_size(machine),
+    belt_speed = belt_speed,
+    inserter_rotation_speed = rotation_speed,
+  }
 end
 
 -- Why the planner said no, as a message for the player.
@@ -94,6 +125,9 @@ local function refusal_message(reason, max_rate)
   if reason == "rate-too-high" then
     ---@cast max_rate number -- the planner always gives it with this reason
     return error_message("error-rate-too-high", format_number(max_rate))
+  end
+  if reason == "inserters-do-not-fit" then
+    return error_message("error-inserters-do-not-fit")
   end
   return error_message("error-unsupported-recipe")
 end
@@ -108,22 +142,72 @@ local function describe_blueprint(item_name, product, plan)
 end
 
 -- The LocalisedString shown to the player when a blueprint is ready. The locale
--- entry fills __1__ to __8__ from the values below, in this order.
+-- entry fills __1__ to __7__ from the values below, in this order, and a
+-- machine that burns fuel adds the fuel as __8__ (a different entry, which also
+-- tells the player where the fuel goes).
 ---@param item_name string
 ---@param product bpgen.Product
 ---@param plan bpgen.Plan
 ---@param rate_per_minute number
 ---@return LocalisedString
 local function success_message(item_name, product, plan, rate_per_minute)
-  return {
-    "blueprint-generation.generated",
+  local message = {
+    product.fuel and "blueprint-generation.generated" or "blueprint-generation.generated-without-fuel",
     string.format("%d", plan.machines),
     prototypes.entity[product.machine].localised_name,
     format_number(plan.output_per_minute),
     prototypes.item[item_name].localised_name,
     format_number(rate_per_minute),
     prototypes.item[plan.ingredient].localised_name,
-    prototypes.item[product.fuel].localised_name,
+  }
+  if product.fuel then
+    message[#message + 1] = prototypes.item[product.fuel].localised_name
+  end
+  return message --[[@as LocalisedString]]
+end
+
+-- Ask the planner, with the limits the game data gives: the belt lane, and the
+-- inserters that feed and empty each machine. Returns the plan, or nil and the
+-- message for the player.
+---@param item_name string
+---@param rate_per_minute number
+---@param game bpgen.GameData
+---@param machine_size integer
+---@return bpgen.Plan|nil
+---@return LocalisedString|nil error_message
+local function make_plan(item_name, rate_per_minute, game, machine_size)
+  local inserters = {
+    items_per_minute = planner.inserter_items_per_minute(game.inserter_rotation_speed),
+    max_per_side = machine_size,
+  }
+  local plan, reason, max_rate = planner.plan(
+    item_name, rate_per_minute, game.recipe, game.machine_speed,
+    planner.lane_items_per_minute(game.belt_speed), inserters)
+  if not plan then
+    ---@cast reason string -- the planner always gives a reason when it gives no plan
+    return nil, refusal_message(reason, max_rate)
+  end
+  return plan, nil
+end
+
+-- Lay out the planned machines and word the results for the player.
+---@param item_name string
+---@param rate_per_minute number
+---@param product bpgen.Product
+---@param names bpgen.Names
+---@param plan bpgen.Plan
+---@param machine_size integer
+---@return bpgen.Generated
+local function assemble(item_name, rate_per_minute, product, names, plan, machine_size)
+  local shape = {
+    machine_size = machine_size,
+    input_inserters = plan.input_inserters,
+    output_inserters = plan.output_inserters,
+  }
+  return {
+    entities = layout.build(plan.machines, names, shape),
+    description = describe_blueprint(item_name, product, plan),
+    message = success_message(item_name, product, plan, rate_per_minute),
   }
 end
 
@@ -149,19 +233,17 @@ function generator.generate(item_name, rate_per_minute)
     return nil, error_message("error-missing-prototype")
   end
 
-  local lane_items_per_minute = planner.lane_items_per_minute(game.belt_speed)
-  local plan, reason, max_rate = planner.plan(
-    item_name, rate_per_minute, game.recipe, game.machine_speed, lane_items_per_minute)
-  if not plan then
-    ---@cast reason string -- the planner always gives a reason when it gives no plan
-    return nil, refusal_message(reason, max_rate)
+  local machine_size = game.machine_size
+  if not machine_size or not layout.supports_machine_size(machine_size) then
+    return nil, error_message("error-unsupported-machine")
   end
 
-  return {
-    entities = layout.build(plan.machines, names),
-    description = describe_blueprint(item_name, product, plan),
-    message = success_message(item_name, product, plan, rate_per_minute),
-  }
+  local plan, refusal = make_plan(item_name, rate_per_minute, game, machine_size)
+  if not plan then
+    return nil, refusal
+  end
+
+  return assemble(item_name, rate_per_minute, product, names, plan, machine_size)
 end
 
 return generator
