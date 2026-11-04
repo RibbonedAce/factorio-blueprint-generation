@@ -29,13 +29,27 @@
 
 ---@class bpgen.InserterLimits  what limits feeding and emptying a machine
 ---@field items_per_minute number  what one inserter moves
----@field max_per_side integer  how many inserters fit on one side of the machine
+---@field max_input integer  how many inserters the input side of a machine gets
+---@field max_output integer  how many inserters the output side of a machine gets
+
+---@class bpgen.PlanRequest  what the planner is asked
+---@field product string  item name the player wants
+---@field rate_per_minute number
+---@field recipe bpgen.Recipe
+---@field machine_speed number  the machine's crafting speed
+---@field lane_items_per_minute number  what one belt lane carries
+---@field fuel? string  item the machine burns; it takes one of the two input lanes
+---@field inserters? bpgen.InserterLimits  nil means no limit: one inserter a side, full speed
+
+---@class bpgen.PlanInput  how much of an ingredient all the machines eat
+---@field name string  item name
+---@field per_minute number
 
 ---@class bpgen.Plan  what the planner decided to build
 ---@field machines integer
 ---@field output_per_minute number
----@field ingredient string  item name
----@field ingredient_per_minute number
+---@field inputs bpgen.PlanInput[]  per ingredient, in the recipe's order
+---@field lanes string[]  the item on each of the input belt's two lanes
 ---@field input_inserters integer  per machine
 ---@field output_inserters integer  per machine
 

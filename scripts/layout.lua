@@ -36,6 +36,26 @@
 --        >      [M M M]      >       v         in, two out
 --        >      [M M M]              v
 --        P      row 4: poles, then machine 2 from row 5 ...
+--
+-- An inserter drops items on the far lane of a belt, so inserters on one side of a
+-- plain belt fill only one of its two lanes. A 3x3 machine with two output
+-- inserters (and no pole rows) gets a winding output belt instead, which lets
+-- each inserter fill a different lane (v > < are belts running south, east, west):
+--
+--   x:   0     1     2 3 4      5      6      7
+--      input input  machine  output inner  outer
+--      belt inserter (3x3)  inserter belt  belt
+--
+--        v     >    [M M M]     >      >      v    <- row 0: this inserter drops on the stub (>), which
+--        v     >    [M M M]     >      v      <       feeds the outer belt from the west: its west lane
+--        v     P    [M M M]     P      >      v    <- row 2: the inner belt joins the outer one again
+--
+-- The outer belt dips west in row 1, to pass the second inserter, which drops on
+-- the inner belt (v): the east lane of the belt. Every machine repeats these three
+-- rows, so the belt winds down the column and carries the product on both lanes.
+-- The first stub has no belt behind the outer tile it feeds, so it bends into it;
+-- the lane stays the same. The belt needs three rows per machine, which is exactly
+-- what a 3x3 machine takes, so it only works for size 3.
 
 local grid = require("scripts.grid")
 
@@ -50,8 +70,31 @@ local MACHINE_COLUMN = 2
 
 local MACHINES_PER_POLE = 2  -- a small pole's supply area covers two machines' inserters
 
+-- The output belt winds (see the diagram above) for machines of this size with this many output inserters.
+local WINDING_MACHINE_SIZE = 3
+local WINDING_OUTPUT_INSERTERS = 2
+
 -- Machines of these sizes (in tiles) can be powered by small poles placed as described above.
 local SUPPORTED_MACHINE_SIZES = {[2] = true, [3] = true}
+
+-- The most inserters the input side of a machine gets: one fewer than the machine
+-- is tall, so one tile beside the machine stays free for a pole. With every tile
+-- beside it taken by an inserter, the machines would have to be spaced apart with
+-- a row of poles between them (see "pole row" below).
+---@param machine_size integer
+---@return integer
+function layout.max_input_inserters(machine_size)
+  return machine_size - 1
+end
+
+-- The most inserters the output side gets: the same, but never more than the two
+-- that the winding output belt serves (one for each lane). More would need splitters
+-- or underground belts.
+---@param machine_size integer
+---@return integer
+function layout.max_output_inserters(machine_size)
+  return math.min(WINDING_OUTPUT_INSERTERS, machine_size - 1)
+end
 
 -- Whether `layout.build` can lay out a machine this many tiles wide and tall.
 ---@param machine_size integer|nil
@@ -64,7 +107,7 @@ end
 ---@class bpgen.Shape
 ---@field machine_size integer  tiles wide and tall; see `supports_machine_size`
 ---@field input_inserters integer  per machine, at most `machine_size`
----@field output_inserters integer  per machine, at most `machine_size`
+---@field output_inserters integer  per machine, at most `machine_size`; a 3x3 machine with two (and no pole rows) gets a winding output belt
 
 -- Where things go, worked out once from the shape.
 ---@class bpgen.Geometry
@@ -72,22 +115,36 @@ end
 ---@field input_count integer  input inserters per machine
 ---@field output_count integer  output inserters per machine
 ---@field output_inserter_column integer
----@field output_belt_column integer
+---@field output_belt_column integer  the belt the product leaves on: the outer one when the belt winds
+---@field output_winds boolean  the output belt winds, so its two lanes both carry product
 ---@field has_pole_rows boolean  machines are separated by rows of poles
 ---@field first_row integer  tile row of the first machine's top edge, which is also where the belts start
 ---@field spacing integer  rows from one machine's top edge to the next
+
+-- Whether the output belt winds: only for a 3x3 machine with two output
+-- inserters, and not when pole rows take the rows the belt needs.
+---@param shape bpgen.Shape
+---@param has_pole_rows boolean
+---@return boolean
+local function winds_output(shape, has_pole_rows)
+  return not has_pole_rows
+    and shape.machine_size == WINDING_MACHINE_SIZE
+    and shape.output_inserters == WINDING_OUTPUT_INSERTERS
+end
 
 ---@param shape bpgen.Shape
 ---@return bpgen.Geometry
 local function geometry_of(shape)
   local size = shape.machine_size
   local has_pole_rows = math.max(shape.input_inserters, shape.output_inserters) >= size
+  local output_winds = winds_output(shape, has_pole_rows)
   return {
     size = size,
     input_count = shape.input_inserters,
     output_count = shape.output_inserters,
     output_inserter_column = MACHINE_COLUMN + size,
-    output_belt_column = MACHINE_COLUMN + size + 1,
+    output_belt_column = MACHINE_COLUMN + size + (output_winds and 2 or 1),
+    output_winds = output_winds,
     has_pole_rows = has_pole_rows,
     first_row = has_pole_rows and 1 or 0,
     spacing = has_pole_rows and size + 1 or size,
@@ -134,6 +191,15 @@ local function new_blueprint()
   return blueprint
 end
 
+---@param blueprint bpgen.Blueprint
+---@param names bpgen.Names
+---@param column integer  tile column
+---@param row integer  tile row
+---@param direction defines.direction  the way the belt runs
+local function add_belt(blueprint, names, column, row, direction)
+  blueprint.add({name = names.belt, position = grid.position(column, row), direction = direction})
+end
+
 -- A run of belt tiles down one column of the layout, running south.
 ---@param blueprint bpgen.Blueprint
 ---@param column integer  tile column
@@ -142,14 +208,35 @@ end
 ---@param names bpgen.Names
 local function add_belt_column(blueprint, column, first_row, length, names)
   for row = first_row, first_row + length - 1 do
-    blueprint.add({name = names.belt, position = grid.position(column, row), direction = defines.direction.south})
+    add_belt(blueprint, names, column, row, defines.direction.south)
+  end
+end
+
+-- The winding output belt (see the diagram at the top): three rows per machine,
+-- the inner column beside the output inserters and the outer column one further out.
+---@param blueprint bpgen.Blueprint
+---@param geometry bpgen.Geometry
+---@param machine_count integer
+---@param names bpgen.Names
+local function add_winding_output_belt(blueprint, geometry, machine_count, names)
+  local direction = defines.direction
+  local inner = geometry.output_inserter_column + 1
+  local outer = geometry.output_belt_column
+  for index = 0, machine_count - 1 do
+    local top = machine_top(geometry, index)
+    add_belt(blueprint, names, inner, top, direction.east)
+    add_belt(blueprint, names, inner, top + 1, direction.south)
+    add_belt(blueprint, names, inner, top + 2, direction.east)
+    add_belt(blueprint, names, outer, top, direction.south)
+    add_belt(blueprint, names, outer, top + 1, direction.west)
+    add_belt(blueprint, names, outer, top + 2, direction.south)
   end
 end
 
 -- Both belts run south (down the page), from the first machine's top row. The
 -- output belt keeps the full height of the column, so the products have somewhere
--- to go. The input belt stops at the last input inserter: nothing below it would
--- be picked up.
+-- to go (and winds, for two output inserters on a 3x3 machine). The input belt
+-- stops at the last input inserter: nothing below it would be picked up.
 ---@param blueprint bpgen.Blueprint
 ---@param geometry bpgen.Geometry
 ---@param machine_count integer
@@ -158,8 +245,12 @@ local function add_belts(blueprint, geometry, machine_count, names)
   local first_row = geometry.first_row
   local last_input_row = machine_top(geometry, machine_count - 1) + geometry.input_count - 1
   add_belt_column(blueprint, INPUT_BELT_COLUMN, first_row, last_input_row - first_row + 1, names)
-  local end_row = machine_top(geometry, machine_count) -- one past the last row of the column
-  add_belt_column(blueprint, geometry.output_belt_column, first_row, end_row - first_row, names)
+  if geometry.output_winds then
+    add_winding_output_belt(blueprint, geometry, machine_count, names)
+  else
+    local end_row = machine_top(geometry, machine_count) -- one past the last row of the column
+    add_belt_column(blueprint, geometry.output_belt_column, first_row, end_row - first_row, names)
+  end
 end
 
 -- `count` inserters in a column, one under the next, from row `top`. An inserter's

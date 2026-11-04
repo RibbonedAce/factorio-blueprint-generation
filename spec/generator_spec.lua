@@ -6,7 +6,8 @@
 -- belt speeds its numbers depend on. A furnace of speed 1 on a 3.2 s recipe makes
 -- 60 / 3.2 = 18.75 items a minute. Which items can be generated is decided by
 -- scripts/config.lua, so the tests use `iron-plate` and `stone-brick` for the two
--- recipe shapes; the shapes, not the names, are what is being tested.
+-- recipe shapes; the shapes, not the names, are what is being tested. The electric
+-- shapes (no fuel) use `iron-gear-wheel`, the one electric product, as a label.
 --
 -- Busted runs each spec file in its own sandbox, where a plain assignment would
 -- only be visible inside the spec. The generator reads the REAL global
@@ -206,22 +207,11 @@ describe("generator", function()
     end)
   end)
 
-  describe("a recipe made in an electric machine, on the iron gear wheel's shape", function()
+  describe("a recipe made in an electric machine, with its one ingredient on both input lanes", function()
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
     local assembler = a_machine{crafting_speed = 0.5, size = 3}
 
-    it("needs two assembling machines for 100 items a minute", function()
-      _G.prototypes = fake_prototypes{
-        machines = {["assembling-machine-1"] = assembler},
-        recipes = {["iron-gear-wheel"] = gear},
-      }
-
-      local result = generator.generate("iron-gear-wheel", 100)
-
-      assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- 100 / (0.5 speed x 2 crafts a second x 60)
-    end)
-
-    it("places three input and two output inserters beside each machine, from the inserter's speed", function()
+    it("needs two assembling machines for 100 items a minute, because two inserters feed each at 100.8 of the 120 plates it could eat", function()
       _G.prototypes = fake_prototypes{
         inserter_rotation_speed = 0.014, -- 50.4 items a minute
         machines = {["assembling-machine-1"] = assembler},
@@ -230,10 +220,10 @@ describe("generator", function()
 
       local result = generator.generate("iron-gear-wheel", 100)
 
-      assert.are.equal(10, count_named(result.entities, "inserter")) -- 2 machines x (120 / 50.4 -> 3, 60 / 50.4 -> 2)
+      assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- a machine makes 60 x 100.8 / 120 = 50.4 gears; 100 / 50.4 = 1.98
     end)
 
-    it("puts the input inserters in the column before the machine and the output inserters after it", function()
+    it("places two input inserters and one output inserter beside each machine", function()
       _G.prototypes = fake_prototypes{
         inserter_rotation_speed = 0.014,
         machines = {["assembling-machine-1"] = assembler},
@@ -250,12 +240,13 @@ describe("generator", function()
           output_column = output_column + 1
         end
       end
-      assert.are.equal(6, input_column)  -- 2 machines x 3, in tile column 1
-      assert.are.equal(4, output_column) -- 2 machines x 2, in tile column 5, after the 3 tile wide machine
+      assert.are.equal(4, input_column)  -- 2 machines x 2 (100.8 plates a minute / 50.4), in tile column 1
+      assert.are.equal(2, output_column) -- 2 machines x 1 (50.4 gears a minute / 50.4), in tile column 5, after the 3 tile wide machine
     end)
 
-    it("places the machines in tile column 2, one pole row down and 4 rows apart", function()
+    it("places the machines in tile column 2, three rows apart, with no pole row between them", function()
       _G.prototypes = fake_prototypes{
+        inserter_rotation_speed = 0.014,
         machines = {["assembling-machine-1"] = assembler},
         recipes = {["iron-gear-wheel"] = gear},
       }
@@ -268,23 +259,24 @@ describe("generator", function()
           centres[#centres + 1] = {x = entity.position.x, y = entity.position.y}
         end
       end
-      assert.are.same({{x = 3.5, y = 2.5}, {x = 3.5, y = 6.5}}, centres) -- 3 wide from column 2; rows 1 to 3 and 5 to 7
+      assert.are.same({{x = 3.5, y = 1.5}, {x = 3.5, y = 4.5}}, centres) -- 3 wide from column 2; rows 0 to 2, then 3 to 5
     end)
 
-    it("needs fewer inserters when the inserter is faster", function()
+    it("needs fewer machines when the inserter is fast enough to run each at full speed", function()
       _G.prototypes = fake_prototypes{
-        inserter_rotation_speed = 0.04, -- 144 items a minute
+        inserter_rotation_speed = 0.04, -- 144 items a minute, so two of them move more than the 120 a machine eats
         machines = {["assembling-machine-1"] = assembler},
         recipes = {["iron-gear-wheel"] = gear},
       }
 
-      local result = generator.generate("iron-gear-wheel", 100)
+      local result = generator.generate("iron-gear-wheel", 120)
 
-      assert.are.equal(4, count_named(result.entities, "inserter")) -- 2 machines x 1 + 1
+      assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- 120 / 60 gears a minute each
     end)
 
-    it("leaves the fuel out of the message, because the machine burns nothing", function()
+    it("says to put the plates on both lanes, and leaves out any fuel, because the machine burns nothing", function()
       _G.prototypes = fake_prototypes{
+        inserter_rotation_speed = 0.014,
         machines = {["assembling-machine-1"] = assembler},
         recipes = {["iron-gear-wheel"] = gear},
       }
@@ -292,40 +284,41 @@ describe("generator", function()
       local result = generator.generate("iron-gear-wheel", 100)
 
       assert.are.same({
-        "blueprint-generation.generated-without-fuel",
+        "blueprint-generation.generated-one-item",
         "2",                                    -- machines
         {"entity-name.assembling-machine-1"},
-        "120",                                  -- 2 x 60 achieved
+        "100.8",                                -- 2 x 50.4 achieved
         {"item-name.iron-gear-wheel"},
         "100",                                  -- what was asked for
         {"item-name.iron-plate"},
       }, result.message)
     end)
 
-    it("refuses 200 items a minute, naming 180 as the most, because the ingredient lane fills with 3 machines", function()
+    it("allows 400 items a minute with 8 machines, which fill both input lanes", function()
       _G.prototypes = fake_prototypes{
         belt_speed = 0.03125,
+        inserter_rotation_speed = 0.014,
         machines = {["assembling-machine-1"] = assembler},
         recipes = {["iron-gear-wheel"] = gear},
       }
 
-      local result, error_message = generator.generate("iron-gear-wheel", 200)
+      local result = generator.generate("iron-gear-wheel", 400)
 
-      assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-rate-too-high", "180"}, error_message) -- 3 machines x 60
+      assert.are.equal(8, count_named(result.entities, "assembling-machine-1")) -- 400 / 50.4 = 7.94; 8 x 100.8 plates is under the 900 of two lanes
     end)
 
-    it("refuses when even three inserters cannot feed a machine", function()
+    it("refuses 500 items a minute, naming 403.2 as the most, because 9 machines would eat more than the two lanes carry", function()
       _G.prototypes = fake_prototypes{
-        inserter_rotation_speed = 0.007, -- 25.2 items a minute: 120 needs 5 inserters
+        belt_speed = 0.03125,
+        inserter_rotation_speed = 0.014,
         machines = {["assembling-machine-1"] = assembler},
         recipes = {["iron-gear-wheel"] = gear},
       }
 
-      local result, error_message = generator.generate("iron-gear-wheel", 60)
+      local result, error_message = generator.generate("iron-gear-wheel", 500)
 
       assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-inserters-do-not-fit"}, error_message)
+      assert.are.same({"blueprint-generation.error-rate-too-high", "403.2"}, error_message) -- 900 / 100.8 = 8.9, so 8 machines x 50.4
     end)
 
     it("refuses a machine of a size the layout cannot handle", function()
@@ -350,6 +343,121 @@ describe("generator", function()
 
       assert.is_nil(result)
       assert.are.same({"blueprint-generation.error-unsupported-machine"}, error_message)
+    end)
+  end)
+
+  describe("a recipe that makes more per craft than one output inserter moves, in an electric machine", function()
+    -- One plate makes two items in 0.5 s: at speed 0.5 a machine could make 120 a minute and eat 60.
+    local doubling = a_recipe{energy = 0.5, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(2, "iron-gear-wheel")}}
+    local assembler = a_machine{crafting_speed = 0.5, size = 3}
+
+    it("gives each machine one input and two output inserters, and runs it at what two inserters move", function()
+      _G.prototypes = fake_prototypes{
+        inserter_rotation_speed = 0.014, -- 50.4 items a minute
+        machines = {["assembling-machine-1"] = assembler},
+        recipes = {["iron-gear-wheel"] = doubling},
+      }
+
+      local result = generator.generate("iron-gear-wheel", 200)
+
+      assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- each makes 2 x 50.4 = 100.8; 200 / 100.8 = 1.98
+      assert.are.equal(6, count_named(result.entities, "inserter")) -- 2 machines x (1 in: 50.4, 2 out: 100.8 / 50.4)
+    end)
+
+    it("winds the output belt, with six tiles per machine on top of the straight input belt", function()
+      _G.prototypes = fake_prototypes{
+        inserter_rotation_speed = 0.014,
+        machines = {["assembling-machine-1"] = assembler},
+        recipes = {["iron-gear-wheel"] = doubling},
+      }
+
+      local result = generator.generate("iron-gear-wheel", 200)
+
+      assert.are.equal(16, count_named(result.entities, "transport-belt")) -- 4 input tiles (rows 0 to 3) + 2 machines x 6
+    end)
+
+    it("gives a 2 x 2 machine only one output inserter, because the layout has room for size - 1", function()
+      _G.prototypes = fake_prototypes{
+        inserter_rotation_speed = 0.014, -- 50.4 items a minute
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 2}},
+        recipes = {["iron-gear-wheel"] = doubling},
+      }
+
+      local result = generator.generate("iron-gear-wheel", 100)
+
+      assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- one output inserter moves 50.4, so 100 / 50.4 = 1.98
+      assert.are.equal(4, count_named(result.entities, "inserter")) -- 2 machines x (1 in + 1 out)
+    end)
+
+    it("allows 800 items a minute with 8 machines, because the two output lanes each carry 8 x 50.4", function()
+      _G.prototypes = fake_prototypes{
+        belt_speed = 0.03125,
+        inserter_rotation_speed = 0.014,
+        machines = {["assembling-machine-1"] = assembler},
+        recipes = {["iron-gear-wheel"] = doubling},
+      }
+
+      local result = generator.generate("iron-gear-wheel", 800)
+
+      assert.are.equal(8, count_named(result.entities, "assembling-machine-1")) -- 800 / 100.8 = 7.94
+    end)
+
+    it("refuses 810 items a minute, naming 806.4 as the most, because a ninth machine would overfill a lane", function()
+      _G.prototypes = fake_prototypes{
+        belt_speed = 0.03125,
+        inserter_rotation_speed = 0.014,
+        machines = {["assembling-machine-1"] = assembler},
+        recipes = {["iron-gear-wheel"] = doubling},
+      }
+
+      local result, error_message = generator.generate("iron-gear-wheel", 810)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-rate-too-high", "806.4"}, error_message) -- 450 / 50.4 = 8.9, so 8 machines x 100.8
+    end)
+  end)
+
+  describe("a recipe made in an electric machine, with two ingredients on one lane each", function()
+    local two_ingredients = a_recipe{
+      energy = 0.5,
+      ingredients = {amount_of(1, "iron-plate"), amount_of(3, "copper-cable")},
+      products = {amount_of(1, "iron-gear-wheel")},
+    }
+    local assembler = a_machine{crafting_speed = 0.5, size = 3}
+
+    it("says to put one ingredient on each lane, in the recipe's order", function()
+      _G.prototypes = fake_prototypes{
+        inserter_rotation_speed = 0.014, -- 50.4 items a minute
+        machines = {["assembling-machine-1"] = assembler},
+        recipes = {["iron-gear-wheel"] = two_ingredients},
+      }
+
+      local result = generator.generate("iron-gear-wheel", 50)
+
+      assert.are.same({
+        "blueprint-generation.generated",
+        "2",                                    -- machines
+        {"entity-name.assembling-machine-1"},
+        "50.4",                                 -- 2 x 25.2 achieved: 240 items a minute at full speed, but two inserters move 100.8, so 60 x 100.8 / 240
+        {"item-name.iron-gear-wheel"},
+        "50",                                   -- what was asked for
+        {"item-name.iron-plate"},
+        {"item-name.copper-cable"},
+      }, result.message)
+    end)
+
+    it("refuses 130 items a minute, naming 126 as the most, because the cable lane fills with 5 machines", function()
+      _G.prototypes = fake_prototypes{
+        belt_speed = 0.03125,
+        inserter_rotation_speed = 0.014,
+        machines = {["assembling-machine-1"] = assembler},
+        recipes = {["iron-gear-wheel"] = two_ingredients},
+      }
+
+      local result, error_message = generator.generate("iron-gear-wheel", 130)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-rate-too-high", "126"}, error_message) -- a machine eats 75.6 cables a minute: 450 / 75.6 = 5.9, so 5 machines x 25.2
     end)
   end)
 
@@ -384,7 +492,7 @@ describe("generator", function()
       assert.are.same({"blueprint-generation.error-missing-prototype"}, error_message)
     end)
 
-    it("refuses a recipe with two different ingredients", function()
+    it("refuses two ingredients on top of the fuel, because three items do not fit on two lanes", function()
       _G.prototypes = fake_prototypes{
         recipes = {["iron-plate"] = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore"), amount_of(1, "coal")}, products = {amount_of(1, "iron-plate")}}},
       }
@@ -405,19 +513,6 @@ describe("generator", function()
 
       assert.is_nil(result)
       assert.are.same({"blueprint-generation.error-missing-prototype"}, error_message)
-    end)
-
-    it("refuses a 2 x 2 furnace that would need three inserters on a side, because only two fit", function()
-      _G.prototypes = fake_prototypes{
-        furnace_speed = 1,
-        inserter_rotation_speed = 0.002, -- 7.2 items a minute: 18.75 needs 3
-        recipes = {["iron-plate"] = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}},
-      }
-
-      local result, error_message = generator.generate("iron-plate", 10)
-
-      assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-inserters-do-not-fit"}, error_message)
     end)
 
     it("refuses an inserter entity without a rotation speed", function()

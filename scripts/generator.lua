@@ -126,9 +126,6 @@ local function refusal_message(reason, max_rate)
     ---@cast max_rate number -- the planner always gives it with this reason
     return error_message("error-rate-too-high", format_number(max_rate))
   end
-  if reason == "inserters-do-not-fit" then
-    return error_message("error-inserters-do-not-fit")
-  end
   return error_message("error-unsupported-recipe")
 end
 
@@ -142,47 +139,57 @@ local function describe_blueprint(item_name, product, plan)
 end
 
 -- The LocalisedString shown to the player when a blueprint is ready. The locale
--- entry fills __1__ to __7__ from the values below, in this order, and a
--- machine that burns fuel adds the fuel as __8__ (a different entry, which also
--- tells the player where the fuel goes).
+-- entry fills __1__ to __5__ from the values below, in this order (machines,
+-- machine, rate made, item, rate asked), then says what goes on the input belt:
+-- the first lane's item is __6__ and the second lane's item, when it is a
+-- different one (a fuel, or a second ingredient), is __7__. One item on both
+-- lanes has an entry of its own, `generated-one-item`, which only has __6__.
 ---@param item_name string
 ---@param product bpgen.Product
 ---@param plan bpgen.Plan
 ---@param rate_per_minute number
 ---@return LocalisedString
 local function success_message(item_name, product, plan, rate_per_minute)
+  local first_lane, second_lane = plan.lanes[1], plan.lanes[2]
   local message = {
-    product.fuel and "blueprint-generation.generated" or "blueprint-generation.generated-without-fuel",
+    first_lane == second_lane and "blueprint-generation.generated-one-item" or "blueprint-generation.generated",
     string.format("%d", plan.machines),
     prototypes.entity[product.machine].localised_name,
     format_number(plan.output_per_minute),
     prototypes.item[item_name].localised_name,
     format_number(rate_per_minute),
-    prototypes.item[plan.ingredient].localised_name,
+    prototypes.item[first_lane].localised_name,
   }
-  if product.fuel then
-    message[#message + 1] = prototypes.item[product.fuel].localised_name
+  if second_lane ~= first_lane then
+    message[#message + 1] = prototypes.item[second_lane].localised_name
   end
   return message --[[@as LocalisedString]]
 end
 
 -- Ask the planner, with the limits the game data gives: the belt lane, and the
--- inserters that feed and empty each machine. Returns the plan, or nil and the
--- message for the player.
+-- inserters that feed and empty each machine (as many as the layout leaves room
+-- for). Returns the plan, or nil and the message for the player.
 ---@param item_name string
 ---@param rate_per_minute number
+---@param product bpgen.Product
 ---@param game bpgen.GameData
 ---@param machine_size integer
 ---@return bpgen.Plan|nil
 ---@return LocalisedString|nil error_message
-local function make_plan(item_name, rate_per_minute, game, machine_size)
-  local inserters = {
-    items_per_minute = planner.inserter_items_per_minute(game.inserter_rotation_speed),
-    max_per_side = machine_size,
+local function make_plan(item_name, rate_per_minute, product, game, machine_size)
+  local plan, reason, max_rate = planner.plan{
+    product = item_name,
+    rate_per_minute = rate_per_minute,
+    recipe = game.recipe,
+    machine_speed = game.machine_speed,
+    lane_items_per_minute = planner.lane_items_per_minute(game.belt_speed),
+    fuel = product.fuel,
+    inserters = {
+      items_per_minute = planner.inserter_items_per_minute(game.inserter_rotation_speed),
+      max_input = layout.max_input_inserters(machine_size),
+      max_output = layout.max_output_inserters(machine_size),
+    },
   }
-  local plan, reason, max_rate = planner.plan(
-    item_name, rate_per_minute, game.recipe, game.machine_speed,
-    planner.lane_items_per_minute(game.belt_speed), inserters)
   if not plan then
     ---@cast reason string -- the planner always gives a reason when it gives no plan
     return nil, refusal_message(reason, max_rate)
@@ -238,7 +245,7 @@ function generator.generate(item_name, rate_per_minute)
     return nil, error_message("error-unsupported-machine")
   end
 
-  local plan, refusal = make_plan(item_name, rate_per_minute, game, machine_size)
+  local plan, refusal = make_plan(item_name, rate_per_minute, product, game, machine_size)
   if not plan then
     return nil, refusal
   end

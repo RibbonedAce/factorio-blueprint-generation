@@ -17,21 +17,28 @@ Status: early development.
 | Iron plate | Stone furnace | Iron ore on one lane, coal on the other |
 | Copper plate | Stone furnace | Copper ore on one lane, coal on the other |
 | Stone brick | Stone furnace | Stone on one lane, coal on the other |
-| Iron gear wheel | Assembling machine 1 | Iron plates on one lane (the machine is electric, so no coal) |
+| Iron gear wheel | Assembling machine 1 | Iron plates on both lanes (the machine is electric, so no coal) |
 
 Every blueprint is one column of machines: an input belt on the left, inserters, the machines, output inserters, and an output belt on the right. Small electric poles are placed and wired for you. The belts, inserters and poles are the first-tier ones (transport belt, inserter, small electric pole); there is no choice of tier yet.
 
-A machine that needs more items than one inserter can move gets several inserters on each side. The number comes from the inserter's rotation speed in the game data: an assembling machine 1 making gear wheels eats 120 plates per minute and makes 60 gears, and a basic inserter moves about 50, so each machine gets three input inserters and two output inserters.
+The input belt has two lanes, and the message says which item goes where: an ingredient and the fuel get a lane each (furnaces), an ingredient with no fuel gets both lanes (the gear wheel), and a recipe with two ingredients and no fuel gets one lane each. A recipe that needs more items than two lanes hold (two ingredients and a fuel, or three ingredients) is refused, and so is one that makes more than one product. An inserter drops items on the far lane of a belt, so a plain output belt carries the product on one lane only. A 3 x 3 machine with two output inserters gets a winding output belt instead, which fills both lanes (see below).
+
+Each side of a machine gets as many inserters as the machine needs, up to one fewer than it is wide: one beside a 2 x 2 furnace, two beside a 3 x 3 assembling machine (output side: at most 2, whatever the size). That keeps one tile beside every machine free for a pole, so the machines sit side by side with no gaps. A machine that would need more inserters than that simply runs slower, and the blueprint is sized for it: an assembling machine 1 making gear wheels would eat 120 plates per minute and make 60 gears, but two basic inserters move about 100 plates, so each machine makes about 50 gears per minute. The message shows the real total. The inserter's speed comes from the game data.
+
+### The winding output belt
+
+When a 3 x 3 machine needs two output inserters, the output belt is two tiles from the machine side and winds in and out. Its path, going down, is `DDLDRDDLDR...` (U/D/L/R = up/down/left/right): the first inserter drops onto the tile after the `L`, and the second inserter drops onto a short side belt (`R`) that side-loads the inner lane of the main belt, which the first inserter cannot reach. Both lanes end up carrying the product. It uses one more column than a plain belt and six belt tiles per machine. Machines with one output inserter keep the plain belt.
 
 ## Limits
 
-- **One belt lane per flow.** The input (ore, stone or plates) and the output each travel on a single lane of a transport belt. A lane carries 450 items per minute, and a stone furnace makes 18.75 plates or bricks per minute, so one blueprint can have at most 24 furnaces and make at most 450 per minute. A higher rate is refused with a message that names the most one blueprint can make. Splitting a bigger request into several blueprints is not supported.
-- **Recipes that eat a lot hit the limit sooner.** A brick takes two stone, so each furnace eats 37.5 stone per minute and the input lane fills first: at most 12 furnaces and 225 bricks per minute. Gear wheels are tighter still: each assembling machine eats 120 plates per minute, so one lane feeds 3 machines and at most 180 gears per minute.
+- **A lane carries 450 items per minute.** The product travels on one lane (plain belt) or two (winding belt, two output inserters), so one blueprint makes at most 450 or 900 per minute, depending on what the machines can move, and the ingredients get one lane each, or both lanes (900 per minute) when one ingredient has the belt to itself. A stone furnace makes 18.75 plates or bricks per minute, so a plate blueprint has at most 24 furnaces. A higher rate is refused with a message that names the most one blueprint can make. Splitting a bigger request into several blueprints is not supported.
+- **Recipes that eat a lot hit the limit sooner.** A brick takes two stone, so each furnace eats 37.5 stone per minute and the stone lane fills first: at most 12 furnaces and 225 bricks per minute. Gear wheels: each assembling machine eats about 100 plates per minute (see above), so the two lanes feed 8 machines, and one blueprint makes at most about 403 gears per minute (the message names the exact number). With two output inserters the winding belt is limited per lane: a machine's first inserter takes all it can, so the machines are capped at the number whose first inserters fit in one lane (450 / 50.4 = 8). That rule is a conservative assumption, not yet checked in game.
 - **The rate is rounded up to whole machines.** Asking for 100 plates per minute builds 6 furnaces, which make 112.5 per minute. The message shows both numbers.
-- **Machines are 2 x 2 or 3 x 3.** Any other size, or a machine that is not square, is refused. So is a recipe that would need more inserters beside one machine than fit (three per side on a 3 x 3 machine).
+- **The winding belt needs a 3 x 3 machine.** A 2 x 2 machine has room for one output inserter only.
+- **Machines are 2 x 2 or 3 x 3.** Any other size, or a machine that is not square, is refused.
 - **You supply the inputs.** The blueprint contains no mining, no ore sources and no coal supply, only the column itself.
 - **You supply the power.** The poles are connected to each other, not to your network.
-- **Only the items in the table above.** Other items are refused. Recipes that need more than one ingredient are not supported yet.
+- **Only the items in the table above.** Other items are refused. The recipe must have one product, and either one ingredient (with or without fuel) or two ingredients (when the machine burns no fuel).
 - **The limits follow the game.** The belt limit, the machine speed and the number of inserters are worked out from the current game data, so a mod that changes the transport belt, the machine or the inserter changes the blueprint.
 
 ## Running the tests
