@@ -119,3 +119,13 @@ Source: `runtime-api.json` and `prototype-api.json`, supplied by the owner on 20
 
 - **Verified** (`runtime-api.json` 2.1.23): `LuaEntityPrototype.tile_width` and `tile_height` (uint32); `get_inserter_rotation_speed(quality?)` and `get_inserter_extension_speed(quality?)` (optional double: nil when the entity is not an inserter); `inserter_stack_size_bonus` (optional); `get_crafting_speed(quality?)`.
 - **Unverified**: the unit of the rotation speed. The JSON gives no unit; the code assumes turns per tick (see `project-status.md`).
+
+## Energy sources and fuel items (owner, 2026-11-03)
+
+Source: the owner described these from the 2.1 documentation and pasted the `ItemPrototypeFilter` page; the assistant could not check the JSON (it was no longer in the session). Treat as **Owner-stated**, not read from `runtime-api.json`.
+
+- `LuaEntityPrototype.burner_prototype` and `electric_energy_source_prototype` are nil when the entity does not use that energy source. A prototype has at most one of the two.
+- `LuaBurnerPrototype.fuel_categories` is `dict[string -> true]`: only the keys matter.
+- `LuaItemPrototype.fuel_categories` (plural, the categories a fuel item belongs to) replaced a singular `fuel_category` in 2.1.
+- `prototypes.get_item_filtered(filters)`: each filter is a table with `filter` (a string such as `"fuel-category"`) plus fields that depend on it, `mode` (`"or"` by default, or `"and"`; `"and"` binds tighter) and `invert`. The `"fuel-category"` filter has one extra field, `["fuel-category"]` (a fuel category name). Other filters used later: `"name"` (`name`), `"type"` (`type`), `"fuel-value"` (`comparison`, `value`), `"fuel"`.
+- Return type not confirmed (see project-status, "Unverified in the energy source iteration").

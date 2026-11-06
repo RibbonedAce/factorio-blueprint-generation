@@ -151,85 +151,98 @@ local function geometry_of(shape)
   }
 end
 
--- The tile row of the top edge of machine number `index` (from 0).
----@param geometry bpgen.Geometry
----@param index integer
----@return integer
-local function machine_top(geometry, index)
-  return geometry.first_row + index * geometry.spacing
-end
-
--- A blueprint under construction. `add` stores an entity and numbers it, because
--- blueprints identify entities by number; `connect` records a copper wire.
----@class bpgen.Blueprint  a blueprint under construction
----@field entities bpgen.Entity[]
----@field add fun(entity: bpgen.NewEntity): bpgen.Entity  numbers the entity and stores it
----@field connect fun(from: bpgen.Entity, to: bpgen.Entity)  adds a copper wire
-
----@class bpgen.Poles  the poles added so far, top to bottom
+-- The poles added so far, on each side of the machines, top to bottom.
+---@class bpgen.Poles
 ---@field input table<integer, bpgen.Entity>
 ---@field output table<integer, bpgen.Entity>
 
----@return bpgen.Blueprint
-local function new_blueprint()
-  local blueprint = {entities = {}}
+-- A blueprint under construction: everything the steps of the layout share
+-- (what is being built, where things go, the poles so far) lives in one table,
+-- and each step is a method that reads and adds to it. `Builder.__index = Builder`
+-- is Lua's way of giving every builder these methods: when `builder:add_belts()`
+-- finds no `add_belts` in the builder itself, Lua looks it up in `Builder`. A
+-- builder only lives for one `layout.build` call and is never stored in the save.
+---@class bpgen.Builder
+---@field entities bpgen.Entity[]  the blueprint so far
+---@field geometry bpgen.Geometry
+---@field names bpgen.Names
+---@field machine_count integer
+---@field poles bpgen.Poles
+local Builder = {}
+Builder.__index = Builder
 
-  function blueprint.add(entity)
-    blueprint.entities[#blueprint.entities + 1] = entity
-    entity.entity_number = #blueprint.entities
-    return entity
-  end
-
-  -- Each wire is stored once, on the pole it starts from, as
-  -- {from number, connector, to number, connector}.
-  function blueprint.connect(from, to)
-    local connector = defines.wire_connector_id.pole_copper
-    from.wires = from.wires or {}
-    from.wires[#from.wires + 1] = {from.entity_number, connector, to.entity_number, connector}
-  end
-
-  return blueprint
+---@param machine_count integer
+---@param names bpgen.Names
+---@param shape bpgen.Shape
+---@return bpgen.Builder
+function Builder.new(machine_count, names, shape)
+  return setmetatable({
+    entities = {},
+    geometry = geometry_of(shape),
+    names = names,
+    machine_count = machine_count,
+    poles = {input = {}, output = {}},
+  }, Builder)
 end
 
----@param blueprint bpgen.Blueprint
----@param names bpgen.Names
+-- Stores an entity and numbers it, because blueprints identify entities by number.
+---@param entity bpgen.NewEntity
+---@return bpgen.Entity
+function Builder:add(entity)
+  local numbered = entity --[[@as bpgen.Entity]] -- it gets its number just below
+  self.entities[#self.entities + 1] = numbered
+  numbered.entity_number = #self.entities
+  return numbered
+end
+
+-- Records a copper wire. Each wire is stored once, on the pole it starts from, as
+-- {from number, connector, to number, connector}.
+---@param from bpgen.Entity
+---@param to bpgen.Entity
+function Builder:connect(from, to)
+  local connector = defines.wire_connector_id.pole_copper
+  from.wires = from.wires or {}
+  from.wires[#from.wires + 1] = {from.entity_number, connector, to.entity_number, connector}
+end
+
+-- The tile row of the top edge of machine number `index` (from 0).
+---@param index integer
+---@return integer
+function Builder:machine_top(index)
+  return self.geometry.first_row + index * self.geometry.spacing
+end
+
 ---@param column integer  tile column
 ---@param row integer  tile row
 ---@param direction defines.direction  the way the belt runs
-local function add_belt(blueprint, names, column, row, direction)
-  blueprint.add({name = names.belt, position = grid.position(column, row), direction = direction})
+function Builder:add_belt(column, row, direction)
+  self:add({name = self.names.belt, position = grid.position(column, row), direction = direction})
 end
 
 -- A run of belt tiles down one column of the layout, running south.
----@param blueprint bpgen.Blueprint
 ---@param column integer  tile column
 ---@param first_row integer  tile row of the first belt tile
 ---@param length integer  how many tiles
----@param names bpgen.Names
-local function add_belt_column(blueprint, column, first_row, length, names)
+function Builder:add_belt_column(column, first_row, length)
   for row = first_row, first_row + length - 1 do
-    add_belt(blueprint, names, column, row, defines.direction.south)
+    self:add_belt(column, row, defines.direction.south)
   end
 end
 
 -- The winding output belt (see the diagram at the top): three rows per machine,
 -- the inner column beside the output inserters and the outer column one further out.
----@param blueprint bpgen.Blueprint
----@param geometry bpgen.Geometry
----@param machine_count integer
----@param names bpgen.Names
-local function add_winding_output_belt(blueprint, geometry, machine_count, names)
+function Builder:add_winding_output_belt()
   local direction = defines.direction
-  local inner = geometry.output_inserter_column + 1
-  local outer = geometry.output_belt_column
-  for index = 0, machine_count - 1 do
-    local top = machine_top(geometry, index)
-    add_belt(blueprint, names, inner, top, direction.east)
-    add_belt(blueprint, names, inner, top + 1, direction.south)
-    add_belt(blueprint, names, inner, top + 2, direction.east)
-    add_belt(blueprint, names, outer, top, direction.south)
-    add_belt(blueprint, names, outer, top + 1, direction.west)
-    add_belt(blueprint, names, outer, top + 2, direction.south)
+  local inner = self.geometry.output_inserter_column + 1
+  local outer = self.geometry.output_belt_column
+  for index = 0, self.machine_count - 1 do
+    local top = self:machine_top(index)
+    self:add_belt(inner, top, direction.east)
+    self:add_belt(inner, top + 1, direction.south)
+    self:add_belt(inner, top + 2, direction.east)
+    self:add_belt(outer, top, direction.south)
+    self:add_belt(outer, top + 1, direction.west)
+    self:add_belt(outer, top + 2, direction.south)
   end
 end
 
@@ -237,110 +250,87 @@ end
 -- output belt keeps the full height of the column, so the products have somewhere
 -- to go (and winds, for two output inserters on a 3x3 machine). The input belt
 -- stops at the last input inserter: nothing below it would be picked up.
----@param blueprint bpgen.Blueprint
----@param geometry bpgen.Geometry
----@param machine_count integer
----@param names bpgen.Names
-local function add_belts(blueprint, geometry, machine_count, names)
+function Builder:add_belts()
+  local geometry = self.geometry
   local first_row = geometry.first_row
-  local last_input_row = machine_top(geometry, machine_count - 1) + geometry.input_count - 1
-  add_belt_column(blueprint, INPUT_BELT_COLUMN, first_row, last_input_row - first_row + 1, names)
+  local last_input_row = self:machine_top(self.machine_count - 1) + geometry.input_count - 1
+  self:add_belt_column(INPUT_BELT_COLUMN, first_row, last_input_row - first_row + 1)
   if geometry.output_winds then
-    add_winding_output_belt(blueprint, geometry, machine_count, names)
+    self:add_winding_output_belt()
   else
-    local end_row = machine_top(geometry, machine_count) -- one past the last row of the column
-    add_belt_column(blueprint, geometry.output_belt_column, first_row, end_row - first_row, names)
+    local end_row = self:machine_top(self.machine_count) -- one past the last row of the column
+    self:add_belt_column(geometry.output_belt_column, first_row, end_row - first_row)
   end
 end
 
 -- `count` inserters in a column, one under the next, from row `top`. An inserter's
 -- `direction` is the side it PICKS UP from. All of them move things eastward
 -- (belt -> machine, machine -> belt), so all pick up from the west.
----@param blueprint bpgen.Blueprint
 ---@param column integer
 ---@param top integer
 ---@param count integer
----@param names bpgen.Names
-local function add_inserters(blueprint, column, top, count, names)
+function Builder:add_inserters(column, top, count)
   for row = top, top + count - 1 do
-    blueprint.add({name = names.inserter, position = grid.position(column, row), direction = defines.direction.west})
+    self:add({name = self.names.inserter, position = grid.position(column, row), direction = defines.direction.west})
   end
 end
 
 -- One pole on each side, at the given rows, added to the top-to-bottom lists.
----@param blueprint bpgen.Blueprint
----@param geometry bpgen.Geometry
 ---@param input_row integer
 ---@param output_row integer
----@param names bpgen.Names
----@param poles bpgen.Poles
-local function add_pole_pair(blueprint, geometry, input_row, output_row, names, poles)
-  local input_pole = blueprint.add({name = names.pole, position = grid.position(INPUT_INSERTER_COLUMN, input_row)})
-  local output_pole = blueprint.add({name = names.pole, position = grid.position(geometry.output_inserter_column, output_row)})
-  poles.input[#poles.input + 1] = input_pole
-  poles.output[#poles.output + 1] = output_pole
+function Builder:add_pole_pair(input_row, output_row)
+  local pole = self.names.pole
+  local input_pole = self:add({name = pole, position = grid.position(INPUT_INSERTER_COLUMN, input_row)})
+  local output_pole = self:add({name = pole, position = grid.position(self.geometry.output_inserter_column, output_row)})
+  self.poles.input[#self.poles.input + 1] = input_pole
+  self.poles.output[#self.poles.output + 1] = output_pole
 end
 
 -- One machine with its inserters, and its poles if it is one of those that get them.
 -- `index` counts machines from 0 down the column.
----@param blueprint bpgen.Blueprint
----@param geometry bpgen.Geometry
 ---@param index integer
----@param names bpgen.Names
----@param poles bpgen.Poles
-local function add_machine_row(blueprint, geometry, index, names, poles)
-  local top = machine_top(geometry, index)
+function Builder:add_machine_row(index)
+  local geometry = self.geometry
+  local top = self:machine_top(index)
   local size = geometry.size
 
-  blueprint.add({name = names.machine, position = grid.position(MACHINE_COLUMN, top, size, size)})
-  add_inserters(blueprint, INPUT_INSERTER_COLUMN, top, geometry.input_count, names)
-  add_inserters(blueprint, geometry.output_inserter_column, top, geometry.output_count, names)
+  self:add({name = self.names.machine, position = grid.position(MACHINE_COLUMN, top, size, size)})
+  self:add_inserters(INPUT_INSERTER_COLUMN, top, geometry.input_count)
+  self:add_inserters(geometry.output_inserter_column, top, geometry.output_count)
 
   if not geometry.has_pole_rows and index % MACHINES_PER_POLE == 0 then
-    add_pole_pair(blueprint, geometry, top + geometry.input_count, top + geometry.output_count, names, poles)
+    self:add_pole_pair(top + geometry.input_count, top + geometry.output_count)
   end
 end
 
 -- The rows of poles above the first machine, between machines and below the last.
----@param blueprint bpgen.Blueprint
----@param geometry bpgen.Geometry
----@param machine_count integer
----@param names bpgen.Names
----@param poles bpgen.Poles
-local function add_pole_rows(blueprint, geometry, machine_count, names, poles)
-  for index = 0, machine_count do
-    local row = machine_top(geometry, index) - 1
-    add_pole_pair(blueprint, geometry, row, row, names, poles)
+function Builder:add_pole_rows()
+  for index = 0, self.machine_count do
+    local row = self:machine_top(index) - 1
+    self:add_pole_pair(row, row)
   end
 end
 
--- Returns the poles added, as {input = {...}, output = {...}}, top to bottom.
----@param blueprint bpgen.Blueprint
----@param geometry bpgen.Geometry
----@param machine_count integer
----@param names bpgen.Names
----@return bpgen.Poles
-local function add_machines(blueprint, geometry, machine_count, names)
-  local poles = {input = {}, output = {}}
-  for index = 0, machine_count - 1 do
-    add_machine_row(blueprint, geometry, index, names, poles)
+-- The machines with their inserters, and the poles: in rows between them when the
+-- sides are full, otherwise in the free tiles beside them.
+function Builder:add_machines()
+  for index = 0, self.machine_count - 1 do
+    self:add_machine_row(index)
   end
-  if geometry.has_pole_rows then
-    add_pole_rows(blueprint, geometry, machine_count, names, poles)
+  if self.geometry.has_pole_rows then
+    self:add_pole_rows()
   end
-  return poles
 end
 
 -- Chain the poles down each side, then join the two sides at the top.
----@param blueprint bpgen.Blueprint
----@param poles bpgen.Poles
-local function wire_poles(blueprint, poles)
+function Builder:wire_poles()
+  local poles = self.poles
   for i = 2, #poles.input do
-    blueprint.connect(poles.input[i - 1], poles.input[i])
-    blueprint.connect(poles.output[i - 1], poles.output[i])
+    self:connect(poles.input[i - 1], poles.input[i])
+    self:connect(poles.output[i - 1], poles.output[i])
   end
   -- `layout.build` needs at least one machine, so there is a first pole on each side.
-  blueprint.connect(poles.input[1], poles.output[1])
+  self:connect(poles.input[1], poles.output[1])
 end
 
 -- names: {machine, belt, inserter, pole} prototype names.
@@ -350,12 +340,11 @@ end
 ---@param shape bpgen.Shape  the machine size must be one `supports_machine_size` accepts
 ---@return bpgen.Entity[]
 function layout.build(machine_count, names, shape)
-  local geometry = geometry_of(shape)
-  local blueprint = new_blueprint()
-  add_belts(blueprint, geometry, machine_count, names)
-  local poles = add_machines(blueprint, geometry, machine_count, names)
-  wire_poles(blueprint, poles)
-  return blueprint.entities
+  local builder = Builder.new(machine_count, names, shape)
+  builder:add_belts()
+  builder:add_machines()
+  builder:wire_poles()
+  return builder.entities
 end
 
 return layout

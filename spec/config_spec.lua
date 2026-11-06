@@ -7,13 +7,13 @@ local config = require("scripts.config")
 
 describe("config", function()
   describe("the default product", function()
-    it("is iron plate, so the window opens with something chosen", function()
+    it("chooses iron plate by default when the window opens", function()
       local default = config.default_product
 
       assert.are.equal("iron-plate", default)
     end)
 
-    it("is one of the products that can be generated", function()
+    it("chooses a default that can be generated when the window opens", function()
       local product = config.products[config.default_product]
 
       assert.is_not_nil(product)

@@ -152,11 +152,21 @@ end
 
 -- A crafting machine prototype, for `fake_prototypes{machines = ...}`.
 -- `crafting_speed = false` makes an entity that cannot craft.
+-- The machine runs on electricity unless the options say otherwise: `burns` lists
+-- the fuel categories a burner machine accepts, and `heat = true` makes a machine
+-- with neither an electric nor a burner energy source (the game has others).
 --     a_machine{crafting_speed = 0.5, size = 3}
----@param options {crafting_speed: number|false, size: integer, height?: integer}  `height` defaults to `size`; give it for a machine that is not square
+--     a_machine{crafting_speed = 1, size = 2, burns = {"chemical"}}
+---@param options {crafting_speed: number|false, size: integer, height?: integer, burns?: string[], heat?: boolean}  `height` defaults to `size`; give it for a machine that is not square
 ---@return table
 function builders.a_machine(options)
-  return {crafting_speed = options.crafting_speed, width = options.size, height = options.height or options.size}
+  return {
+    crafting_speed = options.crafting_speed,
+    width = options.size,
+    height = options.height or options.size,
+    burns = options.burns,
+    heat = options.heat,
+  }
 end
 
 -- A stand-in for the game's `prototypes` table. What exists is what the test
@@ -175,7 +185,12 @@ end
 --                           entity that is not an inserter
 --   missing_entities        names of buildings the game does not have, default none
 -- The buildings the layout uses (furnace, belt, inserter, pole) exist unless
--- listed as missing. Every item a recipe mentions exists, and so does coal, the fuel.
+-- listed as missing. Every item a recipe mentions exists, and so does coal, the
+-- fuel, in the fuel category "chemical". The stone furnace burns "chemical".
+-- `get_item_filtered` understands only what the generator needs, filters of the
+-- form {filter = "fuel-category", ["fuel-category"] = name} combined with "or"
+-- (anything else is an error), and an empty list of filters gives every item,
+-- as the worst case of what the game might do.
 ---@param options? {recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, missing_entities?: string[]}
 ---@return table  a stand-in for the game's `prototypes`
 function builders.fake_prototypes(options)
@@ -190,8 +205,18 @@ function builders.fake_prototypes(options)
   local belt_speed = option(options.belt_speed, 0.03125)
   local rotation_speed = option(options.inserter_rotation_speed, 0.014)
 
+  local function as_set(names)
+    local set = {}
+    for _, name in ipairs(names) do
+      set[name] = true
+    end
+    return set
+  end
+  -- Machines run on electricity unless they burn fuel or have a source the mod does not handle.
   local function entity(name, fields)
     fields = fields or {}
+    local burner = fields.burns
+    local electric = fields.is_machine and not burner and not fields.heat
     return {
       localised_name = {"entity-name." .. name},
       get_crafting_speed = function() return fields.crafting_speed or nil end,
@@ -199,19 +224,22 @@ function builders.fake_prototypes(options)
       belt_speed = fields.belt_speed or nil,
       tile_width = fields.width or 1,
       tile_height = fields.height or 1,
+      burner_prototype = burner and {fuel_categories = as_set(burner)} or nil,
+      electric_energy_source_prototype = electric and {} or nil,
     }
   end
-  local function item(name)
-    return {localised_name = {"item-name." .. name}}
+  local function item(name, fuel_categories)
+    return {localised_name = {"item-name." .. name}, fuel_categories = as_set(fuel_categories or {})}
   end
 
   local entities = {
-    ["stone-furnace"] = entity("stone-furnace", {crafting_speed = furnace_speed, width = 2, height = 2}),
+    ["stone-furnace"] = entity("stone-furnace", {crafting_speed = furnace_speed, width = 2, height = 2, burns = {"chemical"}, is_machine = true}),
     ["transport-belt"] = entity("transport-belt", {belt_speed = belt_speed}),
     ["inserter"] = entity("inserter", {rotation_speed = rotation_speed}),
     ["small-electric-pole"] = entity("small-electric-pole"),
   }
   for name, machine in pairs(options.machines or {}) do
+    machine.is_machine = true
     entities[name] = entity(name, machine)
   end
   for _, name in ipairs(options.missing_entities or {}) do
@@ -219,17 +247,34 @@ function builders.fake_prototypes(options)
   end
 
   local recipes = options.recipes or {}
-  local items = {["coal"] = item("coal")}
+  local items = {["coal"] = item("coal", {"chemical"})}
   for _, recipe in pairs(recipes) do
     for _, amount in ipairs(recipe.ingredients) do
-      items[amount.name] = item(amount.name)
+      items[amount.name] = items[amount.name] or item(amount.name)
     end
     for _, amount in ipairs(recipe.products) do
-      items[amount.name] = item(amount.name)
+      items[amount.name] = items[amount.name] or item(amount.name)
     end
   end
 
-  return {entity = entities, recipe = recipes, item = items}
+  local function get_item_filtered(filters)
+    local found = {}
+    for name, prototype in pairs(items) do
+      if #filters == 0 then
+        found[name] = prototype
+      end
+      for _, filter in ipairs(filters) do
+        assert(filter.filter == "fuel-category" and type(filter["fuel-category"]) == "string" and filter.mode == nil,
+          "the fake item filter only knows {filter = \"fuel-category\", [\"fuel-category\"] = name}")
+        if prototype.fuel_categories[filter["fuel-category"]] then
+          found[name] = prototype
+        end
+      end
+    end
+    return found
+  end
+
+  return {entity = entities, recipe = recipes, item = items, get_item_filtered = get_item_filtered}
 end
 
 return builders

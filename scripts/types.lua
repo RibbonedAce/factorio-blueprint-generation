@@ -18,6 +18,10 @@
 ---@field machine string  machine prototype name
 ---@field fuel? string  item the machine burns; nil for a machine that burns nothing (an electric one)
 
+---@class bpgen.EnergySource  what a machine runs on
+---@field kind "electric"|"burner"
+---@field fuel_categories string[]  the fuel categories a burner machine accepts, sorted; empty for an electric one
+
 ---@class bpgen.RecipeItem
 ---@field name string
 ---@field amount number
@@ -41,7 +45,13 @@
 ---@field fuel? string  item the machine burns; it takes one of the two input lanes
 ---@field inserters? bpgen.InserterLimits  nil means no limit: one inserter a side, full speed
 
----@class bpgen.PlanInput  how much of an ingredient all the machines eat
+---@class bpgen.MachineRates  what ONE machine does each minute, once its inserters are counted
+---@field output number  items of the product it makes
+---@field inputs bpgen.PlanInput[]  what it eats, per ingredient, in the recipe's order
+---@field input_inserters integer  on its input side
+---@field output_inserters integer  on its output side
+
+---@class bpgen.PlanInput  how much of an ingredient is eaten each minute (by one machine or by all of them)
 ---@field name string  item name
 ---@field per_minute number
 

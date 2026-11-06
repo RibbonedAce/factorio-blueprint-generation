@@ -18,37 +18,37 @@ describe("has_item_containing", function()
     assert.has_error(assertion)
   end)
 
-  it("fails for an empty list", function()
+  it("fails when the list is empty", function()
     local assertion = function() assert.has_item_containing("anything", {}) end
 
     assert.has_error(assertion)
   end)
 
-  it("treats special characters in the text literally, not as a pattern", function()
+  it("treats special characters literally when the text has them", function()
     local list = {"abc"}
 
     assert.is_not.has_item_containing("a.c", list)
   end)
 
-  it("still finds text that contains special characters", function()
+  it("still finds text when it contains special characters", function()
     local list = {"a.c"}
 
     assert.has_item_containing("a.c", list)
   end)
 
-  it("reports no match, rather than erroring, when the list is not a list", function()
+  it("reports no match rather than erroring when the list is not a list", function()
     assert.is_not.has_item_containing("x", nil)
     assert.is_not.has_item_containing("x", "x")
   end)
 
-  it("reports no match, rather than erroring, when the text is not a string", function()
+  it("reports no match rather than erroring when the text is not a string", function()
     local list = {"x"}
 
     assert.is_not.has_item_containing(nil, list)
     assert.is_not.has_item_containing(1, list)
   end)
 
-  it("ignores items that are not strings", function()
+  it("ignores items when they are not strings", function()
     local list = {42, {"overlaps"}}
 
     assert.is_not.has_item_containing("overlaps", list)

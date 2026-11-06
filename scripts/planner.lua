@@ -144,37 +144,6 @@ local function usable_fraction(input_flow, output_flow, inserters)
     side_fraction(output_flow, inserters.max_output * inserters.items_per_minute))
 end
 
--- What ONE machine does each minute: how much it makes, and how much of each
--- ingredient it eats (in the recipe's order). When the inserters cannot keep up
--- with it at full speed, it simply waits for items, so every number shrinks by
--- the same fraction.
----@param recipe bpgen.Recipe  one that `is_supported`
----@param machine_speed number
----@param made_per_craft number
----@param inserters bpgen.InserterLimits|nil
----@return number output_per_minute
----@return bpgen.PlanInput[] inputs  what it eats of each ingredient
-local function rates_per_machine(recipe, machine_speed, made_per_craft, inserters)
-  local crafts_per_minute = 60 * machine_speed / recipe.energy
-  local output = crafts_per_minute * made_per_craft
-  local inputs = {}
-  for _, ingredient in ipairs(recipe.ingredients) do
-    inputs[#inputs + 1] = {name = ingredient.name, per_minute = crafts_per_minute * ingredient.amount}
-  end
-  local fraction = usable_fraction(total_per_minute(inputs), output, inserters)
-  for _, input in ipairs(inputs) do
-    input.per_minute = input.per_minute * fraction
-  end
-  return output * fraction, inputs
-end
-
----@param rate_per_minute number
----@param output_per_machine number
----@return integer
-local function machines_needed(rate_per_minute, output_per_machine)
-  return math.max(1, math.ceil(rate_per_minute / output_per_machine - EPSILON))
-end
-
 -- How many inserters one side of a machine needs to carry `items_per_machine` a
 -- minute. Without an inserter limit one is enough.
 ---@param items_per_machine number
@@ -187,23 +156,52 @@ local function inserters_needed(items_per_machine, inserters)
   return math.max(1, math.ceil(items_per_machine / inserters.items_per_minute - EPSILON))
 end
 
+-- What ONE machine does each minute. When the inserters cannot keep up with it at
+-- full speed, it simply waits for items, so every number shrinks by the same
+-- fraction, and the inserters are counted for what it really moves.
+---@param request bpgen.PlanRequest
+---@return bpgen.MachineRates
+local function rates_per_machine(request)
+  local recipe = request.recipe
+  local crafts_per_minute = 60 * request.machine_speed / recipe.energy
+  local output = crafts_per_minute * amount_made(recipe, request.product)
+  local inputs = {}
+  for _, ingredient in ipairs(recipe.ingredients) do
+    inputs[#inputs + 1] = {name = ingredient.name, per_minute = crafts_per_minute * ingredient.amount}
+  end
+  local fraction = usable_fraction(total_per_minute(inputs), output, request.inserters)
+  for _, input in ipairs(inputs) do
+    input.per_minute = input.per_minute * fraction
+  end
+  output = output * fraction
+  return {
+    output = output,
+    inputs = inputs,
+    input_inserters = inserters_needed(total_per_minute(inputs), request.inserters),
+    output_inserters = inserters_needed(output, request.inserters),
+  }
+end
+
+local function machines_needed(rate_per_minute, output_per_machine)
+  return math.max(1, math.ceil(rate_per_minute / output_per_machine - EPSILON))
+end
+
 -- How many machines the output belt can take. With one output inserter per
 -- machine the product is on one lane, which carries all of it. With two, the
 -- winding belt gives each inserter a lane, but the first inserter takes all it
 -- can, so a lane can get everything one inserter moves from every machine. (That
 -- is also why the two lanes together never overfill: no machine makes more than
 -- two inserters move.)
----@param lane_items_per_minute number
----@param output_per_machine number
----@param output_inserters integer
----@param inserters bpgen.InserterLimits|nil
+---@param request bpgen.PlanRequest
+---@param per_machine bpgen.MachineRates
 ---@return integer
-local function output_machine_limit(lane_items_per_minute, output_per_machine, output_inserters, inserters)
-  local lane_flow_per_machine = output_per_machine
-  if output_inserters == WINDING_OUTPUT_INSERTERS and inserters then
+local function output_machine_limit(request, per_machine)
+  local inserters = request.inserters
+  local lane_flow_per_machine = per_machine.output
+  if per_machine.output_inserters == WINDING_OUTPUT_INSERTERS and inserters then
     lane_flow_per_machine = inserters.items_per_minute
   end
-  return math.floor(lane_items_per_minute / lane_flow_per_machine + EPSILON)
+  return math.floor(request.lane_items_per_minute / lane_flow_per_machine + EPSILON)
 end
 
 -- How many machines one column can serve before a belt lane is full: the
@@ -211,14 +209,12 @@ end
 -- ingredient that has the belt to itself).
 ---@param request bpgen.PlanRequest
 ---@param lanes string[]
----@param output_per_machine number
----@param inputs_per_machine bpgen.PlanInput[]
+---@param per_machine bpgen.MachineRates
 ---@return integer
-local function machines_per_belt(request, lanes, output_per_machine, inputs_per_machine)
+local function machines_per_belt(request, lanes, per_machine)
   local lane = request.lane_items_per_minute
-  local output_inserters = inserters_needed(output_per_machine, request.inserters)
-  local most = output_machine_limit(lane, output_per_machine, output_inserters, request.inserters)
-  for _, input in ipairs(inputs_per_machine) do
+  local most = output_machine_limit(request, per_machine)
+  for _, input in ipairs(per_machine.inputs) do
     most = math.min(most, math.floor(lanes_carrying(lanes, input.name) * lane / input.per_minute + EPSILON))
   end
   return most
@@ -275,22 +271,20 @@ function planner.plan(request)
     return nil, "unsupported-recipe"
   end
 
-  local made_per_craft = amount_made(recipe, request.product)
-  local output_per_machine, inputs_per_machine =
-    rates_per_machine(recipe, request.machine_speed, made_per_craft, request.inserters)
-  local most = machines_per_belt(request, lanes, output_per_machine, inputs_per_machine)
-  local machines = machines_needed(request.rate_per_minute, output_per_machine)
+  local per_machine = rates_per_machine(request)
+  local most = machines_per_belt(request, lanes, per_machine)
+  local machines = machines_needed(request.rate_per_minute, per_machine.output)
   if machines > most then
-    return nil, "rate-too-high", most * output_per_machine
+    return nil, "rate-too-high", most * per_machine.output
   end
 
   return {
     machines = machines,
-    output_per_minute = machines * output_per_machine,
-    inputs = total_inputs(inputs_per_machine, machines),
+    output_per_minute = machines * per_machine.output,
+    inputs = total_inputs(per_machine.inputs, machines),
     lanes = lanes,
-    input_inserters = inserters_needed(total_per_minute(inputs_per_machine), request.inserters),
-    output_inserters = inserters_needed(output_per_machine, request.inserters),
+    input_inserters = per_machine.input_inserters,
+    output_inserters = per_machine.output_inserters,
   }
 end
 
