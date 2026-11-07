@@ -530,6 +530,7 @@ local function assemble(job, planned)
   for index, step in ipairs(planned) do
     columns[index] = {
       machine_count = step.plan.machines,
+      load = step.plan.load,
       machine = step.stage.machine,
       shape = {
         machine_size = machine_size_of(step.stage),

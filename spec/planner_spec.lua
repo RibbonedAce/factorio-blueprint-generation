@@ -837,15 +837,115 @@ describe("planner", function()
       assert.are.equal(6, plans[1].machines) -- the machines work at 1.875 x 60 = 112.5 plates a minute, not 2 x 60 (which would take 7 furnaces)
     end)
 
-    it("builds no more furnaces than their ore lane carries, even when the assembler would eat more", function()
+    it("builds furnaces for the plates the rate needs, not for all the assembler could eat", function()
       local stages = gear_chain(60).stages
-      stages[1].recipe = {energy = 3.2, ingredients = {amount_of(2, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
       stages[2].recipe = {energy = 0.5, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
 
       local plans = planner.plan_chain(gear_chain(40, {stages = stages}))
 
-      assert.are.equal(12, plans[1].machines) -- one assembler eats 300 plates a minute: 16 furnaces, but the ore lane feeds 12
-      assert.near(45, plans[2].output_per_minute, 1e-6) -- 225 plates, 5 a gear: what the assembler gets, not its 60
+      assert.are.equal(11, plans[1].machines) -- 40 gears take 200 plates: 10.67 furnaces; the assembler could eat 300 (16 furnaces)
+      assert.near(41.25, plans[2].output_per_minute, 1e-6) -- 11 furnaces make 206.25 plates, 5 a gear
+    end)
+
+    it("builds one furnace for a rate that takes a fraction of one furnace's plates", function()
+      local plans = planner.plan_chain(gear_chain(1))
+
+      assert.are.equal(1, plans[1].machines) -- 1 gear takes 2 plates; the assembler could eat 100.8
+      assert.are.equal(1, plans[2].machines)
+    end)
+
+    it("shows an earlier stage making only what its output lane carries when its last machine is more than the lane takes", function()
+      local stages = gear_chain(60).stages
+      stages[1].machine_speed = 1.1 -- 20.625 plates a minute a furnace: the lane takes 21.8 of them
+
+      local plans = planner.plan_chain(gear_chain(225, {stages = stages}))
+
+      assert.are.equal(22, plans[1].machines)
+      assert.near(450, plans[1].output_per_minute, 1e-6) -- not 22 x 20.625
+    end)
+
+    it("gives each stage the machines' worth of work the rate asks of it, as a fraction", function()
+      local plans = planner.plan_chain(gear_chain(1))
+
+      assert.near(2 / 18.75, plans[1].load, 1e-9) -- 2 plates a minute of a furnace's 18.75
+      assert.near(1 / 60, plans[2].load, 1e-9) -- 1 gear of an assembler's 60 (this request has no inserter limit)
+    end)
+
+    it("gives the load of every stage in proportion to the rate", function()
+      local at_one, at_ten = planner.plan_chain(gear_chain(1)), planner.plan_chain(gear_chain(10))
+
+      assert.near(10 * at_one[1].load, at_ten[1].load, 1e-9)
+      assert.near(10 * at_one[2].load, at_ten[2].load, 1e-9)
+    end)
+
+    -- The assembler takes two input inserters (100.8 plates a minute) and makes at most 60 gears with them.
+    local function gear_chain_with_inserters(rate)
+      local chain = gear_chain(rate)
+      chain.stages[1].inserters = {items_per_minute = 50.4, max_input = 1, max_output = 1}
+      chain.stages[2].inserters = {items_per_minute = 50.4, max_input = 2, max_output = 2}
+      return chain
+    end
+
+    it("gives a single machine only the inserters its share of the work needs", function()
+      local plans = planner.plan_chain(gear_chain_with_inserters(25)) -- half an assembler: 50 plates a minute
+
+      assert.are.equal(1, plans[2].machines)
+      assert.are.equal(1, plans[2].input_inserters) -- 49.6 plates fit one inserter's 50.4
+      assert.are.equal(1, plans[2].output_inserters)
+    end)
+
+    it("keeps both inserters of a single machine when its share needs more than one", function()
+      local plans = planner.plan_chain(gear_chain_with_inserters(40)) -- 80 plates a minute
+
+      assert.are.equal(2, plans[2].input_inserters)
+      assert.are.equal(1, plans[2].output_inserters) -- 40 gears fit one inserter
+    end)
+
+    it("keeps every inserter when there are two machines, since the first runs flat out", function()
+      local plans = planner.plan_chain(gear_chain_with_inserters(60))
+
+      assert.are.equal(2, plans[2].machines)
+      assert.are.equal(2, plans[2].input_inserters)
+    end)
+
+    it("trims an earlier stage too, which then makes no more than its trimmed inserters move", function()
+      local chain = gear_chain_with_inserters(20) -- 40 plates a minute
+      chain.stages[1].machine_speed = 4 -- 75 plates a minute a furnace: two output inserters at full speed
+      chain.stages[1].inserters = {items_per_minute = 50.4, max_input = 2, max_output = 2}
+
+      local plans = planner.plan_chain(chain)
+
+      assert.are.equal(1, plans[1].machines)
+      assert.are.equal(1, plans[1].input_inserters) -- 40 of 75 plates: 0.53 of the furnace
+      assert.are.equal(1, plans[1].output_inserters)
+      assert.near(50.4, plans[1].output_per_minute, 1e-6)
+      assert.near(50.4, plans[1].inputs[1].per_minute, 1e-6) -- ore in, one for one
+    end)
+
+    it("trims a machine that can have three inserters to two when 0.65 of it is used", function()
+      local chain = gear_chain_with_inserters(33) -- 99 plates a minute; three inserters move 151.2 at full speed
+      chain.stages[2].inserters = {items_per_minute = 50.4, max_input = 3, max_output = 3}
+      chain.stages[2].recipe = {energy = 0.5, ingredients = {amount_of(3, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+      local plans = planner.plan_chain(chain)
+
+      assert.are.equal(1, plans[2].machines)
+      assert.are.equal(2, plans[2].input_inserters) -- 99 plates fit two inserters' 100.8
+    end)
+
+    it("shows the last stage making no more than its trimmed inserters move", function()
+      local plans = planner.plan_chain(gear_chain_with_inserters(25))
+
+      assert.near(25.2, plans[2].output_per_minute, 1e-6) -- one input inserter: 50.4 plates, 2 a gear
+      assert.near(50.4, plans[2].inputs[1].per_minute, 1e-6)
+    end)
+
+    it("shows the last stage making and eating what the stage before gives it", function()
+      local plans = planner.plan_chain(gear_chain(1))
+
+      assert.near(18.75, plans[1].output_per_minute, 1e-6) -- one furnace
+      assert.near(9.375, plans[2].output_per_minute, 1e-6) -- 18.75 plates, 2 a gear
+      assert.near(18.75, plans[2].inputs[1].per_minute, 1e-6)
     end)
 
     it("refuses a later stage that eats a second ingredient", function()

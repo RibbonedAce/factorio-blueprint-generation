@@ -78,9 +78,11 @@
 --
 -- A plate only travels the way its belt runs, so it can only reach inserters further
 -- along the belt than the one that dropped it. The columns all start on the same row,
--- and the belt between two columns runs north when the first column reaches further
--- down than the second, and south otherwise, so that every plate has an inserter of
--- the second column ahead of it. Next to 2 assemblers (rows 0 to 4), 11 furnaces
+-- and the belt between two columns runs north when the first column is the longer of the
+-- two for the work they do, and south otherwise, so that every plate has an inserter of
+-- the second column ahead of it. The lengths come from how many machines' worth of work
+-- each column does (a fraction), not from how many machines the rate rounds up to, so
+-- the belt runs the same way at 1 item a minute and at 100. Next to 2 assemblers (rows 0 to 4), 11 furnaces
 -- (rows 0 to 21) would waste the plates of the 8 lowest furnaces on a southbound belt:
 -- they flow south past the last assembler. On a northbound belt (^) they all pass the
 -- assemblers' inserters, and the lowest assembler has the first pick (a smaller chain,
@@ -106,6 +108,7 @@ local layout = {}
 local INPUT_INSERTER_OFFSET = 1
 local MACHINE_OFFSET = 2
 
+local LENGTH_TOLERANCE = 1e-9  -- two lengths this close (relative) are equal
 local MACHINES_PER_POLE = 2  -- a small pole's supply area covers two machines' inserters
 
 -- The output belt winds (see the diagram above) for machines of this size with this many output inserters.
@@ -181,6 +184,7 @@ end
 ---@field first_row integer  tile row of the first machine's top edge: the same for every column of a chain
 ---@field feeds_next boolean  the output belt feeds another column of machines, so it stays a plain belt
 ---@field draws_input_belt boolean  false when the previous column's output belt is this one's input belt
+---@field load number  how many machines' worth of work the column does (see `bpgen.StageLayout`)
 
 ---@param shape bpgen.Shape
 ---@param place bpgen.Place
@@ -229,6 +233,7 @@ end
 ---@field machine_count integer
 ---@field poles bpgen.Poles
 ---@field draws_input_belt boolean  false when the previous column's output belt is this one's input belt
+---@field load number  how many machines' worth of work the column does, which decides which way the belt to the next column runs
 ---@field shared_belt? bpgen.SharedBelt  how the output belt runs, when the next column shares it
 local Builder = {}
 Builder.__index = Builder
@@ -249,6 +254,7 @@ function Builder.new(machine_count, names, shape, entities, place)
     machine_count = machine_count,
     poles = {input = {}, output = {}},
     draws_input_belt = place.draws_input_belt,
+    load = place.load,
   }, Builder)
 end
 
@@ -444,19 +450,29 @@ local function wire_columns(builders)
   end
 end
 
+-- How many rows the column would take if it had only the machines the work needs (a
+-- machine that is used for a fifth counts as a fifth). That grows in step with the
+-- rate, so comparing two columns' lengths gives the same answer at any rate.
+---@return number
+function Builder:length_for_load()
+  return self.load * self.geometry.spacing
+end
+
 -- How the belt between a column and the next one runs: down to the lower of the
--- two columns' last needs, and north exactly when the column drops its product
--- further down than the next column takes it, so that the plates of its lowest
--- machines still pass the next column's inserters (see the diagram of the
--- chain above). Otherwise it runs south, which carries the plates on to the next column's
--- lower machines.
+-- two columns' last needs, and north when the column is the longer of the two for the
+-- work it does, so that the plates of its lowest machines still pass the next
+-- column's inserters (see the diagram of the chain above). Otherwise it runs south,
+-- which carries the plates on to the next column's lower machines. The lengths come
+-- from the work and not from the machines built, so the belt runs the same way for
+-- 1 item a minute and for 100 (owner, 2026-11-06 22:59). Equal lengths (within
+-- rounding) run north.
 ---@param builder bpgen.Builder
 ---@param next_builder bpgen.Builder
 local function share_belt(builder, next_builder)
   local last_pickup_row = next_builder:last_input_row()
-  local runs_north = builder:last_output_row() > last_pickup_row
+  local runs_north = builder:length_for_load() >= next_builder:length_for_load() * (1 - LENGTH_TOLERANCE)
   builder.shared_belt = {
-    end_row = math.max(builder:end_row(), last_pickup_row + 1),
+    end_row = math.max(builder:last_output_row(), last_pickup_row) + 1, -- no tail below the last inserter that uses the belt
     direction = runs_north and defines.direction.north or defines.direction.south,
   }
 end
@@ -487,7 +503,13 @@ function layout.build_chain(stages, names)
   local first_row = chain_first_row(stages)
   for index, stage in ipairs(stages) do
     local stage_names = {machine = stage.machine, belt = names.belt, inserter = names.inserter, pole = names.pole}
-    local place = {origin = origin, first_row = first_row, feeds_next = index < #stages, draws_input_belt = index == 1}
+    local place = {
+      origin = origin,
+      first_row = first_row,
+      feeds_next = index < #stages,
+      draws_input_belt = index == 1,
+      load = stage.load or stage.machine_count,
+    }
     local builder = Builder.new(stage.machine_count, stage_names, stage.shape, entities, place)
     builders[index] = builder
     origin = builder.geometry.output_belt_column -- the next column's input belt

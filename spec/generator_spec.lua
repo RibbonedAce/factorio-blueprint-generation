@@ -595,6 +595,15 @@ describe("generator", function()
       assert.are.equal(6, count_named(result.entities, "stone-furnace")) -- 100.8 plates / 18.75 = 5.4
     end)
 
+    it("builds one furnace for one gear a minute, since two plates are all it takes", function()
+      _G.prototypes = gear_game()
+
+      local result = generator.generate("iron-gear-wheel", 1)
+
+      assert.are.equal(1, count_named(result.entities, "stone-furnace"))
+      assert.are.equal(1, count_named(result.entities, "assembling-machine-1"))
+    end)
+
     it("puts the furnaces on the left of the assemblers", function()
       _G.prototypes = gear_game()
 
@@ -752,6 +761,15 @@ describe("generator", function()
       assert.are.equal(9, count_named(result.entities, "inserter"))
     end)
 
+    it("gives a single assembler one output inserter when its share of the work needs no more, so the belt does not wind", function()
+      _G.prototypes = cable_game()
+
+      local result = generator.generate("copper-cable", 1)
+
+      -- a furnace's input and output inserter, the assembler's one input and one output inserter
+      assert.are.equal(4, count_named(result.entities, "inserter"))
+    end)
+
     it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
       _G.prototypes = cable_game()
       local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
@@ -832,6 +850,66 @@ describe("generator", function()
 
       assert.are.same(refusal, generator.max_rate_message("iron-gear-wheel"))
     end)
+  end)
+
+  describe("the belt between two steps, whatever the rate", function()
+    -- The furnaces' column is much longer than the assemblers' for the plates it makes (a furnace column takes
+    -- 2 rows for 18.75 plates a minute, an assembler 3 rows for 50 to 100), so the belt of plates runs north
+    -- whether 1 or 900 are asked. The direction comes from the work each column does, not from how many
+    -- machines the rate happens to round up to.
+    local function plate_belt_directions(entities)
+      local directions, seen = {}, {}
+      for _, entity in ipairs(entities) do
+        if entity.name == "transport-belt" and entity.position.x == 5.5 then
+          if not seen[entity.direction] then
+            seen[entity.direction] = true
+            directions[#directions + 1] = entity.direction
+          end
+        end
+      end
+      return directions
+    end
+
+    local function game_of(ore, plate, product, plates_in, products_out, energy)
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {
+          [plate] = a_recipe{energy = 3.2, ingredients = {amount_of(1, ore)}, products = {amount_of(1, plate)}, category = "smelting"},
+          [product] = a_recipe{energy = energy, ingredients = {amount_of(plates_in, plate)}, products = {amount_of(products_out, product)}},
+        },
+      }
+    end
+
+    for _, rate in ipairs({1, 10, 100, 225}) do
+      it("runs the plates north for gear wheels when " .. rate .. " are asked", function()
+        _G.prototypes = game_of("iron-ore", "iron-plate", "iron-gear-wheel", 2, 1, 0.5)
+
+        local result = generator.generate("iron-gear-wheel", rate)
+
+        assert.are.same({defines.direction.north}, plate_belt_directions(result.entities))
+      end)
+    end
+
+    for _, rate in ipairs({1, 10, 100, 900}) do
+      it("runs the plates north for copper cables when " .. rate .. " are asked", function()
+        _G.prototypes = game_of("copper-ore", "copper-plate", "copper-cable", 1, 2, 0.5)
+
+        local result = generator.generate("copper-cable", rate)
+
+        assert.are.same({defines.direction.north}, plate_belt_directions(result.entities))
+      end)
+    end
+
+    for _, rate in ipairs({1, 10, 100}) do
+      it("runs the plates south when the assemblers take more rows than the furnaces for the same plates and " .. rate .. " are asked", function()
+        _G.prototypes = game_of("iron-ore", "iron-plate", "iron-gear-wheel", 1, 1, 5) -- an assembler eats only 6 plates a minute
+
+        local result = generator.generate("iron-gear-wheel", rate)
+
+        assert.are.same({defines.direction.south}, plate_belt_directions(result.entities))
+      end)
+    end
   end)
 
   describe("refusals", function()

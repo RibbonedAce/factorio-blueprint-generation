@@ -82,6 +82,7 @@
 
 ---@class bpgen.Plan  what the planner decided to build
 ---@field machines integer
+---@field load number  how many machines' worth of work the rate asks of the stage: less than `machines` when the last machine is only partly used
 ---@field output_per_minute number
 ---@field inputs bpgen.PlanInput[]  per ingredient, in the recipe's order
 ---@field lanes string[]  the item on each of the input belt's two lanes
@@ -107,6 +108,7 @@
 -- One column of machines in a chain.
 ---@class bpgen.StageLayout
 ---@field machine_count integer  at least 1
+---@field load? number  how many machines' worth of work the rate asks of the column: less than `machine_count` when the last machine is only partly used, `machine_count` when left out. It decides which way the belt to the next column runs, so that the direction does not change with the rate
 ---@field machine string  prototype name of the machine
 ---@field shape bpgen.Shape  the machine size must be one `supports_machine_size` accepts
 
