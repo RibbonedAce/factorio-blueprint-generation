@@ -19,6 +19,12 @@ Status: early development.
 | Stone brick | Stone furnaces | Stone on one lane, coal on the other |
 | Iron gear wheel | Stone furnaces (plates), then assembling machines 1 (gears) | Iron ore on one lane, coal on the other. The assemblers are electric and take the plates straight from the furnaces |
 | Copper cable | Stone furnaces (plates), then assembling machines 1 (cables) | Copper ore on one lane, coal on the other. One plate makes two cables, so each assembler has two output inserters and the cable belt winds; at most 900 per minute (24 furnaces, 9 assemblers) |
+| Wooden chest | Assembling machines 1 | Wood on both lanes |
+| Iron chest | Stone furnaces (plates), then assembling machines 1 (chests) | Iron ore on one lane, coal on the other |
+| Pipe | Stone furnaces (plates), then assembling machines 1 (pipes) | Iron ore on one lane, coal on the other |
+| Stone furnace | Assembling machines 1 | Stone on both lanes |
+| Firearm magazine | Stone furnaces (plates), then assembling machines 1 (magazines) | Iron ore on one lane, coal on the other |
+| Light armor | Stone furnaces (plates), then assembling machines 1 (armor) | Iron ore on one lane, coal on the other |
 
 A blueprint is a row of columns of machines, one column per step from the raw items to the product, from left to right. A column is an input belt, inserters, the machines, output inserters and an output belt, and the output belt of one column is the input belt of the next. The belt between two columns runs toward the machines that still need its items, so none of the plates pass the second column by: up the page when the first column is the taller one, down when the second is. All the columns start on the same row. Iron plate, copper plate and stone brick take one column (furnaces fed with ore and coal). Iron gear wheel takes two: furnaces on the left make plates from iron ore, and assembling machines on the right make gear wheels from those plates. Small electric poles are placed and wired for you, and one wire joins each column to the next, so the whole blueprint needs one connection to your power network. The belts, inserters and poles are the first-tier ones (transport belt, inserter, small electric pole); there is no choice of tier yet.
 

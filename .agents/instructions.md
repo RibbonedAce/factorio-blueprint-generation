@@ -6,7 +6,7 @@ These come from the owner's project instructions plus rules they stated during t
 
 - The assistant owns the work inside the repo, but does not decide what leaves it.
 - Since 2026-11-07 the assistant works directly in the owner's checkout (`C:\Users\tyler\AppData\Roaming\Factorio\mods\blueprint-generation`, branch `llm-main`): it edits files in place and COMMITS locally. It NEVER pushes; the owner reviews the commits and pushes them.
-- Commit code and notes (`.agents/`) separately, one commit per logical change, so the owner can review or revert each. Never amend or rewrite commits the owner may already have reviewed; add new ones.
+- Commit code, tests and notes (`.agents/`, README) TOGETHER, one commit per logical change (owner's preference, 2026-11-07: he always committed them together by hand; the old separate-patches rule came from the sandbox workflow). Never amend or rewrite commits the owner may already have reviewed; add new ones.
 - `CLAUDE.md` (project instructions) is in the repo root; the owner decides whether it is committed.
 
 ## Teaching

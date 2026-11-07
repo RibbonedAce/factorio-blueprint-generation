@@ -30,6 +30,12 @@ local config = {
     ["stone-brick"] = true,
     ["iron-gear-wheel"] = true,
     ["copper-cable"] = true,
+    ["wooden-chest"] = true,
+    ["iron-chest"] = true,
+    ["pipe"] = true,
+    ["stone-furnace"] = true,
+    ["firearm-magazine"] = true,
+    ["light-armor"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns
