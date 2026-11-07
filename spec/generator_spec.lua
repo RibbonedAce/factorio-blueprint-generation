@@ -320,7 +320,7 @@ describe("generator", function()
       assert.are.equal(8, count_named(result.entities, "assembling-machine-1")) -- 400 / 50.4 = 7.94; 8 x 100.8 plates is under the 900 of two lanes
     end)
 
-    it("refuses the rate when another machine would eat more than the input lanes carry", function()
+    it("refuses the rate when the input lanes cannot carry what the machines would eat", function()
       _G.prototypes = fake_prototypes{
         belt_speed = 0.03125,
         inserter_rotation_speed = 0.014,
@@ -331,7 +331,7 @@ describe("generator", function()
       local result, error_message = generator.generate("iron-gear-wheel", 500)
 
       assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-rate-too-high", "403.2"}, error_message) -- 900 / 100.8 = 8.9, so 8 machines x 50.4
+      assert.are.same({"blueprint-generation.error-rate-too-high", "450"}, error_message) -- 900 / 100.8 = 8.93 machines' worth x 50.4
     end)
 
     it("refuses the machine when its size is one the layout cannot handle", function()
@@ -415,7 +415,7 @@ describe("generator", function()
       assert.are.equal(8, count_named(result.entities, "assembling-machine-1")) -- 800 / 100.8 = 7.94
     end)
 
-    it("refuses the rate when another machine would overfill an output lane", function()
+    it("refuses the rate when the two output lanes cannot carry it", function()
       _G.prototypes = fake_prototypes{
         belt_speed = 0.03125,
         inserter_rotation_speed = 0.014,
@@ -423,10 +423,10 @@ describe("generator", function()
         recipes = {["iron-gear-wheel"] = doubling},
       }
 
-      local result, error_message = generator.generate("iron-gear-wheel", 810)
+      local result, error_message = generator.generate("iron-gear-wheel", 901)
 
       assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-rate-too-high", "806.4"}, error_message) -- 450 / 50.4 = 8.9, so 8 machines x 100.8
+      assert.are.same({"blueprint-generation.error-rate-too-high", "900"}, error_message) -- 450 / 50.4 = 8.93 machines' worth x 100.8: both lanes full
     end)
   end)
 
@@ -472,10 +472,10 @@ describe("generator", function()
         recipes = {["iron-gear-wheel"] = two_ingredients},
       }
 
-      local result, error_message = generator.generate("iron-gear-wheel", 130)
+      local result, error_message = generator.generate("iron-gear-wheel", 151)
 
       assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-rate-too-high", "126"}, error_message) -- a machine eats 75.6 cables a minute: 450 / 75.6 = 5.9, so 5 machines x 25.2
+      assert.are.same({"blueprint-generation.error-rate-too-high", "150"}, error_message) -- a machine eats 75.6 cables a minute: 450 / 75.6 = 5.95 machines' worth x 25.2
     end)
   end)
 
@@ -674,16 +674,17 @@ describe("generator", function()
       local result, error_message = generator.generate("iron-gear-wheel", 250)
 
       assert.is_nil(result)
-      -- a lane carries 450 plates a minute, enough for 4 assemblers of 100.8 (4.46), which make 4 x 50.4 gears
-      assert.are.same({"blueprint-generation.error-rate-too-high", "201.6"}, error_message)
+      -- a lane carries 450 plates a minute, enough for 4.46 assemblers' worth of 100.8, which make 4.46 x 50.4 gears
+      assert.are.same({"blueprint-generation.error-rate-too-high", "225"}, error_message)
     end)
 
-    it("allows the rate when the plates fill the lane up to the last assembler that fits", function()
+    it("builds an assembler for the part of an assembler that the plate lane can still feed", function()
       _G.prototypes = gear_game()
 
-      local result = generator.generate("iron-gear-wheel", 201.6)
+      local result = generator.generate("iron-gear-wheel", 225)
 
-      assert.are.equal(4, count_named(result.entities, "assembling-machine-1"))
+      assert.are.equal(5, count_named(result.entities, "assembling-machine-1")) -- the lane holds 4.46 assemblers' worth of plates
+      assert.are.equal(24, count_named(result.entities, "stone-furnace")) -- 450 plates / 18.75; five assemblers at full speed would eat 504
     end)
 
     it("limits the rate by the belt speed of the plate lane when the belt is slower", function()
@@ -692,7 +693,7 @@ describe("generator", function()
       local result, error_message = generator.generate("iron-gear-wheel", 120)
 
       assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-rate-too-high", "100.8"}, error_message) -- 2 assemblers: 201.6 plates <= 225
+      assert.are.same({"blueprint-generation.error-rate-too-high", "112.5"}, error_message) -- 225 plates / 100.8 = 2.23 assemblers' worth x 50.4
     end)
 
     it("makes a recipe in the machine of a later category when the config names no machine for its first", function()

@@ -279,13 +279,13 @@ describe("planner", function()
       local recipe = {energy = 1, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(2, "iron-plate")}}
 
       local plan, reason, max_rate = planner.plan{
-        product = "iron-plate", rate_per_minute = 400, recipe = recipe,
+        product = "iron-plate", rate_per_minute = 451, recipe = recipe,
         machine_speed = 1, lane_items_per_minute = 450,
       }
 
       assert.is_nil(plan)
       assert.are.equal("rate-too-high", reason)
-      assert.near(360, max_rate, 1e-6) -- each machine makes 60 crafts x 2 = 120; 450 / 120 = 3.75, so 3 machines
+      assert.near(450, max_rate, 1e-6) -- each machine makes 60 crafts x 2 = 120; the lane takes 450 / 120 = 3.75 machines' worth
     end)
   end)
 
@@ -324,6 +324,23 @@ describe("planner", function()
       assert.near(360, plan.inputs[2].per_minute, 1e-6) -- 2 machines x 60 crafts x 3
     end)
 
+    it("builds a machine for the part of a machine that the lane of the most eaten ingredient can still feed", function()
+      local recipe = {
+        energy = 0.5,
+        ingredients = {amount_of(1, "iron-plate"), amount_of(3, "copper-cable")},
+        products = {amount_of(1, "electronic-circuit")},
+      }
+
+      local plan = planner.plan{
+        product = "electronic-circuit", rate_per_minute = 150, recipe = recipe,
+        machine_speed = 0.5, lane_items_per_minute = 450,
+      }
+
+      assert.are.equal(3, plan.machines) -- the cable lane feeds 450 / 180 = 2.5 machines' worth
+      assert.near(150, plan.output_per_minute, 1e-6) -- 2.5 x 60, not 3 x 60
+      assert.near(450, plan.inputs[2].per_minute, 1e-6) -- 2.5 machines x 60 crafts x 3 cables: the whole lane
+    end)
+
     it("limits the rate by the ingredient whose lane fills first when the recipe has two", function()
       local recipe = {
         energy = 0.5,
@@ -332,13 +349,13 @@ describe("planner", function()
       }
 
       local plan, reason, max_rate = planner.plan{
-        product = "electronic-circuit", rate_per_minute = 121, recipe = recipe,
+        product = "electronic-circuit", rate_per_minute = 151, recipe = recipe,
         machine_speed = 0.5, lane_items_per_minute = 450,
       }
 
       assert.is_nil(plan)
       assert.are.equal("rate-too-high", reason)
-      assert.near(120, max_rate, 1e-6) -- 450 / 180 = 2.5, so 2 machines x 60; the plates alone would allow 7
+      assert.near(150, max_rate, 1e-6) -- 450 / 180 = 2.5 machines' worth x 60; the plates alone would allow 7.5
     end)
 
     it("limits the rate by the first ingredient when its lane fills first", function()
@@ -349,13 +366,13 @@ describe("planner", function()
       }
 
       local plan, reason, max_rate = planner.plan{
-        product = "electronic-circuit", rate_per_minute = 121, recipe = recipe,
+        product = "electronic-circuit", rate_per_minute = 151, recipe = recipe,
         machine_speed = 0.5, lane_items_per_minute = 450,
       }
 
       assert.is_nil(plan)
       assert.are.equal("rate-too-high", reason)
-      assert.near(120, max_rate, 1e-6) -- the same recipe with its ingredients listed the other way round
+      assert.near(150, max_rate, 1e-6) -- the same recipe with its ingredients listed the other way round
     end)
 
     it("counts inserters for both ingredients together when they share a machine's input side", function()
@@ -628,14 +645,14 @@ describe("planner", function()
       local recipe = {energy = 1, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
 
       local plan, reason, max_rate = planner.plan{
-        product = "iron-gear-wheel", rate_per_minute = 421, recipe = recipe,
+        product = "iron-gear-wheel", rate_per_minute = 451, recipe = recipe,
         machine_speed = 1, lane_items_per_minute = 450,
         inserters = {items_per_minute = 100, max_input = 2, max_output = 2},
       }
 
       assert.is_nil(plan)
       assert.are.equal("rate-too-high", reason)
-      assert.near(420, max_rate, 1e-6) -- makes and eats 60 a minute, one inserter each side; 450 / 60 = 7.5
+      assert.near(450, max_rate, 1e-6) -- makes and eats 60 a minute, one inserter each side; 450 / 60 = 7.5 machines' worth
     end)
 
     it("uses both output lanes when two inserters empty each machine", function()
@@ -647,36 +664,36 @@ describe("planner", function()
         inserters = {items_per_minute = 100, max_input = 2, max_output = 2},
       }
 
-      assert.are.equal(4, plan.machines) -- one lane alone would stop at 3 (450 / 120)
+      assert.are.equal(4, plan.machines) -- one lane alone would stop at 450 (450 / 120 = 3.75 machines' worth)
       assert.are.equal(2, plan.output_inserters) -- 120 a minute needs two inserters of 100
     end)
 
-    it("limits the machines by what one inserter puts on a lane when two inserters empty each machine", function()
+    it("limits the rate by what one inserter puts on a lane when two inserters empty each machine", function()
       local recipe = {energy = 1, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(2, "iron-gear-wheel")}}
 
       local plan, reason, max_rate = planner.plan{
-        product = "iron-gear-wheel", rate_per_minute = 481, recipe = recipe,
+        product = "iron-gear-wheel", rate_per_minute = 541, recipe = recipe,
         machine_speed = 1, lane_items_per_minute = 450,
         inserters = {items_per_minute = 100, max_input = 2, max_output = 2},
       }
 
       assert.is_nil(plan)
       assert.are.equal("rate-too-high", reason)
-      assert.near(480, max_rate, 1e-6) -- 450 / 100 = 4.5 machines, so 4 x 120; the two lanes could take 7 (900 / 120)
+      assert.near(540, max_rate, 1e-6) -- 450 / 100 = 4.5 machines' worth x 120; the two lanes could take 7.5 (900 / 120)
     end)
 
     it("keeps the product on one lane when three inserters empty each machine, which the belt cannot wind for", function()
       local recipe = {energy = 1, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(5, "iron-gear-wheel")}}
 
       local plan, reason, max_rate = planner.plan{
-        product = "iron-gear-wheel", rate_per_minute = 301, recipe = recipe,
+        product = "iron-gear-wheel", rate_per_minute = 451, recipe = recipe,
         machine_speed = 1, lane_items_per_minute = 450,
         inserters = {items_per_minute = 100, max_input = 3, max_output = 3},
       }
 
       assert.is_nil(plan)
       assert.are.equal("rate-too-high", reason)
-      assert.near(300, max_rate, 1e-6) -- each machine makes 60 crafts x 5 = 300 and needs 3 inserters; 450 / 300 = 1.5
+      assert.near(450, max_rate, 1e-6) -- each machine makes 60 crafts x 5 = 300 and needs 3 inserters; 450 / 300 = 1.5 machines' worth
     end)
   end)
 
@@ -723,12 +740,20 @@ describe("planner", function()
       assert.are.equal(3, plans[2].machines)
     end)
 
+    it("builds a gear machine for the part of a machine that the plate lane can still feed", function()
+      local plans = planner.plan_chain(gear_chain(225))
+
+      assert.are.equal(4, plans[2].machines) -- 225 / 60 = 3.75
+      assert.are.equal(24, plans[1].machines) -- 450 plates / 18.75; four machines at full speed would eat 480 and need 26
+      assert.near(225, plans[2].output_per_minute, 1e-6) -- the lane holds 3.75 machines' worth, not four
+    end)
+
     it("refuses a rate the plate lane cannot carry to the gear machines", function()
-      local plans, reason, max_rate = planner.plan_chain(gear_chain(200))
+      local plans, reason, max_rate = planner.plan_chain(gear_chain(226))
 
       assert.is_nil(plans)
       assert.are.equal("rate-too-high", reason)
-      assert.near(180, max_rate, 1e-6) -- one plate lane carries 450 plates, enough for 3 machines of 120
+      assert.near(225, max_rate, 1e-6) -- one plate lane carries 450 plates, enough for 3.75 machines' worth of 120 plates (60 gears)
     end)
 
     it("refuses a rate that the ore lane of the first stage cannot carry", function()
@@ -742,19 +767,7 @@ describe("planner", function()
 
       assert.is_nil(plans)
       assert.are.equal("rate-too-high", reason)
-      assert.near(60, max_rate, 1e-6) -- 2 gear machines need 13 furnaces; 1 needs 7
-    end)
-
-    it("limits the plates to one lane even when the last stage winds its output", function()
-      local stages = gear_chain(60).stages
-      stages[2].inserters = {items_per_minute = 100, max_input = 2, max_output = 2}
-      stages[2].recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(2, "iron-gear-wheel")}}
-
-      local plans, reason, max_rate = planner.plan_chain(gear_chain(1000, {stages = stages}))
-
-      assert.is_nil(plans)
-      assert.are.equal("rate-too-high", reason)
-      assert.near(360, max_rate, 1e-6) -- 3 machines of 120 gears; 450 plates / 120 per machine
+      assert.near(112.5, max_rate, 1e-6) -- 12 furnaces make 225 plates a minute, 2 plates a gear
     end)
 
     it("uses both lanes of the last stage's output belt when two inserters empty each of its machines", function()
@@ -768,28 +781,7 @@ describe("planner", function()
 
       assert.is_nil(plans)
       assert.are.equal("rate-too-high", reason)
-      assert.near(480, max_rate, 1e-6) -- one inserter puts 50.4 on a lane: 450 / 50.4 = 8.9 machines of 60 gears
-    end)
-
-    it("puts everything on one lane of the belt between two stages, even when two inserters empty the first", function()
-      local stages = gear_chain(60).stages
-      local inserters = {items_per_minute = 50.4, max_input = 2, max_output = 2}
-      -- a machine makes 60 plates a minute: two output inserters, but a plain belt carries it all on one lane.
-      -- It burns nothing, so the ore has both lanes of its input belt and does not set the limit.
-      stages[1].recipe = {energy = 1, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
-      stages[1].machine_speed = 1
-      stages[1].fuel = nil
-      stages[1].inserters = inserters
-      -- a machine eats 30 plates a minute and makes 30 gears
-      stages[2].recipe = {energy = 2, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
-      stages[2].machine_speed = 1
-      stages[2].inserters = inserters
-
-      local plans, reason, max_rate = planner.plan_chain(gear_chain(1000, {stages = stages}))
-
-      assert.is_nil(plans)
-      assert.are.equal("rate-too-high", reason)
-      assert.near(420, max_rate, 1e-6) -- 450 / 60 = 7 machines make 420 plates: 14 machines of 30 gears
+      assert.near(535.7142857, max_rate, 1e-6) -- one inserter puts 50.4 on a lane: 450 / 50.4 = 8.93 machines' worth of 60 gears
     end)
 
     it("refuses a later stage that eats something other than the stage before it makes", function()
@@ -822,7 +814,7 @@ describe("planner", function()
       assert.are.equal("unsupported-recipe", reason)
     end)
 
-    it("reports that nothing fits when one machine of the last stage already needs more than the first stage can feed", function()
+    it("limits the rate to what the first stage can make when one machine of the last stage already eats more", function()
       local stages = gear_chain(60).stages
       stages[1].recipe = {energy = 3.2, ingredients = {amount_of(2, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
       stages[2].recipe = {energy = 0.5, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
@@ -831,7 +823,29 @@ describe("planner", function()
 
       assert.is_nil(plans)
       assert.are.equal("rate-too-high", reason)
-      assert.are.equal(0, max_rate) -- one assembler eats 300 plates a minute, 16 furnaces; the ore lane feeds 12 (450 / 37.5)
+      assert.near(45, max_rate, 1e-6) -- one assembler eats 300 plates a minute; the ore lane feeds 12 furnaces (450 / 37.5), 225 plates, 5 a gear
+    end)
+
+    it("builds only the furnaces the gear machines can use when their output lane fills before their plate lane", function()
+      local stages = gear_chain(60).stages
+      -- a machine eats 60 plates a minute and makes 240 gears, so its output lane holds 450 / 240 = 1.875 machines' worth
+      stages[2].recipe = {energy = 0.5, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(4, "iron-gear-wheel")}}
+
+      local plans = planner.plan_chain(gear_chain(450, {stages = stages}))
+
+      assert.are.equal(2, plans[2].machines) -- 450 / 240 = 1.875
+      assert.are.equal(6, plans[1].machines) -- the machines work at 1.875 x 60 = 112.5 plates a minute, not 2 x 60 (which would take 7 furnaces)
+    end)
+
+    it("builds no more furnaces than their ore lane carries, even when the assembler would eat more", function()
+      local stages = gear_chain(60).stages
+      stages[1].recipe = {energy = 3.2, ingredients = {amount_of(2, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
+      stages[2].recipe = {energy = 0.5, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+      local plans = planner.plan_chain(gear_chain(40, {stages = stages}))
+
+      assert.are.equal(12, plans[1].machines) -- one assembler eats 300 plates a minute: 16 furnaces, but the ore lane feeds 12
+      assert.near(45, plans[2].output_per_minute, 1e-6) -- 225 plates, 5 a gear: what the assembler gets, not its 60
     end)
 
     it("refuses a later stage that eats a second ingredient", function()

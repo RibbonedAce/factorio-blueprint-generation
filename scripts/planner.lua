@@ -188,44 +188,58 @@ local function rates_per_machine(request)
   }
 end
 
-local function machines_needed(rate_per_minute, output_per_machine)
-  return math.max(1, math.ceil(rate_per_minute / output_per_machine - EPSILON))
+-- How many whole machines it takes to do `machines_worth` of work: a fraction of a
+-- machine still needs a whole one, and a stage always has at least one.
+---@param machines_worth number
+---@return integer
+local function whole_machines(machines_worth)
+  return math.max(1, math.ceil(machines_worth - EPSILON))
 end
 
--- How many machines the output belt can take. With one output inserter per
--- machine the product is on one lane, which carries all of it. With two, the
--- winding belt (only the last stage's output belt winds) gives each inserter a
--- lane, but the first inserter takes all it can, so a lane can get everything one
--- inserter moves from every machine. (That is also why the two lanes together
--- never overfill: no machine makes more than two inserters move.) An output belt
--- that does not wind carries everything on its one lane, whatever the inserters.
----@param stage bpgen.StageContext
+---@param rate_per_minute number
+---@param output_per_machine number
 ---@return integer
-local function output_machine_limit(stage)
+local function machines_needed(rate_per_minute, output_per_machine)
+  return whole_machines(rate_per_minute / output_per_machine)
+end
+
+-- How many machines' worth of product the output belt can take. With one output
+-- inserter per machine the product is on one lane, which carries all of it. With
+-- two, the winding belt (only the last stage's output belt winds) gives each
+-- inserter a lane, but the first inserter takes all it can, so a lane can get
+-- everything one inserter moves from every machine. (That is also why the two
+-- lanes together never overfill: no machine makes more than two inserters move.)
+-- An output belt that does not wind carries everything on its one lane, whatever
+-- the inserters.
+---@param stage bpgen.StageContext
+---@return number
+local function output_machines_worth(stage)
   local lane_flow_per_machine = stage.per_machine.output
   if stage.winds and stage.per_machine.output_inserters == WINDING_OUTPUT_INSERTERS and stage.request.inserters then
     lane_flow_per_machine = stage.request.inserters.items_per_minute
   end
-  return math.floor(stage.lane_items_per_minute / lane_flow_per_machine + EPSILON)
+  return stage.lane_items_per_minute / lane_flow_per_machine
 end
 
--- How many machines one column can serve before a belt lane is full: the
--- output belt, and the lanes that carry each ingredient (two lanes for an
--- ingredient that has the belt to itself).
+-- How many machines' worth of work the belts of one column can carry before a lane
+-- is full: the output belt, and the lanes that carry each ingredient (two lanes for
+-- an ingredient that has the belt to itself). It is not a whole number: the belts
+-- set the limit, so a column whose belts carry 4.5 machines' worth gets 5 machines,
+-- and the last works at half speed.
 ---@param stage bpgen.StageContext
----@return integer
+---@return number
 local function machines_per_belt(stage)
-  local most = output_machine_limit(stage)
+  local most = output_machines_worth(stage)
   for _, input in ipairs(stage.per_machine.inputs) do
     local lanes = lanes_carrying(stage.lanes, input.name)
-    most = math.min(most, math.floor(lanes * stage.lane_items_per_minute / input.per_minute + EPSILON))
+    most = math.min(most, lanes * stage.lane_items_per_minute / input.per_minute)
   end
   return most
 end
 
 -- What all the machines eat together, in the recipe's order.
 ---@param inputs_per_machine bpgen.PlanInput[]
----@param machines integer
+---@param machines number
 ---@return bpgen.PlanInput[]
 local function total_inputs(inputs_per_machine, machines)
   local totals = {}
@@ -243,7 +257,7 @@ end
 ---@field winds boolean  whether this stage's output belt may wind (only the last stage's can)
 ---@field per_machine bpgen.MachineRates
 ---@field eats_per_minute number  what one machine eats, all ingredients together (a later stage eats only the product of the stage before)
----@field most integer  how many machines one column can have before a belt lane is full
+---@field machines_worth number  how many machines' worth of work the belts of a column carry before a lane is full (not a whole number)
 
 -- The items on the lanes of the belt that feeds a stage, or nil when they do not
 -- fit. The first stage takes raw items, which share the two lanes (see
@@ -286,9 +300,9 @@ local function stage_context(request, stage, previous)
     winds = stage == request.stages[#request.stages],
     per_machine = per_machine,
     eats_per_minute = total_per_minute(per_machine.inputs),
-    most = 0,
+    machines_worth = 0,
   }
-  context.most = machines_per_belt(context)
+  context.machines_worth = machines_per_belt(context)
   return context
 end
 
@@ -320,71 +334,83 @@ local function stages_backwards(last)
   end
 end
 
--- How many machines each stage needs for `final_machines` machines in the last
--- stage: each stage must make what the machines of the stage after it eat.
+-- How many machines each stage gets for `rate_per_minute` of the last stage's
+-- product. The last stage gets as many as the rate needs. Each earlier stage gets
+-- as many as make what the machines of the stage after it eat, but a machine the
+-- belts cannot feed only waits, so the stage after it counts for no more than its
+-- belts carry, and no stage gets more machines than its own belts carry.
 ---@param last bpgen.StageContext
----@param final_machines integer
+---@param rate_per_minute number
 ---@return table<bpgen.StageContext, integer>
-local function machines_for(last, final_machines)
-  local machines = {[last] = final_machines}
+local function machines_for(last, rate_per_minute)
+  local machines = {[last] = machines_needed(rate_per_minute, last.per_machine.output)}
   for stage in stages_backwards(last) do
     local previous = stage.previous
     if previous then
-      local eaten = machines[stage] * stage.eats_per_minute
-      machines[previous] = machines_needed(eaten, previous.per_machine.output)
+      local working = math.min(machines[stage], stage.machines_worth)
+      local eaten = working * stage.eats_per_minute
+      machines[previous] = math.min(
+        machines_needed(eaten, previous.per_machine.output),
+        whole_machines(previous.machines_worth))
     end
   end
   return machines
 end
 
--- Whether every stage's machines fit on the belts.
+-- The most of the last stage's product that the stages make together, in items a
+-- minute. A stage makes what its machines make (`machines` says how many it has; nil
+-- for as many as its belts carry), but no more than its belts carry, and the last
+-- stage can only make as much as the product of every earlier stage allows.
 ---@param last bpgen.StageContext
----@param machines table<bpgen.StageContext, integer>
----@return boolean
-local function all_fit(last, machines)
-  for stage in stages_backwards(last) do
-    if machines[stage] > stage.most then
-      return false
-    end
-  end
-  return true
-end
-
--- The most the last stage can make: the largest number of machines in it whose
--- chain of earlier stages still fits on its belts, times what one makes.
----@param last bpgen.StageContext
+---@param machines? table<bpgen.StageContext, integer>
 ---@return number
-local function most_final_output(last)
-  for final_machines = last.most, 1, -1 do
-    if all_fit(last, machines_for(last, final_machines)) then
-      return final_machines * last.per_machine.output
+local function final_output(last, machines)
+  ---@type number
+  local most = math.huge
+  local needed = 1 -- items of the stage's product made for each item of the last stage's
+  ---@type bpgen.StageContext|nil
+  local stage_after
+  for stage in stages_backwards(last) do
+    if stage_after then
+      needed = needed * stage_after.eats_per_minute / stage_after.per_machine.output
     end
+    local working = math.min(machines and machines[stage] or math.huge, stage.machines_worth)
+    most = math.min(most, working * stage.per_machine.output / needed)
+    stage_after = stage
   end
-  return 0
+  return most
 end
 
+-- `machines` machines are built, but those past what the belts carry only wait, so
+-- the stage makes and eats what its belts carry.
 ---@param stage bpgen.StageContext
 ---@param machines integer
 ---@return bpgen.Plan
 local function stage_plan(stage, machines)
+  local working = math.min(machines, stage.machines_worth)
   return {
     machines = machines,
-    output_per_minute = machines * stage.per_machine.output,
-    inputs = total_inputs(stage.per_machine.inputs, machines),
+    output_per_minute = working * stage.per_machine.output,
+    inputs = total_inputs(stage.per_machine.inputs, working),
     lanes = stage.lanes,
     input_inserters = stage.per_machine.input_inserters,
     output_inserters = stage.per_machine.output_inserters,
   }
 end
 
--- One plan per stage, first stage first.
+-- One plan per stage, first stage first. What the last stage makes is what all the
+-- stages make together.
 ---@param last bpgen.StageContext
 ---@param machines table<bpgen.StageContext, integer>
 ---@return bpgen.Plan[]
 local function plans_of(last, machines)
   local plans = {}
   for stage in stages_backwards(last) do
-    table.insert(plans, 1, stage_plan(stage, machines[stage]))
+    local plan = stage_plan(stage, machines[stage])
+    if stage == last then
+      plan.output_per_minute = final_output(last, machines)
+    end
+    table.insert(plans, 1, plan)
   end
   return plans
 end
@@ -425,6 +451,9 @@ end
 --   "rate-too-high", max_rate   a belt lane cannot carry that rate, in some stage;
 --                               max_rate is the most the last stage can make per
 --                               minute in a single column
+--
+-- Belt limits are counted in fractions of a machine (`machines_worth`): a lane that
+-- carries 4.5 machines' worth feeds 5 machines, and the rate is limited by the lane.
 ---@param request bpgen.ChainRequest
 ---@return bpgen.Plan[]|nil plans
 ---@return bpgen.PlanReason|nil reason
@@ -435,11 +464,11 @@ function planner.plan_chain(request)
     return nil, "unsupported-recipe"
   end
 
-  local machines = machines_for(last, machines_needed(request.rate_per_minute, last.per_machine.output))
-  if not all_fit(last, machines) then
-    return nil, "rate-too-high", most_final_output(last)
+  local most = final_output(last)
+  if request.rate_per_minute > most + EPSILON then
+    return nil, "rate-too-high", most
   end
-  return plans_of(last, machines)
+  return plans_of(last, machines_for(last, request.rate_per_minute))
 end
 
 -- One stage on its own: `plan_chain` with a single stage. The request has the
