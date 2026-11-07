@@ -867,4 +867,78 @@ describe("layout", function()
       end
     end
   end)
+
+  describe("chain_block, a chain of columns as a block", function()
+    local furnace_shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+    local assembler_shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
+    local ASSEMBLER = "assembling-machine-1"
+
+    -- 7 furnaces (14 rows) feeding 2 assemblers (6 rows): the furnaces cover columns 2-3, the assemblers 7-9.
+    local function furnaces_and_assemblers(options)
+      local stages = {
+        {machine_count = 7, machine = NAMES.machine, shape = furnace_shape},
+        {machine_count = 2, machine = ASSEMBLER, shape = assembler_shape},
+      }
+      return layout.chain_block(stages, NAMES, options)
+    end
+
+    local function belt_rows(entities, x)
+      local rows = {}
+      for _, entity in ipairs(entities_named(entities, NAMES.belt)) do
+        if grid.top_left_tile(entity.position).x == x then
+          rows[#rows + 1] = grid.top_left_tile(entity.position).y
+        end
+      end
+      table.sort(rows)
+      return rows
+    end
+
+    it("gives every pole of the block", function()
+      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 0}
+
+      assert.are.equal(count_named(block.entities, NAMES.pole), #block.poles)
+    end)
+
+    it("gives the column of the product belt, which is the output belt of the last column", function()
+      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 0}
+
+      assert.are.equal(11, block.product_column) -- the assemblers' output inserters are in column 10
+    end)
+
+    it("gives the rows of the tallest column as its height", function()
+      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 0}
+
+      assert.are.equal(14, block.height) -- seven furnaces of two rows; the assemblers take six
+    end)
+
+    it("does not draw the product belt when whoever uses the block draws it", function()
+      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 0}
+
+      assert.are.same({}, belt_rows(block.entities, 11))
+      assert.are.same({}, belt_rows(block.entities, 12))
+    end)
+
+    it("draws the product belt, wound for two output inserters, when it is the last block", function()
+      local block = furnaces_and_assemblers{product_belt = true, input_belt_rows_above = 0}
+
+      assert.are.equal(2 * 6 + 1, #belt_rows(block.entities, 11) + #belt_rows(block.entities, 12))
+    end)
+
+    it("starts the input belt above the first row when it comes down from above", function()
+      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 3}
+
+      local rows = belt_rows(block.entities, 0)
+      assert.are.equal(-3, rows[1])
+      assert.are.equal(12, rows[#rows]) -- the last furnace's input inserter is in row 12
+    end)
+
+    it("lists the first tile of the belt of the first column, with its stage", function()
+      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 3}
+
+      assert.are.equal(1, #block.raw_belts)
+      assert.are.equal(0, block.raw_belts[1].column)
+      assert.are.equal(-3, block.raw_belts[1].row) -- where its belt starts, three rows above the first row
+      assert.are.equal(NAMES.machine, block.raw_belts[1].stage.machine)
+    end)
+  end)
 end)

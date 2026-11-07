@@ -1,15 +1,23 @@
 -- scripts/chain.lua
--- Works out the chain of steps that turns raw items into the item the player wants:
--- the item is made from an ingredient that is itself made from an ingredient, and so
--- on until the ingredients are raw. Pure: it knows nothing of the game, only of a
--- `lookup` function that says how an item is made.
+-- Works out the steps that turn raw items into the item the player wants: the item is
+-- made from ingredients, each of which is raw or made from ingredients of its own, and so
+-- on until everything is raw. Pure: it knows nothing of the game, only of a `lookup`
+-- function that says how an item is made.
 --
--- The blueprint is one column of machines per step, each feeding the next, so only
--- a straight line of steps can be built: every step has one ingredient that is made
--- by the step before it. A step with two such ingredients (a tree), or one that
--- mixes the earlier step's product with other ingredients, is refused.
+-- The result is a tree of steps, each with the steps that make its made ingredients. A
+-- step whose ingredients are all raw has none (the first step of a chain). A step with one
+-- made ingredient is fed by a straight chain of steps. A step with two made ingredients
+-- is fed by two blocks, one on each lane of its input belt (see scripts/blocks.lua). The
+-- following are refused:
+--   * a step with more than two made ingredients (it needs more lanes than a belt has);
+--   * a step that mixes made ingredients with raw ones (the raw items would need a lane);
+--   * a step with one made ingredient that is itself made from two (a column of machines
+--     on top of a block with two inputs is not laid out yet).
 
 local chain = {}
+
+-- The most made ingredients a step can have: one for each lane of its input belt.
+local MOST_MADE_INGREDIENTS = 2
 
 -- An ingredient that something makes, with how it is made.
 ---@class bpgen.MadeIngredient
@@ -38,74 +46,83 @@ local function crafted_ingredients(production, lookup)
   return crafted
 end
 
--- Why a step cannot be followed back along one line of steps, or nil when it can:
--- when its one made ingredient is also its only ingredient.
+-- Why a step cannot be built from its made ingredients, or nil when it can: when it has
+-- more than two, or when it mixes them with raw ingredients.
 ---@param production bpgen.Production
 ---@param crafted bpgen.MadeIngredient[]  its made ingredients
 ---@return bpgen.ChainReason|nil
 local function branching_reason(production, crafted)
-  if #crafted > 1 then
+  if #crafted > MOST_MADE_INGREDIENTS then
     return "several-crafted"
   end
-  if #production.recipe.ingredients > 1 then
+  if #crafted > 0 and #production.recipe.ingredients > #crafted then
     return "extra-ingredient"
   end
   return nil
 end
 
+-- The step for `item` once the steps that make its made ingredients are known, or nil
+-- and why not: a step with one made ingredient cannot be fed by a step with two (a fork
+-- further down was refused where it started).
 ---@param item string
 ---@param production bpgen.Production
----@return bpgen.ChainStage
-local function stage_of(item, production)
-  return {item = item, recipe = production.recipe, machine = production.machine, fuel = production.fuel}
+---@param suppliers bpgen.ChainStage[]
+---@return bpgen.ChainStage|nil
+---@return bpgen.ChainReason|nil reason
+---@return string|nil item  the item the reason is about
+local function stage_of(item, production, suppliers)
+  if #suppliers == 1 and #suppliers[1].suppliers > 1 then
+    return nil, "fork-in-chain", item
+  end
+  return {item = item, recipe = production.recipe, machine = production.machine, fuel = production.fuel, suppliers = suppliers}
 end
 
--- The steps that lead to `item`, first step first, ending with `item`'s own.
--- `seen` holds the items already on the way, to catch a recipe that loops.
+-- The step that makes `item`, with the steps that make its ingredients, in the recipe's
+-- order. `seen` holds the items on the way down from the item asked for, to catch a
+-- recipe that loops (two ingredients may share an item below them: that is no loop).
 ---@param item string
 ---@param production bpgen.Production
 ---@param lookup bpgen.RecipeLookup
 ---@param seen table<string, true>
----@return bpgen.ChainStage[]|nil
+---@return bpgen.ChainStage|nil
 ---@return bpgen.ChainReason|nil reason
 ---@return string|nil item  the item the reason is about
-local function steps_to(item, production, lookup, seen)
+local function stage_for(item, production, lookup, seen)
   local crafted, reason, culprit = crafted_ingredients(production, lookup)
   if not crafted then
     return nil, reason, culprit
-  end
-  local ingredient = crafted[1]
-  if not ingredient then
-    return {stage_of(item, production)} -- every ingredient is raw, so this step is fed raw items
   end
   local branching = branching_reason(production, crafted)
   if branching then
     return nil, branching, item
   end
-  if seen[ingredient.name] == true then
-    return nil, "cycle", ingredient.name
+  local suppliers = {}
+  for index, ingredient in ipairs(crafted) do
+    if seen[ingredient.name] == true then
+      return nil, "cycle", ingredient.name
+    end
+    seen[ingredient.name] = true
+    local supplier, supplier_reason, supplier_item = stage_for(ingredient.name, ingredient.production, lookup, seen)
+    seen[ingredient.name] = nil
+    if not supplier then
+      return nil, supplier_reason, supplier_item
+    end
+    suppliers[index] = supplier
   end
-  seen[ingredient.name] = true
-  local steps, step_reason, step_item = steps_to(ingredient.name, ingredient.production, lookup, seen)
-  if not steps then
-    return nil, step_reason, step_item
-  end
-  steps[#steps + 1] = stage_of(item, production)
-  return steps
+  return stage_of(item, production, suppliers)
 end
 
--- The chain for `item`: a list of steps from the one fed raw items to the one that
--- makes `item`. On failure returns nil, a reason (see `bpgen.ChainReason`) and the
--- item the reason is about.
+-- The step that makes `item`, with the steps that make what it needs. On failure
+-- returns nil, a reason (see `bpgen.ChainReason`) and the item the reason is about.
 ---@param item string
 ---@param lookup bpgen.RecipeLookup
----@return bpgen.ChainStage[]|nil stages
+---@return bpgen.ChainStage|nil stage
 ---@return bpgen.ChainReason|nil reason
 ---@return string|nil item
 function chain.resolve(item, lookup)
   local production, reason = lookup(item)
   if production then
-    return steps_to(item, production, lookup, {[item] = true})
+    return stage_for(item, production, lookup, {[item] = true})
   end
   return nil, reason, item
 end

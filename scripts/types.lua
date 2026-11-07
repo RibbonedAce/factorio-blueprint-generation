@@ -28,10 +28,11 @@
 --   "no-recipe"          the item itself is not made by anything we can build
 --   "ambiguous"          more than one recipe makes an item on the way
 --   "unsupported"        the recipe of an item on the way cannot be built
---   "several-crafted"    a step has more than one ingredient that is made from others
---   "extra-ingredient"   a step mixes the product of the step before with other ingredients
+--   "several-crafted"    a step has more than two ingredients that are made from others
+--   "extra-ingredient"   a step mixes made ingredients with raw ones
+--   "fork-in-chain"      a step with one made ingredient is fed by a step with two
 --   "cycle"              an item is, in the end, made from itself
----@alias bpgen.ChainReason "no-recipe"|"ambiguous"|"unsupported"|"several-crafted"|"extra-ingredient"|"cycle"
+---@alias bpgen.ChainReason "no-recipe"|"ambiguous"|"unsupported"|"several-crafted"|"extra-ingredient"|"fork-in-chain"|"cycle"
 
 -- How an item is made, as far as the chain is concerned: `lookup(item)` returns
 --   a `bpgen.Production`  when exactly one recipe makes it, in a machine we have,
@@ -41,8 +42,9 @@
 -- An ingredient with no recipe is a raw item; the item asked for with no recipe is a failure.
 ---@alias bpgen.RecipeLookup fun(item: string): bpgen.Production|nil, bpgen.ChainReason|nil
 
----@class bpgen.ChainStage : bpgen.Production  one step of the chain from raw items to the product
+---@class bpgen.ChainStage : bpgen.Production  one step on the way from raw items to the product
 ---@field item string  the item this step makes
+---@field suppliers bpgen.ChainStage[]  the steps that make its made ingredients, in the recipe's order: none for a step fed raw items, one in a chain, two for a recipe with two made ingredients
 
 ---@class bpgen.RecipeItem
 ---@field name string
@@ -71,6 +73,19 @@
 ---@field rate_per_minute number  of the last stage's product
 ---@field lane_items_per_minute number  what one belt lane carries
 ---@field stages bpgen.StageRequest[]  from the stage fed raw items to the one that makes what the player wants
+
+---@class bpgen.StageTree  a stage with the stages that make its ingredients
+---@field stage bpgen.StageRequest
+---@field suppliers bpgen.StageTree[]  none for a stage fed raw items; otherwise one for each ingredient, in the recipe's order (one in a chain, two when the recipe has two made ingredients)
+
+---@class bpgen.TreeRequest  what the planner is asked for a tree of stages
+---@field rate_per_minute number  of the root stage's product
+---@field lane_items_per_minute number  what one belt lane carries
+---@field root bpgen.StageTree  the stage that makes what the player wants
+
+---@class bpgen.PlanTree  the plans for a tree of stages
+---@field plan bpgen.Plan  the plan of the stage
+---@field suppliers bpgen.PlanTree[]  the plans of the stages that feed it, in the order of the request's
 
 ---@class bpgen.PlanRequest : bpgen.StageRequest  what the planner is asked for one stage on its own
 ---@field rate_per_minute number  of the product
@@ -111,6 +126,28 @@
 ---@field load? number  how many machines' worth of work the rate asks of the column: less than `machine_count` when the last machine is only partly used, `machine_count` when left out. It decides which way the belt to the next column runs, so that the direction does not change with the rate
 ---@field machine string  prototype name of the machine
 ---@field shape bpgen.Shape  the machine size must be one `supports_machine_size` accepts
+---@field suppliers? bpgen.StageLayout[]  the stages whose products it eats, in the order of the recipe's ingredients; none or one in a chain, two when a recipe has two made ingredients (`blocks.build` uses it; `layout.build_chain` ignores it)
+
+-- What a block is told about the product belt and the input belt of its chain.
+---@class bpgen.BlockOptions
+---@field product_belt boolean  whether the chain draws its product belt, and may wind it (the last block of a blueprint), or whoever uses the block draws it
+---@field input_belt_rows_above integer  how many rows above its first row the input belt of the first column starts: 0 for a column fed raw items, more for a column to the right of other blocks, whose input belt comes down from above
+
+-- A part of a blueprint that makes one item: the columns of a chain, or two blocks and
+-- the column that eats what they make. A block stands in a frame whose x = 0 is its
+-- left edge and y = 0 its top; whoever uses it moves it.
+---@class bpgen.Block
+---@field entities bpgen.Entity[]  numbered from 1
+---@field poles bpgen.Entity[]  every pole of the block, for wiring it to its neighbours. A block that has neighbours also has a line of poles in the column beside its product belt, from within 2 rows of its top to within 2 rows of its bottom
+---@field product_column integer  tile column of the product belt, the rightmost column. The block does not draw it unless it is the last block of the blueprint
+---@field height integer  rows
+---@field raw_belts bpgen.RawBelt[]  where the belts of raw items start, from the top of the block down
+
+-- The first tile of a belt of raw items, which runs south from there.
+---@class bpgen.RawBelt
+---@field stage bpgen.StageLayout  the stage fed raw items by the belt
+---@field column integer  tile column
+---@field row integer  tile row
 
 ---@class bpgen.NewEntity  an entity as the layout describes it, before it gets its number
 ---@field name string

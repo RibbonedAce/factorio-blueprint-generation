@@ -43,11 +43,17 @@ local function lookup_in(table_of_items)
   end
 end
 
-local function items_of(stages)
-  local items = {}
-  for index, stage in ipairs(stages) do
-    items[index] = stage.item
+-- The items of a step and of the steps that make its ingredients, a step after the steps
+-- that feed it: for a chain, from the first step to the last.
+---@param stage bpgen.ChainStage
+---@param items? string[]
+---@return string[]
+local function items_of(stage, items)
+  items = items or {}
+  for _, supplier in ipairs(stage.suppliers) do
+    items_of(supplier, items)
   end
+  items[#items + 1] = stage.item
   return items
 end
 
@@ -56,9 +62,9 @@ describe("chain", function()
     it("gives one step when the recipe has several raw ingredients", function()
       local lookup = lookup_in{["steel-thing"] = production{"iron-ore", "coal", "stone"}}
 
-      local stages = chain.resolve("steel-thing", lookup)
+      local stage = chain.resolve("steel-thing", lookup)
 
-      assert.are.same({"steel-thing"}, items_of(stages))
+      assert.are.same({"steel-thing"}, items_of(stage))
     end)
 
     it("keeps the recipe, the machine and the fuel of the step", function()
@@ -66,9 +72,9 @@ describe("chain", function()
       recipe_of_plate.fuel = "coal"
       local lookup = lookup_in{["iron-plate"] = recipe_of_plate}
 
-      local stages = chain.resolve("iron-plate", lookup)
+      local stage = chain.resolve("iron-plate", lookup)
 
-      assert.are.same({item = "iron-plate", recipe = recipe_of_plate.recipe, machine = "stone-furnace", fuel = "coal"}, stages[1])
+      assert.are.same({item = "iron-plate", recipe = recipe_of_plate.recipe, machine = "stone-furnace", fuel = "coal", suppliers = {}}, stage)
     end)
   end)
 
@@ -81,18 +87,70 @@ describe("chain", function()
         ["ore-chunk"] = production{"rock"},
       }
 
-      local stages = chain.resolve("pipe-thing", lookup)
+      local stage = chain.resolve("pipe-thing", lookup)
 
-      assert.are.same({"ore-chunk", "plate", "gear", "pipe-thing"}, items_of(stages))
+      assert.are.same({"ore-chunk", "plate", "gear", "pipe-thing"}, items_of(stage))
     end)
 
+    it("gives a step the one step that makes its ingredient", function()
+      local lookup = lookup_in{["gear"] = production{"plate"}, ["plate"] = production{"ore"}}
+
+      local stage = chain.resolve("gear", lookup)
+
+      assert.are.equal(1, #stage.suppliers)
+      assert.are.equal("plate", stage.suppliers[1].item)
+    end)
+  end)
+
+  describe("resolve, for an item made from two made items", function()
+    local circuit_lookup = lookup_in{
+      ["circuit"] = production{"iron-plate", "copper-cable"},
+      ["iron-plate"] = production{"iron-ore"},
+      ["copper-cable"] = production{"copper-plate"},
+      ["copper-plate"] = production{"copper-ore"},
+    }
+
+    it("gives the step a supplier for each of the ingredients, in the recipe's order", function()
+      local stage = chain.resolve("circuit", circuit_lookup)
+
+      assert.are.equal(2, #stage.suppliers)
+      assert.are.same({"iron-plate"}, items_of(stage.suppliers[1]))
+      assert.are.same({"copper-plate", "copper-cable"}, items_of(stage.suppliers[2]))
+    end)
+
+    it("makes an item that two ingredients share once for each of them, which is no loop", function()
+      local lookup = lookup_in{
+        ["pump"] = production{"pipe", "gear"},
+        ["pipe"] = production{"plate"},
+        ["gear"] = production{"plate"},
+        ["plate"] = production{"ore"},
+      }
+
+      local stage = chain.resolve("pump", lookup)
+
+      assert.are.same({"plate", "pipe", "plate", "gear", "pump"}, items_of(stage))
+    end)
+
+    it("gives the steps of a tree inside a tree", function()
+      local lookup = lookup_in{
+        ["underground"] = production{"plate", "belt"},
+        ["belt"] = production{"plate", "gear"},
+        ["gear"] = production{"plate"},
+        ["plate"] = production{"ore"},
+      }
+
+      local stage = chain.resolve("underground", lookup)
+
+      assert.are.equal("belt", stage.suppliers[2].item)
+      assert.are.equal("gear", stage.suppliers[2].suppliers[2].item)
+    end)
   end)
 
   describe("resolve, for an item that cannot be chained", function()
     it("reports that nothing makes the item when it is raw", function()
-      local stages, reason, item = chain.resolve("iron-ore", lookup_in{})
+      local stage, reason, item = chain.resolve("iron-ore", lookup_in{})
 
-      assert.is_nil(stages)
+      assert.is_nil(stage)
       assert.are.equal("no-recipe", reason)
       assert.are.equal("iron-ore", item)
     end)
@@ -129,18 +187,32 @@ describe("chain", function()
       assert.are.equal("gear", item)
     end)
 
-    it("reports the item when two of its ingredients are made from others", function()
+    it("reports the ingredient that cannot be built even when it is the second of two made ones", function()
       local lookup = lookup_in{
         ["circuit"] = production{"iron-plate", "copper-plate"},
         ["iron-plate"] = production{"iron-ore"},
-        ["copper-plate"] = production{"copper-ore"},
+        ["copper-plate"] = "unsupported",
       }
 
-      local stages, reason, item = chain.resolve("circuit", lookup)
+      local _, reason, item = chain.resolve("circuit", lookup)
 
-      assert.is_nil(stages)
+      assert.are.equal("unsupported", reason)
+      assert.are.equal("copper-plate", item)
+    end)
+
+    it("reports the item when three of its ingredients are made from others", function()
+      local lookup = lookup_in{
+        ["thing"] = production{"iron-plate", "copper-plate", "stone-brick"},
+        ["iron-plate"] = production{"iron-ore"},
+        ["copper-plate"] = production{"copper-ore"},
+        ["stone-brick"] = production{"stone"},
+      }
+
+      local stage, reason, item = chain.resolve("thing", lookup)
+
+      assert.is_nil(stage)
       assert.are.equal("several-crafted", reason)
-      assert.are.equal("circuit", item)
+      assert.are.equal("thing", item)
     end)
 
     it("reports the item when it mixes a made ingredient with a raw one", function()
@@ -155,7 +227,20 @@ describe("chain", function()
       assert.are.equal("thing", item)
     end)
 
-    it("reports the step where the chain branches, when it is not the last one", function()
+    it("reports the item when it mixes two made ingredients with a raw one", function()
+      local lookup = lookup_in{
+        ["thing"] = production{"iron-plate", "copper-plate", "stone"},
+        ["iron-plate"] = production{"iron-ore"},
+        ["copper-plate"] = production{"copper-ore"},
+      }
+
+      local _, reason, item = chain.resolve("thing", lookup)
+
+      assert.are.equal("extra-ingredient", reason)
+      assert.are.equal("thing", item)
+    end)
+
+    it("reports the step with one made ingredient that is itself made from two", function()
       local lookup = lookup_in{
         ["pipe-thing"] = production{"circuit"},
         ["circuit"] = production{"iron-plate", "copper-plate"},
@@ -163,10 +248,26 @@ describe("chain", function()
         ["copper-plate"] = production{"copper-ore"},
       }
 
-      local _, reason, item = chain.resolve("pipe-thing", lookup)
+      local stage, reason, item = chain.resolve("pipe-thing", lookup)
 
-      assert.are.equal("several-crafted", reason)
-      assert.are.equal("circuit", item)
+      assert.is_nil(stage)
+      assert.are.equal("fork-in-chain", reason)
+      assert.are.equal("pipe-thing", item)
+    end)
+
+    it("reports the first step of a chain on top of two made ingredients, however long the chain", function()
+      local lookup = lookup_in{
+        ["box"] = production{"pipe-thing"},
+        ["pipe-thing"] = production{"circuit"},
+        ["circuit"] = production{"iron-plate", "copper-plate"},
+        ["iron-plate"] = production{"iron-ore"},
+        ["copper-plate"] = production{"copper-ore"},
+      }
+
+      local _, reason, item = chain.resolve("box", lookup)
+
+      assert.are.equal("fork-in-chain", reason)
+      assert.are.equal("pipe-thing", item)
     end)
 
     it("reports the item where the chain starts to loop, when the item asked for is not part of the loop", function()
@@ -180,6 +281,19 @@ describe("chain", function()
 
     it("reports the item that is made from itself in the end", function()
       local lookup = lookup_in{["a"] = production{"b"}, ["b"] = production{"a"}}
+
+      local _, reason, item = chain.resolve("a", lookup)
+
+      assert.are.equal("cycle", reason)
+      assert.are.equal("a", item)
+    end)
+
+    it("reports a loop through the second of two made ingredients", function()
+      local lookup = lookup_in{
+        ["a"] = production{"b", "c"},
+        ["b"] = production{"ore"},
+        ["c"] = production{"a"},
+      }
 
       local _, reason, item = chain.resolve("a", lookup)
 

@@ -1021,6 +1021,171 @@ describe("planner", function()
     end)
   end)
 
+  describe("plan_tree, for a recipe with two made ingredients", function()
+    -- A furnace (speed 1, 3.2 s) makes 18.75 plates a minute. An assembler (speed 0.5, 0.5 s) crafts 60 times a
+    -- minute: cables, 1 plate to 2 cables, eat 60 plates and make 120; circuits, 1 plate and 3 cables to 1, eat 60
+    -- plates and 180 cables and make 60.
+    local iron_recipe = {energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
+    local copper_recipe = {energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}}
+    local cable_recipe = {energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(2, "copper-cable")}}
+    local circuit_recipe = {
+      energy = 0.5, ingredients = {amount_of(1, "iron-plate"), amount_of(3, "copper-cable")},
+      products = {amount_of(1, "electronic-circuit")},
+    }
+
+    -- A stage of the tree with the stages that make its ingredients.
+    local function tree_of(product, recipe, machine_speed, suppliers, fuel)
+      return {stage = {product = product, recipe = recipe, machine_speed = machine_speed, fuel = fuel}, suppliers = suppliers}
+    end
+
+    local function iron_plates() return tree_of("iron-plate", iron_recipe, 1, {}, "coal") end
+    local function copper_cables()
+      return tree_of("copper-cable", cable_recipe, 0.5, {tree_of("copper-plate", copper_recipe, 1, {}, "coal")})
+    end
+
+    local function circuits(rate, circuit_stage)
+      return {
+        rate_per_minute = rate, lane_items_per_minute = 450,
+        root = circuit_stage or tree_of("electronic-circuit", circuit_recipe, 0.5, {iron_plates(), copper_cables()}),
+      }
+    end
+
+    it("builds for each ingredient the machines its share of the rate needs", function()
+      local plans = planner.plan_tree(circuits(60))
+
+      assert.are.equal(1, plans.plan.machines) -- 60 circuits a minute is one assembler
+      assert.are.equal(4, plans.suppliers[1].plan.machines) -- 60 plates / 18.75 = 3.2
+      assert.are.equal(2, plans.suppliers[2].plan.machines) -- 180 cables / 120 = 1.5
+      assert.are.equal(5, plans.suppliers[2].suppliers[1].plan.machines) -- 90 plates for the cables / 18.75 = 4.8
+    end)
+
+    it("takes each made ingredient on a lane of its own", function()
+      local plans = planner.plan_tree(circuits(60))
+
+      assert.are.same({"iron-plate", "copper-cable"}, plans.plan.lanes)
+    end)
+
+    it("takes ore and fuel on the lanes of the stages fed raw items", function()
+      local plans = planner.plan_tree(circuits(60))
+
+      assert.are.same({"iron-ore", "coal"}, plans.suppliers[1].plan.lanes)
+      assert.are.same({"copper-plate"}, plans.suppliers[2].plan.lanes)
+    end)
+
+    it("shows the root making what all its stages make together, which is at least the rate asked", function()
+      local plans = planner.plan_tree(circuits(55))
+
+      -- one assembler could make 60, 5 copper furnaces make 93.75 plates for 62.5 circuits' cables,
+      -- but 3 iron furnaces make only 56.25 plates, one for each circuit
+      assert.near(56.25, plans.plan.output_per_minute, 1e-6)
+    end)
+
+    it("shows the root making only what the chain of the second ingredient can feed", function()
+      local plans = planner.plan_tree(circuits(50))
+
+      -- 4 copper furnaces make 75 plates, which is 150 cables and so 50 circuits; 3 iron furnaces would allow 56.25
+      assert.near(50, plans.plan.output_per_minute, 1e-6)
+    end)
+
+    it("refuses a rate that the lane of one ingredient cannot carry", function()
+      local plans, reason, max_rate = planner.plan_tree(circuits(151))
+
+      assert.is_nil(plans)
+      assert.are.equal("rate-too-high", reason)
+      assert.near(150, max_rate, 1e-6) -- one lane carries 450 cables, 3 for each circuit
+    end)
+
+    it("refuses a rate that the lane of the other ingredient cannot carry", function()
+      local hungry = {
+        energy = 0.5, ingredients = {amount_of(10, "iron-plate"), amount_of(3, "copper-cable")},
+        products = {amount_of(1, "electronic-circuit")},
+      }
+
+      local _, reason, max_rate = planner.plan_tree(circuits(100, tree_of("electronic-circuit", hungry, 0.5, {iron_plates(), copper_cables()})))
+
+      assert.are.equal("rate-too-high", reason)
+      assert.near(45, max_rate, 1e-6) -- a lane carries 450 plates a minute, 10 for each circuit
+    end)
+
+    it("allows the rate when the lane of an ingredient is exactly full", function()
+      local plans = planner.plan_tree(circuits(150))
+
+      assert.are.equal(3, plans.plan.machines) -- 150 / 60 = 2.5, rounded up
+      assert.are.equal(8, plans.suppliers[1].plan.machines) -- 150 plates / 18.75
+      assert.are.equal(12, plans.suppliers[2].suppliers[1].plan.machines) -- 225 plates / 18.75
+    end)
+
+    it("names the same most as the refusal does", function()
+      local _, _, refused_max = planner.plan_tree(circuits(1000))
+
+      local max_rate = planner.max_tree_rate(circuits(1))
+
+      assert.are.equal(refused_max, max_rate)
+    end)
+
+    it("gives nil and unsupported-recipe for the most when a stage far down the tree does not fit", function()
+      local two_products = {energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate"), amount_of(1, "slag")}}
+      local cables = tree_of("copper-cable", cable_recipe, 0.5, {tree_of("copper-plate", two_products, 1, {}, "coal")})
+
+      local max_rate, reason = planner.max_tree_rate(circuits(60, tree_of("electronic-circuit", circuit_recipe, 0.5, {iron_plates(), cables})))
+
+      assert.is_nil(max_rate)
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("refuses a stage whose ingredients are not made by the stages that feed it, in order", function()
+      local swapped = tree_of("electronic-circuit", circuit_recipe, 0.5, {copper_cables(), iron_plates()})
+
+      local plans, reason = planner.plan_tree(circuits(60, swapped))
+
+      assert.is_nil(plans)
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("refuses a stage with three made ingredients, which need three lanes", function()
+      local three = {
+        energy = 0.5,
+        ingredients = {amount_of(1, "iron-plate"), amount_of(1, "copper-plate"), amount_of(1, "copper-cable")},
+        products = {amount_of(1, "electronic-circuit")},
+      }
+      local stage = tree_of("electronic-circuit", three, 0.5, {
+        iron_plates(), tree_of("copper-plate", copper_recipe, 1, {}, "coal"), copper_cables(),
+      })
+
+      local _, reason = planner.plan_tree(circuits(10, stage))
+
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("refuses a stage fed by made ingredients that burns fuel", function()
+      local burning = tree_of("electronic-circuit", circuit_recipe, 0.5, {iron_plates(), copper_cables()}, "coal")
+
+      local _, reason = planner.plan_tree(circuits(10, burning))
+
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("passes the demand down through every level of a tree", function()
+      -- One machine (speed 1, 1 s) crafts 60 a minute. T eats 2 U and 1 plate; U eats 3 plates and 1 gear; plates and gears come from ore.
+      local function stage(product, ingredients, suppliers)
+        local recipe = {energy = 1, ingredients = ingredients, products = {amount_of(1, product)}}
+        return tree_of(product, recipe, 1, suppliers, #suppliers == 0 and "coal" or nil)
+      end
+      local plate = stage("plate", {amount_of(1, "ore")}, {})
+      local gear = stage("gear", {amount_of(1, "scrap")}, {})
+      local u = stage("u", {amount_of(3, "plate"), amount_of(1, "gear")}, {plate, gear})
+      local t = stage("t", {amount_of(2, "u"), amount_of(1, "plate")}, {u, stage("plate", {amount_of(1, "ore")}, {})})
+
+      local plans = planner.plan_tree{rate_per_minute = 60, lane_items_per_minute = 450, root = t}
+
+      assert.are.equal(1, plans.plan.machines) -- 60 t
+      assert.are.equal(2, plans.suppliers[1].plan.machines) -- 120 u
+      assert.are.equal(6, plans.suppliers[1].suppliers[1].plan.machines) -- 360 plates for the u
+      assert.are.equal(2, plans.suppliers[1].suppliers[2].plan.machines) -- 120 gears for the u
+      assert.are.equal(1, plans.suppliers[2].plan.machines) -- 60 plates for the t
+    end)
+  end)
+
   describe("inserter_items_per_minute", function()
     it("turns an inserter's rotation speed into items per minute", function()
       local basic_rotation_speed = 0.014

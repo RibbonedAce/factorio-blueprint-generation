@@ -799,6 +799,135 @@ describe("generator", function()
     end)
   end)
 
+  describe("a recipe with two made ingredients, so the blueprint is a tree of blocks", function()
+    -- A furnace makes 18.75 plates a minute (speed 1, 3.2 s). An assembler (speed 0.5, 3x3) crafts every 1 s:
+    -- cables, 1 plate to 2 cables, with one input and two output inserters, make 100.8 cables a minute from
+    -- 50.4 plates; circuits, 1 plate and 3 cables to 1 circuit, with two input inserters moving 100.8 items,
+    -- make 25.2 circuits a minute. A lane carries 450 cables, so at most 150 circuits a minute.
+    local iron_plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local copper_plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}, category = "smelting"}
+    local cable = a_recipe{energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(2, "copper-cable")}}
+    local circuit = a_recipe{
+      energy = 0.5, ingredients = {amount_of(1, "iron-plate"), amount_of(3, "copper-cable")},
+      products = {amount_of(1, "electronic-circuit")},
+    }
+
+    local function circuit_game(recipes)
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = recipes or {
+          ["iron-plate"] = iron_plate, ["copper-plate"] = copper_plate,
+          ["copper-cable"] = cable, ["electronic-circuit"] = circuit,
+        },
+      }
+    end
+
+    it("builds the machines of every step, furnaces for both plates and assemblers for the cables and the circuits", function()
+      _G.prototypes = circuit_game()
+
+      local result = generator.generate("electronic-circuit", 50)
+
+      assert.are.equal(7, count_named(result.entities, "stone-furnace")) -- 50 plates / 18.75 = 2.67, and 75 plates for the cables / 18.75 = 4
+      assert.are.equal(4, count_named(result.entities, "assembling-machine-1")) -- 150 cables / 100.8 = 1.49, and 50 circuits / 25.2 = 1.98
+    end)
+
+    it("describes the blueprint with the machines of every step, each after the steps that feed it", function()
+      _G.prototypes = circuit_game()
+
+      local result = generator.generate("electronic-circuit", 50)
+
+      assert.are.equal(
+        "electronic-circuit: 50 per minute from 3 x stone-furnace, 4 x stone-furnace, 2 x assembling-machine-1, 2 x assembling-machine-1",
+        result.description)
+    end)
+
+    it("tells the player what each step makes and what goes on each belt of raw items, from the top down", function()
+      _G.prototypes = circuit_game()
+
+      local result = generator.generate("electronic-circuit", 50)
+
+      assert.are.same({
+        "blueprint-generation.generated-raw-belts",
+        {"",
+          {"blueprint-generation.generated-first-stage", "3", {"entity-name.stone-furnace"}, "56.25", {"item-name.iron-plate"}},
+          {"blueprint-generation.generated-other-stage", "4", {"entity-name.stone-furnace"}, "75", {"item-name.copper-plate"}},
+          {"blueprint-generation.generated-next-stage", "2", {"entity-name.assembling-machine-1"}, "201.6", {"item-name.copper-cable"}},
+          {"blueprint-generation.generated-next-stage", "2", {"entity-name.assembling-machine-1"}, "50", {"item-name.electronic-circuit"}},
+        },
+        "50", -- what was asked for
+        {"",
+          {"blueprint-generation.raw-belt", {"item-name.copper-ore"}, {"item-name.coal"}}, -- the taller block, the cables' furnaces, is on top
+          "; ",
+          {"blueprint-generation.raw-belt", {"item-name.iron-ore"}, {"item-name.coal"}},
+        },
+      }, result.message)
+    end)
+
+    it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
+      _G.prototypes = circuit_game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("electronic-circuit", 100)
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("allows the rate when the lane of cables is exactly full", function()
+      _G.prototypes = circuit_game()
+
+      local result = generator.generate("electronic-circuit", 150)
+
+      assert.are.equal(20, count_named(result.entities, "stone-furnace")) -- 150 plates / 18.75 = 8, and 225 plates for the cables / 18.75 = 12
+      assert.are.equal(11, count_named(result.entities, "assembling-machine-1")) -- 450 cables / 100.8 = 4.46, and 150 circuits / 25.2 = 5.95
+    end)
+
+    it("refuses the rate when the lane of cables cannot carry it, naming the most", function()
+      _G.prototypes = circuit_game()
+
+      local result, error_message = generator.generate("electronic-circuit", 151)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-rate-too-high", "150"}, error_message)
+    end)
+
+    it("names the most under the rate field", function()
+      _G.prototypes = circuit_game()
+
+      assert.are.same({"blueprint-generation.max-rate", "150"}, generator.max_rate_message("electronic-circuit"))
+    end)
+
+    it("refuses the request when a step with made ingredients burns fuel, naming the item", function()
+      local circuit_in_a_furnace = a_recipe{
+        energy = 0.5, ingredients = {amount_of(1, "iron-plate"), amount_of(3, "copper-cable")},
+        products = {amount_of(1, "electronic-circuit")}, category = "smelting",
+      }
+      _G.prototypes = circuit_game{
+        ["iron-plate"] = iron_plate, ["copper-plate"] = copper_plate,
+        ["copper-cable"] = cable, ["electronic-circuit"] = circuit_in_a_furnace,
+      }
+
+      local result, error_message = generator.generate("electronic-circuit", 10)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-chain-fuel", {"item-name.electronic-circuit"}}, error_message)
+    end)
+
+    it("refuses the request when a step has one made ingredient that is itself made from two, naming the item", function()
+      local gear_of_a_circuit = a_recipe{energy = 0.5, ingredients = {amount_of(1, "electronic-circuit")}, products = {amount_of(1, "iron-gear-wheel")}}
+      _G.prototypes = circuit_game{
+        ["iron-plate"] = iron_plate, ["copper-plate"] = copper_plate, ["copper-cable"] = cable,
+        ["electronic-circuit"] = circuit, ["iron-gear-wheel"] = gear_of_a_circuit,
+      }
+
+      local result, error_message = generator.generate("iron-gear-wheel", 10)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-chain-too-complex", {"item-name.iron-gear-wheel"}}, error_message)
+    end)
+  end)
+
   describe("the most one blueprint can make, shown under the rate field", function()
     local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
@@ -835,7 +964,7 @@ describe("generator", function()
     it("gives the message of the refusal when the item cannot be made", function()
       _G.prototypes = fake_prototypes{recipes = {}}
 
-      assert.are.same({"blueprint-generation.error-unsupported-item"}, generator.max_rate_message("electronic-circuit"))
+      assert.are.same({"blueprint-generation.error-unsupported-item"}, generator.max_rate_message("advanced-circuit"))
       assert.are.same({"blueprint-generation.error-no-recipe", "iron-plate"}, generator.max_rate_message("iron-plate"))
     end)
 
@@ -916,7 +1045,7 @@ describe("generator", function()
     it("refuses the request when the item is not supported", function()
       _G.prototypes = fake_prototypes{}
 
-      local result, error_message = generator.generate("electronic-circuit", 10)
+      local result, error_message = generator.generate("advanced-circuit", 10)
 
       assert.is_nil(result)
       assert.are.same({"blueprint-generation.error-unsupported-item"}, error_message)
@@ -1012,13 +1141,14 @@ describe("generator", function()
       assert.are.same({"blueprint-generation.error-ambiguous-recipe", {"item-name.iron-plate"}}, error_message)
     end)
 
-    it("refuses the request when a step needs two made ingredients, naming the item", function()
+    it("refuses the request when a step needs three made ingredients, naming the item", function()
       local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
       local copper = a_recipe{energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}, category = "smelting"}
-      local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate"), amount_of(1, "copper-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+      local brick = a_recipe{energy = 3.2, ingredients = {amount_of(2, "stone")}, products = {amount_of(1, "stone-brick")}, category = "smelting"}
+      local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate"), amount_of(1, "copper-plate"), amount_of(1, "stone-brick")}, products = {amount_of(1, "iron-gear-wheel")}}
       _G.prototypes = fake_prototypes{
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
-        recipes = {["iron-plate"] = plate, ["copper-plate"] = copper, ["iron-gear-wheel"] = gear},
+        recipes = {["iron-plate"] = plate, ["copper-plate"] = copper, ["stone-brick"] = brick, ["iron-gear-wheel"] = gear},
       }
 
       local result, error_message = generator.generate("iron-gear-wheel", 10)
@@ -1074,6 +1204,36 @@ describe("generator", function()
       }
 
       local result, error_message = generator.generate("iron-gear-wheel", 10)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-unsupported-machine"}, error_message)
+    end)
+
+    it("refuses the request when the machine of an earlier step cannot craft", function()
+      local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+      local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+      _G.prototypes = fake_prototypes{
+        furnace_speed = false,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
+      }
+
+      local result, error_message = generator.generate("iron-gear-wheel", 10)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-missing-prototype"}, error_message)
+    end)
+
+    it("refuses the request when the machine of an earlier step has a size the layout cannot build", function()
+      -- the iron plate is smelted from iron ore that an assembler of size 4 makes from scrap
+      local ore = a_recipe{energy = 1, ingredients = {amount_of(1, "scrap")}, products = {amount_of(1, "iron-ore")}}
+      local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+      _G.prototypes = fake_prototypes{
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 4}},
+        recipes = {["iron-ore"] = ore, ["iron-plate"] = plate},
+      }
+
+      local result, error_message = generator.generate("iron-plate", 10)
 
       assert.is_nil(result)
       assert.are.same({"blueprint-generation.error-unsupported-machine"}, error_message)

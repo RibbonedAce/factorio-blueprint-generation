@@ -13,6 +13,8 @@ Persistent notes for the AI assistant (Claude) working on this repo. They exist 
 7. [research/modding-tutorial.md](research/modding-tutorial.md): practical setup, locale format, error shapes, and the multiplayer desync rules (Secondary, written for 2.0).
 8. [research/api-reference-2.1.23.md](research/api-reference-2.1.23.md): the verified API names and signatures this mod needs, read from the official JSON files. Check it before writing any code that calls the game API.
 
+9. [recipe-tree-plan.md](recipe-tree-plan.md): the proposed recursive block layout for recipes with two made ingredients, starting with the electronic circuit (a proposal until the owner approves it).
+
 ## Maintenance rules
 
 - Update `project-status.md` after every decision and at the end of each work session.

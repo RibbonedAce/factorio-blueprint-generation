@@ -36,12 +36,13 @@ local config = {
     ["stone-furnace"] = true,
     ["firearm-magazine"] = true,
     ["light-armor"] = true,
+    ["electronic-circuit"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns
   -- (leave `fuel` out for an electric machine). A recipe whose categories are not
-  -- listed here cannot be made. Only the first step of a chain can burn fuel, since
-  -- the fuel rides on the belt that carries the raw items.
+  -- listed here cannot be made. Only a step fed raw items can burn fuel, since the fuel
+  -- rides on the belt that carries the raw items.
   machines = {
     smelting = {machine = "stone-furnace", fuel = "coal"},
     crafting = {machine = "assembling-machine-1"}, -- electric: no fuel
