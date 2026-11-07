@@ -387,17 +387,29 @@ describe("layout", function()
       assert.are.equal(NAMES.belt, name_at(entities, 6, 1))
     end)
 
-    it("runs the outer belt from the first machine's top row to the last machine's bottom row", function()
+    it("runs the outer belt from one row above the first machine's top row to the last machine's bottom row", function()
       local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
 
       local entities = layout.build(2, NAMES, shape)
 
-      assert.is_nil(name_at(entities, 7, -1))
+      assert.are.equal(NAMES.belt, name_at(entities, 7, -1)) -- carries nothing; see the next test
+      assert.is_nil(name_at(entities, 7, -2))
       assert.is_nil(name_at(entities, 7, 6)) -- the player continues the belt from here
       assert.is_nil(name_at(entities, 6, 6))
     end)
 
-    it("uses the same number of belt tiles for every machine when the output belt winds", function()
+    it("starts the outer belt with an empty tile running south behind the first stub, so the first lane does not bend", function()
+      local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
+
+      local entities = layout.build(2, NAMES, shape)
+
+      assert.are.equal(defines.direction.south, direction_at(entities, 7, -1))
+      assert.are.equal(defines.direction.south, direction_at(entities, 7, 0)) -- straight on from the empty tile
+      assert.are.equal(defines.direction.east, direction_at(entities, 6, 0)) -- the stub side-loads it
+      assert.is_nil(name_at(entities, 6, -1))
+    end)
+
+    it("uses the same number of belt tiles for every machine when the output belt winds, plus the empty tile", function()
       local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
 
       local entities = layout.build(3, NAMES, shape)
@@ -408,7 +420,7 @@ describe("layout", function()
           output_belts[#output_belts + 1] = belt
         end
       end
-      assert.are.equal(18, #output_belts)
+      assert.are.equal(19, #output_belts) -- 3 machines x 6, and the empty tile
     end)
 
     it("keeps a plain output belt when a machine has one output inserter", function()
@@ -663,14 +675,14 @@ describe("layout", function()
     it("draws only the belts the three belt columns need, so the assemblers get no input belt of their own", function()
       local entities = gear_chain(7, 2)
 
-      -- ore: down to the last furnace's inserter (row 12) = 13; plates: 14; gears: 2 machines * 3 rows * 2 columns = 12
-      assert.are.equal(13 + 14 + 12, count_named(entities, NAMES.belt))
+      -- ore: down to the last furnace's inserter (row 12) = 13; plates: 14; gears: 2 machines * 3 rows * 2 columns = 12, and the empty tile
+      assert.are.equal(13 + 14 + 12 + 1, count_named(entities, NAMES.belt))
     end)
 
     it("winds only the last column's output belt", function()
       local entities = gear_chain(7, 2)
 
-      assert.are.equal(2 * 3 * 2, #belts_in_column(entities, 11) + #belts_in_column(entities, 12))
+      assert.are.equal(2 * 3 * 2 + 1, #belts_in_column(entities, 11) + #belts_in_column(entities, 12))
       assert.are.equal(14, #belts_in_column(entities, 5)) -- straight, one belt per furnace row
     end)
 

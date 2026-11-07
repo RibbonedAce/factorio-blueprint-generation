@@ -29,6 +29,7 @@ local config = {
     ["copper-plate"] = true,
     ["stone-brick"] = true,
     ["iron-gear-wheel"] = true,
+    ["copper-cable"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns

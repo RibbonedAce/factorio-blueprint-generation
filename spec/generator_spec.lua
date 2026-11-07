@@ -386,7 +386,7 @@ describe("generator", function()
 
       local result = generator.generate("iron-gear-wheel", 200)
 
-      assert.are.equal(16, count_named(result.entities, "transport-belt")) -- 4 input tiles (rows 0 to 3) + 2 machines x 6
+      assert.are.equal(17, count_named(result.entities, "transport-belt")) -- 4 input tiles (rows 0 to 3) + 2 machines x 6 + the empty tile above the output belt
     end)
 
     it("gives a small machine only one output inserter when the layout has room for no more", function()
@@ -718,11 +718,74 @@ describe("generator", function()
     end)
   end)
 
+  describe("a chain whose last step makes more than it eats, so its output belt winds", function()
+    -- An assembler (speed 0.5, 3x3) crafts in 0.5 s from 1 plate to 2 cables, so at full speed it eats 60 plates and
+    -- makes 120 cables a minute. Its one input inserter moves 50.4 plates, so it really makes 100.8 cables, which
+    -- takes two output inserters (50.4 each). A furnace makes 18.75 plates a minute.
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}, category = "smelting"}
+    local cable = a_recipe{energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(2, "copper-cable")}}
+    local assembler = a_machine{crafting_speed = 0.5, size = 3}
+
+    local function cable_game()
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = assembler},
+        recipes = {["copper-plate"] = plate, ["copper-cable"] = cable},
+      }
+    end
+
+    it("builds the machines of both steps, with enough furnaces for the plates the assemblers take", function()
+      _G.prototypes = cable_game()
+
+      local result = generator.generate("copper-cable", 100)
+
+      assert.are.equal(1, count_named(result.entities, "assembling-machine-1")) -- 100 / 100.8
+      assert.are.equal(3, count_named(result.entities, "stone-furnace")) -- 50.4 plates / 18.75 = 2.69
+    end)
+
+    it("gives each assembler two output inserters and one input inserter", function()
+      _G.prototypes = cable_game()
+
+      local result = generator.generate("copper-cable", 100)
+
+      -- 3 furnaces with an input and an output inserter each, and the assembler's one input and two output inserters
+      assert.are.equal(9, count_named(result.entities, "inserter"))
+    end)
+
+    it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
+      _G.prototypes = cable_game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("copper-cable", 300)
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("allows the rate when the plate lane and the two cable lanes are exactly full", function()
+      _G.prototypes = cable_game()
+
+      local result = generator.generate("copper-cable", 900)
+
+      assert.are.equal(24, count_named(result.entities, "stone-furnace")) -- 450 plates / 18.75
+      assert.are.equal(9, count_named(result.entities, "assembling-machine-1")) -- 450 / 50.4 = 8.93 assemblers' worth
+    end)
+
+    it("refuses the rate when both lanes are full, naming the most", function()
+      _G.prototypes = cable_game()
+
+      local result, error_message = generator.generate("copper-cable", 901)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-rate-too-high", "900"}, error_message)
+    end)
+  end)
+
   describe("refusals", function()
     it("refuses the request when the item is not supported", function()
       _G.prototypes = fake_prototypes{}
 
-      local result, error_message = generator.generate("copper-cable", 10)
+      local result, error_message = generator.generate("electronic-circuit", 10)
 
       assert.is_nil(result)
       assert.are.same({"blueprint-generation.error-unsupported-item"}, error_message)

@@ -47,6 +47,7 @@
 --      input input  machine  output inner  outer
 --      belt inserter (3x3)  inserter belt  belt
 --
+--                                             v    <- row -1: an empty belt, so the outer belt is straight
 --        v     >    [M M M]     >      >      v    <- row 0: this inserter drops on the stub (>), which
 --        v     >    [M M M]     >      v      <       feeds the outer belt from the west: its west lane
 --        v     P    [M M M]     P      >      v    <- row 2: the inner belt joins the outer one again
@@ -54,8 +55,10 @@
 -- The outer belt dips west in row 1, to pass the second inserter, which drops on
 -- the inner belt (v): the east lane of the belt. Every machine repeats these three
 -- rows, so the belt winds down the column and carries the product on both lanes.
--- The first stub has no belt behind the outer tile it feeds, so it bends into it;
--- the lane stays the same. The belt needs three rows per machine, which is exactly
+-- The first stub would have no belt behind the outer tile it feeds, and Factorio
+-- would bend that tile into a curve, so the outer belt starts one row higher, with a
+-- tile that carries nothing (row -1 above, drawn as `d`), and the stub side-loads it.
+-- The belt needs three rows per machine, which is exactly
 -- what a 3x3 machine takes, so it only works for size 3.
 --
 -- A chain puts one such column after another, left to right, from the raw items to
@@ -314,10 +317,15 @@ end
 
 -- The winding output belt (see the diagram at the top): three rows per machine,
 -- the inner column beside the output inserters and the outer column one further out.
+-- One more belt runs south in the outer column, in the row above the first machine's
+-- top, and carries nothing: without a belt behind it, Factorio bends the first outer
+-- tile to meet the stub beside it, which does not work for the first inserter's lane.
+-- With the belt behind it, the stub side-loads a straight belt instead.
 function Builder:add_winding_output_belt()
   local direction = defines.direction
   local inner = self.geometry.output_inserter_column + 1
   local outer = self.geometry.output_belt_column
+  self:add_belt(outer, self:machine_top(0) - 1, direction.south)
   for index = 0, self.machine_count - 1 do
     local top = self:machine_top(index)
     self:add_belt(inner, top, direction.east)
