@@ -680,6 +680,193 @@ describe("planner", function()
     end)
   end)
 
+  describe("plan_chain, for ore smelted into plates that are crafted into gears", function()
+    local plate_recipe = {energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
+    -- A speed 0.5 machine crafts 60 * 0.5 / 0.5 s = 60 gears a minute and eats 120 plates a minute.
+    local gear_recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+    ---@param rate number
+    ---@param overrides? table
+    local function gear_chain(rate, overrides)
+      local chain = {
+        rate_per_minute = rate, lane_items_per_minute = 450,
+        stages = {
+          {product = "iron-plate", recipe = plate_recipe, machine_speed = 1, fuel = "coal"},
+          {product = "iron-gear-wheel", recipe = gear_recipe, machine_speed = 0.5},
+        },
+      }
+      for key, value in pairs(overrides or {}) do
+        chain[key] = value
+      end
+      return chain
+    end
+
+    it("makes the plates the gear machines eat", function()
+      local plans = planner.plan_chain(gear_chain(60))
+
+      assert.are.equal(1, plans[2].machines)
+      assert.near(120, plans[2].inputs[1].per_minute, 1e-6)
+      assert.are.equal(7, plans[1].machines) -- 120 plates a minute / 18.75 a furnace = 6.4
+      assert.is_true(plans[1].output_per_minute >= plans[2].inputs[1].per_minute)
+    end)
+
+    it("takes ore and fuel into the first stage, and only plates into the second", function()
+      local plans = planner.plan_chain(gear_chain(60))
+
+      assert.are.same({"iron-ore", "coal"}, plans[1].lanes)
+      assert.are.same({"iron-plate"}, plans[2].lanes)
+    end)
+
+    it("needs as many gear machines as the rate asks for", function()
+      local plans = planner.plan_chain(gear_chain(121))
+
+      assert.are.equal(3, plans[2].machines)
+    end)
+
+    it("refuses a rate the plate lane cannot carry to the gear machines", function()
+      local plans, reason, max_rate = planner.plan_chain(gear_chain(200))
+
+      assert.is_nil(plans)
+      assert.are.equal("rate-too-high", reason)
+      assert.near(180, max_rate, 1e-6) -- one plate lane carries 450 plates, enough for 3 machines of 120
+    end)
+
+    it("refuses a rate that the ore lane of the first stage cannot carry", function()
+      local two_ore_per_plate = {
+        energy = 3.2, ingredients = {amount_of(2, "iron-ore")}, products = {amount_of(1, "iron-plate")},
+      }
+      local stages = gear_chain(120).stages
+      stages[1].recipe = two_ore_per_plate -- a furnace eats 37.5 ore a minute, so 12 of them fill the lane
+
+      local plans, reason, max_rate = planner.plan_chain(gear_chain(120, {stages = stages}))
+
+      assert.is_nil(plans)
+      assert.are.equal("rate-too-high", reason)
+      assert.near(60, max_rate, 1e-6) -- 2 gear machines need 13 furnaces; 1 needs 7
+    end)
+
+    it("limits the plates to one lane even when the last stage winds its output", function()
+      local stages = gear_chain(60).stages
+      stages[2].inserters = {items_per_minute = 100, max_input = 2, max_output = 2}
+      stages[2].recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(2, "iron-gear-wheel")}}
+
+      local plans, reason, max_rate = planner.plan_chain(gear_chain(1000, {stages = stages}))
+
+      assert.is_nil(plans)
+      assert.are.equal("rate-too-high", reason)
+      assert.near(360, max_rate, 1e-6) -- 3 machines of 120 gears; 450 plates / 120 per machine
+    end)
+
+    it("uses both lanes of the last stage's output belt when two inserters empty each of its machines", function()
+      local stages = gear_chain(60).stages
+      stages[2].inserters = {items_per_minute = 50.4, max_input = 2, max_output = 2}
+      stages[2].machine_speed = 1
+      -- a machine eats 30 plates a minute and makes 60 gears: two output inserters
+      stages[2].recipe = {energy = 2, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(2, "iron-gear-wheel")}}
+
+      local plans, reason, max_rate = planner.plan_chain(gear_chain(1000, {stages = stages}))
+
+      assert.is_nil(plans)
+      assert.are.equal("rate-too-high", reason)
+      assert.near(480, max_rate, 1e-6) -- one inserter puts 50.4 on a lane: 450 / 50.4 = 8.9 machines of 60 gears
+    end)
+
+    it("puts everything on one lane of the belt between two stages, even when two inserters empty the first", function()
+      local stages = gear_chain(60).stages
+      local inserters = {items_per_minute = 50.4, max_input = 2, max_output = 2}
+      -- a machine makes 60 plates a minute: two output inserters, but a plain belt carries it all on one lane.
+      -- It burns nothing, so the ore has both lanes of its input belt and does not set the limit.
+      stages[1].recipe = {energy = 1, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
+      stages[1].machine_speed = 1
+      stages[1].fuel = nil
+      stages[1].inserters = inserters
+      -- a machine eats 30 plates a minute and makes 30 gears
+      stages[2].recipe = {energy = 2, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+      stages[2].machine_speed = 1
+      stages[2].inserters = inserters
+
+      local plans, reason, max_rate = planner.plan_chain(gear_chain(1000, {stages = stages}))
+
+      assert.is_nil(plans)
+      assert.are.equal("rate-too-high", reason)
+      assert.near(420, max_rate, 1e-6) -- 450 / 60 = 7 machines make 420 plates: 14 machines of 30 gears
+    end)
+
+    it("refuses a later stage that eats something other than the stage before it makes", function()
+      local stages = gear_chain(60).stages
+      stages[2].recipe = {energy = 0.5, ingredients = {amount_of(2, "copper-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+      local plans, reason = planner.plan_chain(gear_chain(60, {stages = stages}))
+
+      assert.is_nil(plans)
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("refuses the chain when its first stage does not fit, even if a later stage would", function()
+      local stages = gear_chain(60).stages
+      stages[1].recipe = {
+        energy = 3.2, ingredients = {amount_of(1, "iron-ore")},
+        products = {amount_of(1, "iron-plate"), amount_of(1, "slag")},
+      }
+
+      local plans, reason = planner.plan_chain(gear_chain(60, {stages = stages}))
+
+      assert.is_nil(plans)
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("refuses a chain with no stages", function()
+      local plans, reason = planner.plan_chain{rate_per_minute = 60, lane_items_per_minute = 450, stages = {}}
+
+      assert.is_nil(plans)
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("reports that nothing fits when one machine of the last stage already needs more than the first stage can feed", function()
+      local stages = gear_chain(60).stages
+      stages[1].recipe = {energy = 3.2, ingredients = {amount_of(2, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
+      stages[2].recipe = {energy = 0.5, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+      local plans, reason, max_rate = planner.plan_chain(gear_chain(60, {stages = stages}))
+
+      assert.is_nil(plans)
+      assert.are.equal("rate-too-high", reason)
+      assert.are.equal(0, max_rate) -- one assembler eats 300 plates a minute, 16 furnaces; the ore lane feeds 12 (450 / 37.5)
+    end)
+
+    it("refuses a later stage that eats a second ingredient", function()
+      local stages = gear_chain(60).stages
+      stages[2].recipe = {
+        energy = 0.5, ingredients = {amount_of(2, "iron-plate"), amount_of(1, "copper-plate")},
+        products = {amount_of(1, "iron-gear-wheel")},
+      }
+
+      local _, reason = planner.plan_chain(gear_chain(60, {stages = stages}))
+
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("refuses a later stage that burns fuel", function()
+      local stages = gear_chain(60).stages
+      stages[2].fuel = "coal"
+
+      local _, reason = planner.plan_chain(gear_chain(60, {stages = stages}))
+
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("gives the same plan for one stage as plan does", function()
+      local stage = gear_chain(60).stages[1]
+      local plan = planner.plan{
+        product = stage.product, recipe = stage.recipe, machine_speed = 1, fuel = "coal",
+        rate_per_minute = 60, lane_items_per_minute = 450,
+      }
+      local plans = planner.plan_chain{rate_per_minute = 60, lane_items_per_minute = 450, stages = {stage}}
+
+      assert.are.same(plan, plans[1])
+    end)
+  end)
+
   describe("inserter_items_per_minute", function()
     it("turns an inserter's rotation speed into items per minute", function()
       local basic_rotation_speed = 0.014

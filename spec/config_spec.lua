@@ -6,6 +6,20 @@
 local config = require("scripts.config")
 
 describe("config", function()
+  describe("the machines", function()
+    it("smelts in a stone furnace burning coal", function()
+      local choice = config.machines.smelting
+
+      assert.are.same({machine = "stone-furnace", fuel = "coal"}, choice)
+    end)
+
+    it("crafts in a basic assembling machine, which burns nothing", function()
+      local choice = config.machines.crafting
+
+      assert.are.same({machine = "assembling-machine-1"}, choice)
+    end)
+  end)
+
   describe("the default product", function()
     it("chooses iron plate by default when the window opens", function()
       local default = config.default_product

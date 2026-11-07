@@ -537,4 +537,260 @@ describe("layout", function()
       end)
     end
   end)
+
+  describe("a chain of furnaces whose plates feed gear assemblers", function()
+    -- Furnaces (2x2) at x = 2..3 with plain belts at x = 0 (ore) and x = 5 (plates);
+    -- the assemblers (3x3) follow at x = 7..9, fed from the plate belt at x = 5.
+    local ASSEMBLER = "assembling-machine-1"
+    local furnace_shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+    local assembler_shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
+
+    local function gear_chain(furnace_count, assembler_count)
+      return layout.build_chain({
+        {machine_count = furnace_count, machine = NAMES.machine, shape = furnace_shape},
+        {machine_count = assembler_count, machine = ASSEMBLER, shape = assembler_shape},
+      }, NAMES)
+    end
+
+    local function belts_in_column(entities, x)
+      local rows = {}
+      for _, entity in ipairs(entities_named(entities, NAMES.belt)) do
+        if grid.top_left_tile(entity.position).x == x then
+          rows[#rows + 1] = grid.top_left_tile(entity.position).y
+        end
+      end
+      table.sort(rows)
+      return rows
+    end
+
+    -- The directions the belts of one tile column run in, without repeats.
+    local function belt_directions_in_column(entities, x)
+      local directions, seen = {}, {}
+      for _, entity in ipairs(entities_named(entities, NAMES.belt)) do
+        if grid.top_left_tile(entity.position).x == x and not seen[entity.direction] then
+          seen[entity.direction] = true
+          directions[#directions + 1] = entity.direction
+        end
+      end
+      return directions
+    end
+
+    -- The rows of the inserters in one tile column.
+    local function inserter_rows(entities, x)
+      local rows = {}
+      for _, entity in ipairs(entities_named(entities, NAMES.inserter)) do
+        local tile = grid.top_left_tile(entity.position)
+        if tile.x == x then
+          rows[#rows + 1] = tile.y
+        end
+      end
+      return rows
+    end
+
+    -- Whether an item put on a belt running `direction` in `from_row` passes `row` (the same row counts).
+    local function belt_passes(direction, from_row, row)
+      if direction == defines.direction.north then
+        return row <= from_row
+      end
+      return row >= from_row
+    end
+
+    -- The inserters of a two-column chain (belt in tile column `belt_x`) that waste their plates or
+    -- never get any, as text: an output inserter drops plates that no input inserter is ahead of, or
+    -- an input inserter has no output inserter before it.
+    local function plate_flow_problems(entities, belt_x)
+      local direction = belt_directions_in_column(entities, belt_x)[1]
+      local drops, pickups = inserter_rows(entities, belt_x - 1), inserter_rows(entities, belt_x + 1)
+      local problems = {}
+      for _, drop in ipairs(drops) do
+        local reached = false
+        for _, pickup in ipairs(pickups) do
+          reached = reached or belt_passes(direction, drop, pickup)
+        end
+        if not reached then
+          problems[#problems + 1] = "the plates dropped in row " .. drop .. " pass no input inserter"
+        end
+      end
+      for _, pickup in ipairs(pickups) do
+        local supplied = false
+        for _, drop in ipairs(drops) do
+          supplied = supplied or belt_passes(direction, drop, pickup)
+        end
+        if not supplied then
+          problems[#problems + 1] = "the input inserter in row " .. pickup .. " gets no plates"
+        end
+      end
+      return problems
+    end
+
+    it("builds each column's machines with that stage's machine name", function()
+      local entities = gear_chain(7, 2)
+
+      assert.are.equal(7, count_named(entities, NAMES.machine))
+      assert.are.equal(2, count_named(entities, ASSEMBLER))
+    end)
+
+    it("places the assemblers right after the plate belt", function()
+      local entities = gear_chain(7, 2)
+
+      local first_assembler = assert(entities_named(entities, ASSEMBLER)[1])
+      assert.are.same({x = 7, y = 0}, grid.top_left_tile(first_assembler.position, 3, 3))
+    end)
+
+    it("runs the plate belt between the columns without a gap, from the top to the last row either column needs", function()
+      local entities = gear_chain(7, 2) -- furnaces cover rows 0 to 13; the assemblers' inserters end at row 4
+
+      local rows = belts_in_column(entities, 5)
+
+      assert.are.same({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}, rows)
+    end)
+
+    it("runs the plate belt down to the last assembler's inserters when the assemblers reach further than the furnaces", function()
+      local entities = gear_chain(1, 4) -- one furnace covers rows 0 and 1; four assemblers take rows 0 to 11
+
+      local rows = belts_in_column(entities, 5)
+
+      assert.are.equal(0, rows[1])
+      assert.are.equal(10, rows[#rows]) -- the last assembler's last input inserter is in row 10
+    end)
+
+    it("runs the plate belt north, so every furnace's plates pass the assemblers, when the furnaces reach further down", function()
+      local entities = gear_chain(11, 2) -- the last furnace drops in row 20; the last assembler inserter is in row 4
+
+      assert.are.same({defines.direction.north}, belt_directions_in_column(entities, 5))
+    end)
+
+    it("draws only the belts the three belt columns need, so the assemblers get no input belt of their own", function()
+      local entities = gear_chain(7, 2)
+
+      -- ore: down to the last furnace's inserter (row 12) = 13; plates: 14; gears: 2 machines * 3 rows * 2 columns = 12
+      assert.are.equal(13 + 14 + 12, count_named(entities, NAMES.belt))
+    end)
+
+    it("winds only the last column's output belt", function()
+      local entities = gear_chain(7, 2)
+
+      assert.are.equal(2 * 3 * 2, #belts_in_column(entities, 11) + #belts_in_column(entities, 12))
+      assert.are.equal(14, #belts_in_column(entities, 5)) -- straight, one belt per furnace row
+    end)
+
+    it("numbers every entity once across the columns", function()
+      local entities = gear_chain(7, 2)
+
+      for index, entity in ipairs(entities) do
+        assert.are.equal(index, entity.entity_number)
+      end
+    end)
+
+    it("joins the poles of the two columns by a wire", function()
+      local entities = gear_chain(3, 2)
+
+      local catalog = builders.a_catalog{pole_supply_radius = 2.5, pole_wire_reach = 7.5}
+      catalog[ASSEMBLER] = {kind = "machine", width = 3, height = 3, needs_power = true}
+      local problems = validator.validate(entities, catalog)
+
+      assert.are.same({}, problems)
+    end)
+
+    it("starts the assemblers on the furnaces' row, below the pole row, when only the furnaces are separated by pole rows", function()
+      -- furnaces with two input inserters have a pole row above the first one, so their first machine row is 1
+      local entities = layout.build_chain({
+        {machine_count = 3, machine = NAMES.machine, shape = {machine_size = 2, input_inserters = 2, output_inserters = 1}},
+        {machine_count = 2, machine = ASSEMBLER, shape = assembler_shape},
+      }, NAMES)
+
+      local first_assembler = assert(entities_named(entities, ASSEMBLER)[1])
+      assert.are.same({x = 7, y = 1}, grid.top_left_tile(first_assembler.position, 3, 3))
+    end)
+
+    it("starts the furnaces on the assemblers' row, below the pole row, when only the assemblers are separated by pole rows", function()
+      local entities = layout.build_chain({
+        {machine_count = 3, machine = NAMES.machine, shape = furnace_shape},
+        {machine_count = 2, machine = ASSEMBLER, shape = {machine_size = 3, input_inserters = 3, output_inserters = 2}},
+      }, NAMES)
+
+      local first_furnace = assert(entities_named(entities, NAMES.machine)[1])
+      assert.are.same({x = 2, y = 1}, grid.top_left_tile(first_furnace.position, 2, 2))
+    end)
+
+    it("keeps the belt between two columns straight when the first column's machines would wind their output belt", function()
+      -- 3x3 machines with two output inserters wind a belt of their own when they are the last column
+      local entities = layout.build_chain({
+        {machine_count = 2, machine = ASSEMBLER, shape = assembler_shape},
+        {machine_count = 1, machine = NAMES.machine, shape = furnace_shape},
+      }, NAMES)
+
+      -- the machines cover columns 2 to 4 and their output inserters are in 5, so the belt is in 6
+      assert.are.same({0, 1, 2, 3, 4, 5}, belts_in_column(entities, 6))
+      assert.are.same({}, belts_in_column(entities, 7))
+    end)
+
+    it("joins the top output pole of a column to the top input pole of the next with one wire", function()
+      local entities = gear_chain(3, 2)
+
+      -- furnaces: the output pole is in column 4, beside the first furnace's inserter (row 1);
+      -- assemblers: the input pole is in column 6, below the two input inserters (row 2)
+      local function pole_at(x, y)
+        for _, entity in ipairs(entities_named(entities, NAMES.pole)) do
+          local tile = grid.top_left_tile(entity.position)
+          if tile.x == x and tile.y == y then
+            return entity
+          end
+        end
+      end
+      local furnace_output_pole, assembler_input_pole = pole_at(4, 1), pole_at(6, 2)
+
+      local wires_between = 0
+      for _, wire in ipairs(furnace_output_pole.wires or {}) do
+        if wire[3] == assembler_input_pole.entity_number then
+          wires_between = wires_between + 1
+        end
+      end
+      assert.are.equal(1, wires_between)
+    end)
+
+    -- The same chain for every pairing of column shapes, with a few machine counts each.
+    local column_shapes = {
+      {label = "2x2 machines fed and emptied by one inserter", machine = NAMES.machine, shape = furnace_shape},
+      {label = "2x2 machines separated by pole rows", machine = NAMES.machine, shape = {machine_size = 2, input_inserters = 2, output_inserters = 1}},
+      {label = "3x3 machines fed and emptied by two inserters", machine = ASSEMBLER, shape = assembler_shape},
+      {label = "3x3 machines fed by one inserter and emptied by one", machine = ASSEMBLER, shape = {machine_size = 3, input_inserters = 1, output_inserters = 1}},
+      {label = "3x3 machines separated by pole rows", machine = ASSEMBLER, shape = {machine_size = 3, input_inserters = 3, output_inserters = 2}},
+    }
+    for _, first in ipairs(column_shapes) do
+      for _, second in ipairs(column_shapes) do
+        for _, counts in ipairs({{1, 1}, {3, 1}, {1, 4}, {7, 3}}) do
+          it("passes the validator when " .. first.label .. " feed " .. second.label .. ", " .. counts[1] .. " and " .. counts[2] .. " machines", function()
+            local catalog = builders.a_catalog{pole_supply_radius = 2.5, pole_wire_reach = 7.5}
+            catalog[NAMES.machine] = {kind = "machine", width = 2, height = 2, needs_power = true}
+            catalog[ASSEMBLER] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+            local entities = layout.build_chain({
+              {machine_count = counts[1], machine = first.machine, shape = first.shape},
+              {machine_count = counts[2], machine = second.machine, shape = second.shape},
+            }, NAMES)
+
+            assert.are.same({}, validator.validate(entities, catalog))
+          end)
+        end
+      end
+    end
+
+    -- The same pairings again, for the flow of the items on the belt between the columns.
+    for _, first in ipairs(column_shapes) do
+      for _, second in ipairs(column_shapes) do
+        for _, counts in ipairs({{1, 1}, {3, 1}, {1, 4}, {7, 3}}) do
+          it("lets every plate reach an input inserter and every input inserter get plates when " .. first.label .. " feed " .. second.label .. ", " .. counts[1] .. " and " .. counts[2] .. " machines", function()
+            local entities = layout.build_chain({
+              {machine_count = counts[1], machine = first.machine, shape = first.shape},
+              {machine_count = counts[2], machine = second.machine, shape = second.shape},
+            }, NAMES)
+
+            local plate_belt_column = 3 + first.shape.machine_size -- the machines start in column 2, then come their width and a column of output inserters
+            assert.are.same({}, plate_flow_problems(entities, plate_belt_column))
+          end)
+        end
+      end
+    end
+  end)
 end)

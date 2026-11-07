@@ -5,7 +5,8 @@
 -- entity covers, with y growing down the page.
 --
 -- The layout is one column of machines, drawn here as it looks from above
--- (north is up, items flow down). A machine is 2 or 3 tiles wide and tall; this
+-- (north is up, belts run down, except the one between two columns: see below). A
+-- machine is 2 or 3 tiles wide and tall; this
 -- is a 2x2 furnace with one inserter on each side:
 --
 --   x:   0       1      2 3      4       5
@@ -56,17 +57,51 @@
 -- The first stub has no belt behind the outer tile it feeds, so it bends into it;
 -- the lane stays the same. The belt needs three rows per machine, which is exactly
 -- what a 3x3 machine takes, so it only works for size 3.
+--
+-- A chain puts one such column after another, left to right, from the raw items to
+-- the final product. The output belt of a column is the input belt of the next, so
+-- the first column's product goes straight into the second column's machines (here
+-- furnaces making plates, then assemblers making gears from them):
+--
+--        v   >  [F F]  >  v  >  [A A A]  >  >  v
+--        v   >  [F F]  >  v  >  [A A A]  >  v  <
+--        ore             plates           gears
+--
+-- Only the last column's belt winds: the belt between two columns is a plain one,
+-- so the plates travel on one lane (see "plain belt" above). The columns need not
+-- have the same number of machines nor the same machine size, so the plate belt
+-- runs as far down as either column needs. One wire joins the top poles of each
+-- column to the next one, so a single connection to the power network powers all.
+--
+-- A plate only travels the way its belt runs, so it can only reach inserters further
+-- along the belt than the one that dropped it. The columns all start on the same row,
+-- and the belt between two columns runs north when the first column reaches further
+-- down than the second, and south otherwise, so that every plate has an inserter of
+-- the second column ahead of it. Next to 2 assemblers (rows 0 to 4), 11 furnaces
+-- (rows 0 to 21) would waste the plates of the 8 lowest furnaces on a southbound belt:
+-- they flow south past the last assembler. On a northbound belt (^) they all pass the
+-- assemblers' inserters, and the lowest assembler has the first pick (a smaller chain,
+-- 4 furnaces and 1 assembler):
+--
+--        v   >  [F F]  >  ^  >  [A A A]      <- row 0: the belt ends here
+--        v      [F F]     ^  >  [A A A]
+--        v   >  [F F]  >  ^     [A A A]
+--        v      [F F]     ^                  <- furnaces below the assembler:
+--        v   >  [F F]  >  ^                     their plates still pass its inserters
+--        v      [F F]     ^
+--        v   >  [F F]  >  ^
+--               [F F]     ^                  <- the belt starts here
 
 local grid = require("scripts.grid")
 
 local layout = {}
 
--- The tile column of each part of the layout (the x numbers in the diagrams above).
--- The machine starts at MACHINE_COLUMN and covers `machine_size` columns; the output
--- inserters and belt follow it.
-local INPUT_BELT_COLUMN = 0
-local INPUT_INSERTER_COLUMN = 1
-local MACHINE_COLUMN = 2
+-- The tile column of each part of a column of machines, counted from the column's
+-- own input belt (the x numbers in the diagrams above). The machine starts at
+-- MACHINE_OFFSET and covers `machine_size` columns; the output inserters and belt
+-- follow it.
+local INPUT_INSERTER_OFFSET = 1
+local MACHINE_OFFSET = 2
 
 local MACHINES_PER_POLE = 2  -- a small pole's supply area covers two machines' inserters
 
@@ -103,22 +138,19 @@ function layout.supports_machine_size(machine_size)
   return SUPPORTED_MACHINE_SIZES[machine_size] == true
 end
 
--- What the layout needs to know about the machine.
----@class bpgen.Shape
----@field machine_size integer  tiles wide and tall; see `supports_machine_size`
----@field input_inserters integer  per machine, at most `machine_size`
----@field output_inserters integer  per machine, at most `machine_size`; a 3x3 machine with two (and no pole rows) gets a winding output belt
-
 -- Where things go, worked out once from the shape.
 ---@class bpgen.Geometry
 ---@field size integer  machine size
+---@field input_belt_column integer  where the belt that feeds the machines runs (the previous column's output belt, in a chain)
+---@field input_inserter_column integer
+---@field machine_column integer
 ---@field input_count integer  input inserters per machine
 ---@field output_count integer  output inserters per machine
 ---@field output_inserter_column integer
 ---@field output_belt_column integer  the belt the product leaves on: the outer one when the belt winds
 ---@field output_winds boolean  the output belt winds, so its two lanes both carry product
 ---@field has_pole_rows boolean  machines are separated by rows of poles
----@field first_row integer  tile row of the first machine's top edge, which is also where the belts start
+---@field first_row integer  tile row of the first machine's top edge, which is also where the belts start (1 or more with pole rows)
 ---@field spacing integer  rows from one machine's top edge to the next
 
 -- Whether the output belt winds: only for a 3x3 machine with two output
@@ -132,21 +164,41 @@ local function winds_output(shape, has_pole_rows)
     and shape.output_inserters == WINDING_OUTPUT_INSERTERS
 end
 
+-- Whether the machines are separated by rows of poles: when an inserter takes every
+-- tile beside a machine on one side, no tile is free for a pole.
 ---@param shape bpgen.Shape
+---@return boolean
+local function needs_pole_rows(shape)
+  return math.max(shape.input_inserters, shape.output_inserters) >= shape.machine_size
+end
+
+-- Where a column sits in its chain. A single column is a chain of one.
+---@class bpgen.Place
+---@field origin integer  tile column of the column's input belt
+---@field first_row integer  tile row of the first machine's top edge: the same for every column of a chain
+---@field feeds_next boolean  the output belt feeds another column of machines, so it stays a plain belt
+---@field draws_input_belt boolean  false when the previous column's output belt is this one's input belt
+
+---@param shape bpgen.Shape
+---@param place bpgen.Place
 ---@return bpgen.Geometry
-local function geometry_of(shape)
+local function geometry_of(shape, place)
   local size = shape.machine_size
-  local has_pole_rows = math.max(shape.input_inserters, shape.output_inserters) >= size
-  local output_winds = winds_output(shape, has_pole_rows)
+  local has_pole_rows = needs_pole_rows(shape)
+  local output_winds = not place.feeds_next and winds_output(shape, has_pole_rows)
+  local machine_column = place.origin + MACHINE_OFFSET
   return {
     size = size,
     input_count = shape.input_inserters,
     output_count = shape.output_inserters,
-    output_inserter_column = MACHINE_COLUMN + size,
-    output_belt_column = MACHINE_COLUMN + size + (output_winds and 2 or 1),
+    input_belt_column = place.origin,
+    input_inserter_column = place.origin + INPUT_INSERTER_OFFSET,
+    machine_column = machine_column,
+    output_inserter_column = machine_column + size,
+    output_belt_column = machine_column + size + (output_winds and 2 or 1),
     output_winds = output_winds,
     has_pole_rows = has_pole_rows,
-    first_row = has_pole_rows and 1 or 0,
+    first_row = place.first_row,
     spacing = has_pole_rows and size + 1 or size,
   }
 end
@@ -155,6 +207,11 @@ end
 ---@class bpgen.Poles
 ---@field input table<integer, bpgen.Entity>
 ---@field output table<integer, bpgen.Entity>
+
+-- How a belt shared by two columns runs.
+---@class bpgen.SharedBelt
+---@field end_row integer  one past the belt's last tile
+---@field direction defines.direction  the way the belt runs
 
 -- A blueprint under construction: everything the steps of the layout share
 -- (what is being built, where things go, the poles so far) lives in one table,
@@ -168,20 +225,27 @@ end
 ---@field names bpgen.Names
 ---@field machine_count integer
 ---@field poles bpgen.Poles
+---@field draws_input_belt boolean  false when the previous column's output belt is this one's input belt
+---@field shared_belt? bpgen.SharedBelt  how the output belt runs, when the next column shares it
 local Builder = {}
 Builder.__index = Builder
 
+-- `entities` is the list the blueprint is collected in, shared by all the columns
+-- of a chain (so that the numbers are unique). `place` tells where the column sits.
 ---@param machine_count integer
 ---@param names bpgen.Names
 ---@param shape bpgen.Shape
+---@param entities bpgen.Entity[]
+---@param place bpgen.Place
 ---@return bpgen.Builder
-function Builder.new(machine_count, names, shape)
+function Builder.new(machine_count, names, shape, entities, place)
   return setmetatable({
-    entities = {},
-    geometry = geometry_of(shape),
+    entities = entities,
+    geometry = geometry_of(shape, place),
     names = names,
     machine_count = machine_count,
     poles = {input = {}, output = {}},
+    draws_input_belt = place.draws_input_belt,
   }, Builder)
 end
 
@@ -212,6 +276,24 @@ function Builder:machine_top(index)
   return self.geometry.first_row + index * self.geometry.spacing
 end
 
+-- The tile row of the last input inserter, where the input belt ends.
+---@return integer
+function Builder:last_input_row()
+  return self:machine_top(self.machine_count - 1) + self.geometry.input_count - 1
+end
+
+-- The tile row of the last output inserter, where the last machine drops its product.
+---@return integer
+function Builder:last_output_row()
+  return self:machine_top(self.machine_count - 1) + self.geometry.output_count - 1
+end
+
+-- One past the last row of the column of machines.
+---@return integer
+function Builder:end_row()
+  return self:machine_top(self.machine_count)
+end
+
 ---@param column integer  tile column
 ---@param row integer  tile row
 ---@param direction defines.direction  the way the belt runs
@@ -219,13 +301,14 @@ function Builder:add_belt(column, row, direction)
   self:add({name = self.names.belt, position = grid.position(column, row), direction = direction})
 end
 
--- A run of belt tiles down one column of the layout, running south.
+-- A run of belt tiles down one column of the layout, all running the same way.
 ---@param column integer  tile column
 ---@param first_row integer  tile row of the first belt tile
 ---@param length integer  how many tiles
-function Builder:add_belt_column(column, first_row, length)
+---@param direction defines.direction  the way the belt runs
+function Builder:add_belt_column(column, first_row, length, direction)
   for row = first_row, first_row + length - 1 do
-    self:add_belt(column, row, defines.direction.south)
+    self:add_belt(column, row, direction)
   end
 end
 
@@ -246,20 +329,26 @@ function Builder:add_winding_output_belt()
   end
 end
 
--- Both belts run south (down the page), from the first machine's top row. The
+-- Both belts start at the first machine's top row and run south (down the page),
+-- unless the next column shares the output belt and needs it to run north. The
 -- output belt keeps the full height of the column, so the products have somewhere
 -- to go (and winds, for two output inserters on a 3x3 machine). The input belt
--- stops at the last input inserter: nothing below it would be picked up.
+-- stops at the last input inserter: nothing below it would be picked up. In a chain
+-- the next column's input belt is this output belt, so that one is drawn here, as
+-- far as either column needs it, and the next column draws no input belt.
 function Builder:add_belts()
   local geometry = self.geometry
   local first_row = geometry.first_row
-  local last_input_row = self:machine_top(self.machine_count - 1) + geometry.input_count - 1
-  self:add_belt_column(INPUT_BELT_COLUMN, first_row, last_input_row - first_row + 1)
+  if self.draws_input_belt then
+    self:add_belt_column(geometry.input_belt_column, first_row, self:last_input_row() - first_row + 1, defines.direction.south)
+  end
   if geometry.output_winds then
     self:add_winding_output_belt()
   else
-    local end_row = self:machine_top(self.machine_count) -- one past the last row of the column
-    self:add_belt_column(geometry.output_belt_column, first_row, end_row - first_row)
+    local shared = self.shared_belt
+    local belt_end_row = shared and shared.end_row or self:end_row()
+    local direction = shared and shared.direction or defines.direction.south
+    self:add_belt_column(geometry.output_belt_column, first_row, belt_end_row - first_row, direction)
   end
 end
 
@@ -280,7 +369,7 @@ end
 ---@param output_row integer
 function Builder:add_pole_pair(input_row, output_row)
   local pole = self.names.pole
-  local input_pole = self:add({name = pole, position = grid.position(INPUT_INSERTER_COLUMN, input_row)})
+  local input_pole = self:add({name = pole, position = grid.position(self.geometry.input_inserter_column, input_row)})
   local output_pole = self:add({name = pole, position = grid.position(self.geometry.output_inserter_column, output_row)})
   self.poles.input[#self.poles.input + 1] = input_pole
   self.poles.output[#self.poles.output + 1] = output_pole
@@ -294,8 +383,8 @@ function Builder:add_machine_row(index)
   local top = self:machine_top(index)
   local size = geometry.size
 
-  self:add({name = self.names.machine, position = grid.position(MACHINE_COLUMN, top, size, size)})
-  self:add_inserters(INPUT_INSERTER_COLUMN, top, geometry.input_count)
+  self:add({name = self.names.machine, position = grid.position(geometry.machine_column, top, size, size)})
+  self:add_inserters(geometry.input_inserter_column, top, geometry.input_count)
   self:add_inserters(geometry.output_inserter_column, top, geometry.output_count)
 
   if not geometry.has_pole_rows and index % MACHINES_PER_POLE == 0 then
@@ -333,6 +422,81 @@ function Builder:wire_poles()
   self:connect(poles.input[1], poles.output[1])
 end
 
+-- The columns of a chain, left to right, joined by wire: the top output pole of each
+-- column to the top input pole of the next.
+---@param builders bpgen.Builder[]
+local function wire_columns(builders)
+  ---@type bpgen.Builder|nil
+  local previous
+  for _, builder in ipairs(builders) do
+    if previous then
+      previous:connect(previous.poles.output[1], builder.poles.input[1])
+    end
+    previous = builder
+  end
+end
+
+-- How the belt between a column and the next one runs: down to the lower of the
+-- two columns' last needs, and north exactly when the column drops its product
+-- further down than the next column takes it, so that the plates of its lowest
+-- machines still pass the next column's inserters (see the diagram of the
+-- chain above). Otherwise it runs south, which carries the plates on to the next column's
+-- lower machines.
+---@param builder bpgen.Builder
+---@param next_builder bpgen.Builder
+local function share_belt(builder, next_builder)
+  local last_pickup_row = next_builder:last_input_row()
+  local runs_north = builder:last_output_row() > last_pickup_row
+  builder.shared_belt = {
+    end_row = math.max(builder:end_row(), last_pickup_row + 1),
+    direction = runs_north and defines.direction.north or defines.direction.south,
+  }
+end
+
+-- The row every column of a chain starts on: one below the pole row that a column
+-- with pole rows needs above its first machine, so that all the columns line up.
+---@param stages bpgen.StageLayout[]
+---@return integer
+local function chain_first_row(stages)
+  for _, stage in ipairs(stages) do
+    if needs_pole_rows(stage.shape) then
+      return 1
+    end
+  end
+  return 0
+end
+
+-- names: {belt, inserter, pole} prototype names (`machine` is each stage's own).
+-- `stages` go from the one fed raw items to the one that makes the final product.
+-- Returns a list of blueprint entities (tables with entity_number, name, position, ...).
+---@param stages bpgen.StageLayout[]  at least one
+---@param names bpgen.Names
+---@return bpgen.Entity[]
+function layout.build_chain(stages, names)
+  local entities = {}
+  local builders = {}
+  local origin = 0
+  local first_row = chain_first_row(stages)
+  for index, stage in ipairs(stages) do
+    local stage_names = {machine = stage.machine, belt = names.belt, inserter = names.inserter, pole = names.pole}
+    local place = {origin = origin, first_row = first_row, feeds_next = index < #stages, draws_input_belt = index == 1}
+    local builder = Builder.new(stage.machine_count, stage_names, stage.shape, entities, place)
+    builders[index] = builder
+    origin = builder.geometry.output_belt_column -- the next column's input belt
+    if index > 1 then
+      share_belt(builders[index - 1], builder)
+    end
+  end
+  for _, builder in ipairs(builders) do
+    builder:add_belts()
+    builder:add_machines()
+    builder:wire_poles()
+  end
+  wire_columns(builders)
+  return entities
+end
+
+-- One column on its own: a chain of one stage.
 -- names: {machine, belt, inserter, pole} prototype names.
 -- Returns a list of blueprint entities (tables with entity_number, name, position, ...).
 ---@param machine_count integer  at least 1
@@ -340,11 +504,7 @@ end
 ---@param shape bpgen.Shape  the machine size must be one `supports_machine_size` accepts
 ---@return bpgen.Entity[]
 function layout.build(machine_count, names, shape)
-  local builder = Builder.new(machine_count, names, shape)
-  builder:add_belts()
-  builder:add_machines()
-  builder:wire_poles()
-  return builder.entities
+  return layout.build_chain({{machine_count = machine_count, machine = names.machine, shape = shape}}, names)
 end
 
 return layout

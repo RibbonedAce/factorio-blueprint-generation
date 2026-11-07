@@ -127,16 +127,28 @@ end
 -- Stand-ins for the game's prototypes, for generator tests.
 --------------------------------------------------------------------------------
 
--- A recipe prototype. All three options are required: a recipe's time and
--- amounts are exactly what a test's expectation depends on, so a test must say them.
---     a_recipe{energy = 3.2, ingredients = {amount_of(2, "stone")}, products = {amount_of(1, "stone-brick")}}
----@param options {energy: number, ingredients: bpgen.RecipeItem[], products: bpgen.RecipeItem[]}
+-- A fluid in a recipe, for an ingredient or product that is not an item:
+--     a_recipe{energy = 1, ingredients = {fluid_of(10, "water")}, products = {amount_of(1, "stone-brick")}}
+---@param amount number
+---@param name string
+---@return bpgen.RecipeItem
+function builders.fluid_of(amount, name)
+  return {name = name, amount = amount, type = "fluid"} --[[@as bpgen.RecipeItem]]
+end
+
+-- A recipe prototype. The time, the amounts and the category are exactly what a
+-- test's expectation depends on, so a test says them, except the category of a
+-- recipe made by hand or in an assembler ("crafting"), which is the default; a
+-- furnace's recipe says `category = "smelting"`. A recipe with several categories
+-- (the game lists them all) says `categories = {"crushing", "smelting"}` instead.
+--     a_recipe{energy = 3.2, ingredients = {amount_of(2, "stone")}, products = {amount_of(1, "stone-brick")}, category = "smelting"}
+---@param options {energy: number, ingredients: bpgen.RecipeItem[], products: bpgen.RecipeItem[], category?: string, categories?: string[]}
 ---@return table
 function builders.a_recipe(options)
   local function as_prototype_items(amounts)
     local items = {}
     for _, amount in ipairs(amounts) do
-      items[#items + 1] = {type = "item", name = amount.name, amount = amount.amount}
+      items[#items + 1] = {type = amount.type or "item", name = amount.name, amount = amount.amount}
     end
     return items
   end
@@ -144,6 +156,7 @@ function builders.a_recipe(options)
   local products = as_prototype_items(options.products)
   return {
     energy = options.energy,
+    categories = options.categories or {options.category or "crafting"},
     ingredients = as_prototype_items(options.ingredients),
     products = products,
     get_product_amount = function(index) return products[index].amount end,
@@ -173,7 +186,9 @@ end
 -- says: no recipe is there unless the test lists it.
 --
 -- Options (all optional):
---   recipes                 recipes by name, each made with `a_recipe`; default none
+--   items                   names of items that exist without being in any recipe; default none
+--   recipes                 recipes by name, each made with `a_recipe`; default none.
+--                           `get_recipe_filtered` finds them by the items they make
 --   furnace_speed           the stone furnace's crafting speed, default 1;
 --                           `false` makes it an entity that cannot craft
 --   machines                other crafting machines by name, each made with `a_machine`
@@ -191,7 +206,7 @@ end
 -- form {filter = "fuel-category", ["fuel-category"] = name} combined with "or"
 -- (anything else is an error), and an empty list of filters gives every item,
 -- as the worst case of what the game might do.
----@param options? {recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, missing_entities?: string[]}
+---@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, missing_entities?: string[]}
 ---@return table  a stand-in for the game's `prototypes`
 function builders.fake_prototypes(options)
   options = options or {}
@@ -248,6 +263,9 @@ function builders.fake_prototypes(options)
 
   local recipes = options.recipes or {}
   local items = {["coal"] = item("coal", {"chemical"})}
+  for _, name in ipairs(options.items or {}) do
+    items[name] = items[name] or item(name)
+  end
   for _, recipe in pairs(recipes) do
     for _, amount in ipairs(recipe.ingredients) do
       items[amount.name] = items[amount.name] or item(amount.name)
@@ -274,7 +292,26 @@ function builders.fake_prototypes(options)
     return found
   end
 
-  return {entity = entities, recipe = recipes, item = items, get_item_filtered = get_item_filtered}
+  -- The recipes that make an item, by recipe name. Understands only the filter the
+  -- generator uses, {filter = "has-product-item", elem_filters = {{filter = "name", name = item}}}.
+  local function get_recipe_filtered(filters)
+    assert(#filters == 1 and filters[1].filter == "has-product-item" and filters[1].mode == nil
+      and #filters[1].elem_filters == 1 and filters[1].elem_filters[1].filter == "name"
+      and type(filters[1].elem_filters[1].name) == "string",
+      "the fake recipe filter only knows {filter = \"has-product-item\", elem_filters = {{filter = \"name\", name = item}}}")
+    local wanted = filters[1].elem_filters[1].name
+    local found = {}
+    for recipe_name, recipe in pairs(recipes) do
+      for _, product in ipairs(recipe.products) do
+        if product.type == "item" and product.name == wanted then
+          found[recipe_name] = recipe
+        end
+      end
+    end
+    return found
+  end
+
+  return {entity = entities, item = items, get_item_filtered = get_item_filtered, get_recipe_filtered = get_recipe_filtered}
 end
 
 return builders
