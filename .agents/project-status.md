@@ -1,6 +1,8 @@
 # Project status
 
-Last updated: 2026-11-06
+Last updated: 2026-11-07
+
+2026-11-07: workflow change only, no code changes. The assistant now edits the owner's checkout directly and commits locally (never pushes); see `instructions.md` (Roles, Tooling). Suite re-run on the owner's machine: 476 passing. Note this file is past the ~200-line guide; splitting it (status / decisions / layout) is an open housekeeping item for the owner to approve.
 
 ## Goal
 

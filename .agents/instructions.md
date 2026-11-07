@@ -5,8 +5,9 @@ These come from the owner's project instructions plus rules they stated during t
 ## Roles
 
 - The assistant owns the work inside the repo, but does not decide what leaves it.
-- The owner reviews all work, then commits and pushes it. The assistant never pushes and does not commit unless explicitly asked.
-- Deliver changes as a patch file or as individual files, together with a suggested commit message.
+- Since 2026-11-07 the assistant works directly in the owner's checkout (`C:\Users\tyler\AppData\Roaming\Factorio\mods\blueprint-generation`, branch `llm-main`): it edits files in place and COMMITS locally. It NEVER pushes; the owner reviews the commits and pushes them.
+- Commit code and notes (`.agents/`) separately, one commit per logical change, so the owner can review or revert each. Never amend or rewrite commits the owner may already have reviewed; add new ones.
+- `CLAUDE.md` (project instructions) is in the repo root; the owner decides whether it is committed.
 
 ## Teaching
 
@@ -62,11 +63,21 @@ Tests run with [busted](https://lunarmodules.github.io/busted/) (`describe` / `i
 
 - Working branch: `llm-main`.
 - Commit messages are brief: one imperative subject line (example: `Set mod author to Ribboned Ace`), then the trailer `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`. Do not add a session link or any other trailer.
+- The remote is `origin` on GitHub. The assistant does not push, force-push or change the remote.
 - `.agents/` is tracked and must not be gitignored. `.idea/` stays ignored.
 
-## Tooling gotchas (assistant's environment)
+## Tooling (current environment, since 2026-11-07)
 
-- The assistant's clone of the repo is read-only, shallow, and single-branch. It cannot push. Sync it with `git fetch --depth=1 origin llm-main` and compare before producing any patch, so patches apply to the owner's current state.
+- Windows 11. Tools: PowerShell (primary) and Git Bash. The repo is the owner's real checkout, not a scratch clone.
+- Tests: Lua 5.2.4 and busted are installed but NOT on the PATH. In PowerShell run `$env:PATH += ";C:\Users\tyler\AppData\Local\lua-5.2.4_Win64_bin;C:\Users\tyler\AppData\Roaming\luarocks\bin"` and then `busted` from the repo root (476 passing on 2026-11-07). `luacheck` is not installed. Lua 5.2 matches Factorio's Lua closely; still avoid 5.3-only syntax.
+- Mutation checks: do them in a COPY of `scripts/` and `spec/` in the scratchpad folder, never in the repo, so a half-applied mutation cannot be committed.
+- Before committing, run `busted` and `git status`; stage files by name, not `git add -A`.
+
+## Tooling gotchas from the earlier sandbox (history, mostly obsolete)
+
+Everything in this section describes the old read-only sandbox clone and patch workflow. Keep it only for the facts about the API files and the game; ignore the patch, clone and interpreter-building advice.
+
+- The assistant's clone of the repo was read-only, shallow, and single-branch. It could not push. Patches were synced with `git fetch --depth=1 origin llm-main`.
 - To hand over new files in a patch, run `git add -N <path>` first so `git diff` includes them.
 - The official docs host `lua-api.factorio.com` refused the assistant's fetch tool on 2026-10-24 (robots rules), including the versioned 2.1.23 pages the owner linked. Do not try to route around this with mirrors or other tools.
 - Instead, the owner supplied `runtime-api.json` and `prototype-api.json` (version 2.1.23) as session attachments. They are only available inside that session; in a new session, ask the owner to attach them again before checking the API. Query them with a script and read the gotchas at the top of `research/api-reference-2.1.23.md` (parameter order, blueprint entity variants).
@@ -75,5 +86,5 @@ Tests run with [busted](https://lunarmodules.github.io/busted/) (`describe` / `i
 - Since 2026-11-06 the owner has taken patches that combine code, tests and notes (he asked for one combined patch for the chain feature and accepted every later one); the separate-patches rule below is the default, ask if a change is large. He often applies several patches in a row before pushing: say which patch another one stacks on, and after he says "pushed" re-clone `llm-main` before cutting the next.
 - Do not use `git stash` or `git reset` in the scratch clone to juggle patches (that destroyed uncommitted work twice on 2026-11-06). Keep one scratch clone per base, apply the patches in order into a fresh clone, and verify each patch by applying it to a fresh clone and running the specs.
 - A locale change (new `.cfg` key) needs a full Factorio restart, not a mod reload: otherwise the window shows `Unknown key`. Say so when handing over a patch that adds keys.
-- Deliver code and notes as SEPARATE patches (code patch: only new or changed code files; notes patch: `.agents/` and `.gitignore`), so the owner can commit them separately. Test each applies to the upstream tip on its own.
+- (Patch-era rule, now replaced by "separate commits" under Roles.) Code and notes were delivered as separate patches.
 - Factorio forum threads failed to load for the fetch tool. Mod portal pages and Friday Facts posts on factorio.com did load.
