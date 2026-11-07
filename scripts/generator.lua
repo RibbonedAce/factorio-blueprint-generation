@@ -487,6 +487,21 @@ local function stage_request(job, stage)
   }
 end
 
+-- What the planner is asked for this job: the belt lane, and the inserters of each step.
+---@param job bpgen.Job
+---@return bpgen.ChainRequest
+local function chain_request(job)
+  local requests = {}
+  for index, stage in ipairs(job.stages) do
+    requests[index] = stage_request(job, stage)
+  end
+  return {
+    rate_per_minute = job.rate_per_minute,
+    lane_items_per_minute = planner.lane_items_per_minute(job.belt_speed),
+    stages = requests,
+  }
+end
+
 -- Ask the planner, with the limits the game data gives: the belt lane, and the
 -- inserters of each step. Returns each step with its plan, or nil and the message
 -- for the player.
@@ -494,15 +509,7 @@ end
 ---@return bpgen.PlannedStage[]|nil
 ---@return LocalisedString|nil error_message
 local function make_plans(job)
-  local requests = {}
-  for index, stage in ipairs(job.stages) do
-    requests[index] = stage_request(job, stage)
-  end
-  local plans, reason, max_rate = planner.plan_chain{
-    rate_per_minute = job.rate_per_minute,
-    lane_items_per_minute = planner.lane_items_per_minute(job.belt_speed),
-    stages = requests,
-  }
+  local plans, reason, max_rate = planner.plan_chain(chain_request(job))
   if not plans then
     ---@cast reason bpgen.PlanReason -- the planner always gives a reason when it gives no plans
     return nil, refusal_message(reason, max_rate)
@@ -538,6 +545,41 @@ local function assemble(job, planned)
   }
 end
 
+-- The job for this request, with every machine checked, or nil and the message for the player.
+---@param item_name string
+---@param rate_per_minute number
+---@return bpgen.Job|nil
+---@return LocalisedString|nil error_message
+local function read_buildable_job(item_name, rate_per_minute)
+  local job, problem = read_job(item_name, rate_per_minute)
+  if not job then
+    return nil, problem
+  end
+  problem = machine_problem(job)
+  if problem then
+    return nil, problem
+  end
+  return job, nil
+end
+
+-- The line the window shows under the rate field: the most one blueprint of
+-- `item_name` can make per minute, or the message for why it cannot be made.
+---@param item_name string
+---@return LocalisedString
+function generator.max_rate_message(item_name)
+  local job, problem = read_buildable_job(item_name, 1) -- the rate is not used
+  if not job then
+    ---@cast problem LocalisedString -- there is always a message when there is no job
+    return problem
+  end
+  local max_rate, reason = planner.max_rate(chain_request(job))
+  if not max_rate then
+    ---@cast reason bpgen.PlanReason
+    return refusal_message(reason)
+  end
+  return error_message("max-rate", format_number(max_rate))
+end
+
 -- Make the blueprint for `rate_per_minute` of `item_name`.
 -- On success returns a table {entities, description, message}:
 --   entities     the blueprint entities, ready for set_blueprint_entities
@@ -549,13 +591,8 @@ end
 ---@return bpgen.Generated|nil
 ---@return LocalisedString|nil error_message
 function generator.generate(item_name, rate_per_minute)
-  local job, problem = read_job(item_name, rate_per_minute)
+  local job, problem = read_buildable_job(item_name, rate_per_minute)
   if not job then
-    return nil, problem
-  end
-
-  problem = machine_problem(job)
-  if problem then
     return nil, problem
   end
 

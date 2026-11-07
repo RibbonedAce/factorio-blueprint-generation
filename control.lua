@@ -17,6 +17,7 @@ local SHORTCUT_NAME = "blueprint-generation-open"
 local FRAME_NAME = "blueprint-generation-frame"
 local ITEM_BUTTON_NAME = "blueprint-generation-item"
 local RATE_FIELD_NAME = "blueprint-generation-rate"
+local MAX_RATE_LABEL_NAME = "blueprint-generation-max-rate"
 local GENERATE_BUTTON_NAME = "blueprint-generation-generate"
 local CLOSE_BUTTON_NAME = "blueprint-generation-close"
 
@@ -38,6 +39,20 @@ local function supported_item_filters()
     names[#names + 1] = name
   end
   return {{filter = "name", name = names}}
+end
+
+-- Show, under the rate field, the most one blueprint of the picked item can make
+-- per minute (or why that item cannot be made). The text is read from the game's
+-- data each time, so it follows the belt, inserters and recipe in the current game.
+---@param frame LuaGuiElement  our window
+local function update_max_rate(frame)
+  local item_name = frame[ITEM_BUTTON_NAME].elem_value --[[@as string|nil]] -- nil if nothing picked
+  local label = frame[MAX_RATE_LABEL_NAME]
+  if item_name then
+    label.caption = generator.max_rate_message(item_name)
+  else
+    label.caption = {"blueprint-generation.max-rate-no-item"}
+  end
 end
 
 -- Build the window. Everything the player can type or pick is a direct child
@@ -65,6 +80,7 @@ local function open_window(player)
   item_button.elem_value = config.default_product -- the player can still change or clear it
 
   frame.add{type = "label", caption = {"blueprint-generation.rate-label"}}
+  frame.add{type = "label", name = MAX_RATE_LABEL_NAME}
   frame.add{
     type = "textfield",
     name = RATE_FIELD_NAME,
@@ -72,6 +88,8 @@ local function open_window(player)
     numeric = true,
     allow_decimal = true,
   }
+
+  update_max_rate(frame)
 
   local buttons = frame.add{type = "flow", direction = "horizontal"}
   buttons.add{type = "button", name = CLOSE_BUTTON_NAME, caption = {"blueprint-generation.close"}}
@@ -162,6 +180,17 @@ script.on_event(defines.events.on_gui_click, function(event)
     generate_blueprint(player)
   elseif name == CLOSE_BUTTON_NAME then
     close_window(player)
+  end
+end)
+
+-- The player picked another item, or cleared it: show that item's maximum rate.
+script.on_event(defines.events.on_gui_elem_changed, function(event)
+  if event.element.name ~= ITEM_BUTTON_NAME then
+    return -- some other mod's button
+  end
+  local frame = event.element.parent
+  if frame and frame.name == FRAME_NAME then
+    update_max_rate(frame)
   end
 end)
 

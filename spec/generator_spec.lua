@@ -781,6 +781,59 @@ describe("generator", function()
     end)
   end)
 
+  describe("the most one blueprint can make, shown under the rate field", function()
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+    it("names the most a lane carries when the item is made in one step", function()
+      _G.prototypes = fake_prototypes{furnace_speed = 1, recipes = {["iron-plate"] = plate}}
+
+      assert.are.same({"blueprint-generation.max-rate", "450"}, generator.max_rate_message("iron-plate"))
+    end)
+
+    it("names the number a refused rate names, for a chain", function()
+      _G.prototypes = fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
+      }
+
+      local _, refusal = generator.generate("iron-gear-wheel", 1000)
+
+      assert.are.same({"blueprint-generation.max-rate", refusal[2]}, generator.max_rate_message("iron-gear-wheel"))
+      assert.are.equal("225", refusal[2])
+    end)
+
+    it("follows the belt speed of the game", function()
+      _G.prototypes = fake_prototypes{belt_speed = 0.03125, furnace_speed = 1, recipes = {["iron-plate"] = plate}}
+      local slow = generator.max_rate_message("iron-plate")
+      _G.prototypes = fake_prototypes{belt_speed = 0.0625, furnace_speed = 1, recipes = {["iron-plate"] = plate}}
+      local fast = generator.max_rate_message("iron-plate")
+
+      assert.are.same({"blueprint-generation.max-rate", "450"}, slow)
+      assert.are.same({"blueprint-generation.max-rate", "900"}, fast)
+    end)
+
+    it("gives the message of the refusal when the item cannot be made", function()
+      _G.prototypes = fake_prototypes{recipes = {}}
+
+      assert.are.same({"blueprint-generation.error-unsupported-item"}, generator.max_rate_message("electronic-circuit"))
+      assert.are.same({"blueprint-generation.error-no-recipe", "iron-plate"}, generator.max_rate_message("iron-plate"))
+    end)
+
+    it("gives the message of the refusal when a machine cannot be built", function()
+      _G.prototypes = fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 4}},
+        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
+      }
+
+      local _, refusal = generator.generate("iron-gear-wheel", 10)
+
+      assert.are.same(refusal, generator.max_rate_message("iron-gear-wheel"))
+    end)
+  end)
+
   describe("refusals", function()
     it("refuses the request when the item is not supported", function()
       _G.prototypes = fake_prototypes{}

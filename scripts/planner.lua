@@ -471,6 +471,20 @@ function planner.plan_chain(request)
   return plans_of(last, machines_for(last, request.rate_per_minute))
 end
 
+-- The most the last stage of the request can make per minute in a single column, the
+-- same number `plan_chain` names with "rate-too-high". The request's rate is not used.
+-- Returns nil and "unsupported-recipe" when some stage does not fit the belts.
+---@param request bpgen.ChainRequest
+---@return number|nil max_rate
+---@return bpgen.PlanReason|nil reason
+function planner.max_rate(request)
+  local last = last_stage_of(request)
+  if not last then
+    return nil, "unsupported-recipe"
+  end
+  return final_output(last), nil
+end
+
 -- One stage on its own: `plan_chain` with a single stage. The request has the
 -- fields of a chain request's one stage, plus `rate_per_minute` and
 -- `lane_items_per_minute`, and the answer is that stage's plan.

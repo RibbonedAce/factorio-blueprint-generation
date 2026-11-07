@@ -881,6 +881,46 @@ describe("planner", function()
     end)
   end)
 
+  describe("max_rate, for the same chain", function()
+    local plate_recipe = {energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
+    local gear_recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+    ---@param rate number
+    ---@param stages? table
+    local function request(rate, stages)
+      return {
+        rate_per_minute = rate, lane_items_per_minute = 450,
+        stages = stages or {
+          {product = "iron-plate", recipe = plate_recipe, machine_speed = 1, fuel = "coal"},
+          {product = "iron-gear-wheel", recipe = gear_recipe, machine_speed = 0.5},
+        },
+      }
+    end
+
+    it("gives the most the lane of plates lets the last stage make", function()
+      assert.are.equal(225, planner.max_rate(request(60))) -- 450 plates / 2 per gear
+    end)
+
+    it("gives what plan_chain names when the rate is just above it", function()
+      local _, _, max_rate = planner.plan_chain(request(225.5))
+
+      assert.are.equal(max_rate, planner.max_rate(request(60)))
+    end)
+
+    it("does not depend on the rate in the request", function()
+      assert.are.equal(planner.max_rate(request(1)), planner.max_rate(request(100000)))
+    end)
+
+    it("gives nil and unsupported-recipe when a stage makes more than one product", function()
+      local two_products = {energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate"), amount_of(1, "stone")}}
+
+      local max_rate, reason = planner.max_rate(request(60, {{product = "iron-plate", recipe = two_products, machine_speed = 1, fuel = "coal"}}))
+
+      assert.is_nil(max_rate)
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+  end)
+
   describe("inserter_items_per_minute", function()
     it("turns an inserter's rotation speed into items per minute", function()
       local basic_rotation_speed = 0.014
