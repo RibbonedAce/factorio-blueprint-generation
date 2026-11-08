@@ -26,6 +26,10 @@
 -- which the player supplies (those belts hold nothing of ours). `options.product` is the
 -- item of the blueprint. The names of belts and inserters are "transport-belt" and
 -- "inserter" unless `options.belt` and `options.inserter` say otherwise.
+-- `options.supplies` (optional) lists the belts of raw items that run to an input inserter
+-- or to the side of another belt without passing a machine, which the player fills: each is
+-- {x = tile column, y = tile row, item = name} for the first tile of the belt, and the item
+-- rides both of its lanes.
 --
 -- Lanes are "left" and "right" of the way a belt runs. Like the validator, this reads
 -- the table `defines`, so a test must define it first.
@@ -67,6 +71,7 @@ local OPPOSITE = {
 ---@field makers table[]  the inserters that take from a machine onto a belt: {inserter, machine, belt}
 ---@field takers table[]  the inserters that take from a belt into a machine: {inserter, machine, belt}
 ---@field drops table<table, bpgen.Lanes>  what inserters put on each belt
+---@field supplied table<table, string>  the item the player puts on the first tile of a belt of raw items
 ---@field contents table<table, bpgen.Lanes>  the items on each belt, once worked out
 
 local function tile_key(x, y)
@@ -91,7 +96,7 @@ end
 ---@param options table
 ---@return bpgen.TraceIndex
 local function index_of(entities, options)
-  local index = {options = options, problems = {}, tile = {}, by_tile = {}, belts = {}, makers = {}, takers = {}, drops = {}, contents = {}}
+  local index = {options = options, problems = {}, tile = {}, by_tile = {}, belts = {}, makers = {}, takers = {}, drops = {}, contents = {}, supplied = {}}
   local belt_name = options.belt or "transport-belt"
   for _, entity in ipairs(entities) do
     local machine = options.machines[entity.name]
@@ -282,6 +287,10 @@ function contents_of(index, belt, visiting)
   if index.drops[belt] then
     add_along(lanes, index.drops[belt])
   end
+  if index.supplied[belt] then
+    lanes.left[index.supplied[belt]] = true
+    lanes.right[index.supplied[belt]] = true
+  end
   bring_in(index, belt, lanes, visiting)
   visiting[belt] = nil
   index.contents[belt] = lanes
@@ -394,11 +403,20 @@ local function check_product(index)
   end
 end
 
+-- Notes the belts the player fills with raw items.
+---@param index bpgen.TraceIndex
+local function note_supplies(index)
+  for _, supply in ipairs(index.options.supplies or {}) do
+    index.supplied[index.belts[tile_key(supply.x, supply.y)]] = supply.item -- a supply that is not on a belt is a mistake in the test: this fails
+  end
+end
+
 ---@param entities table[]  blueprint entities with positions and directions
 ---@param options table  see the top of the file
 ---@return string[] problems  empty when the flow is sound
 function tracer.problems(entities, options)
   local index = index_of(entities, options)
+  note_supplies(index)
   for _, entity in ipairs(entities) do
     if entity.name == (options.inserter or "inserter") then
       classify(index, entity)

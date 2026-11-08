@@ -235,6 +235,20 @@ local function machines_per_belt(stage)
   return most
 end
 
+-- What one machine eats of `item` in a minute.
+---@param inputs bpgen.PlanInput[]  what one machine eats, per ingredient
+---@param item string  one of the ingredients
+---@return number
+local function eaten_of(inputs, item)
+  local eaten = 0
+  for _, input in ipairs(inputs) do
+    if input.name == item then
+      eaten = eaten + input.per_minute
+    end
+  end
+  return eaten
+end
+
 -- What all the machines eat together, in the recipe's order.
 ---@param inputs_per_machine bpgen.PlanInput[]
 ---@param machines number
@@ -258,26 +272,31 @@ end
 
 -- The items on the lanes of the belt that feeds a stage, or nil when they do not
 -- fit. A stage fed raw items shares the two lanes among them and its fuel (see
--- `assign_lanes`). Every other stage eats the products of the stages that feed it
--- and nothing else (nothing could put a second item or a fuel on that belt), each
--- on the one lane its product travels on, so at most two of its ingredients are made.
+-- `assign_lanes`). Every other stage eats the products of the stages that feed it,
+-- each on the one lane its product travels on, and at most one more item, a raw one
+-- on the other lane (nothing could put a fuel on that belt), so it has at most two
+-- ingredients. The stages that feed it make ingredients of its recipe, in any order.
 ---@param stage bpgen.StageRequest
 ---@param suppliers bpgen.StageContext[]  the stages that feed it
----@return string[]|nil lanes
+---@return string[]|nil lanes  the ingredients, in the recipe's order
 local function stage_lanes(stage, suppliers)
   if #suppliers == 0 then
     return assign_lanes(stage.recipe.ingredients, stage.fuel)
   end
   local ingredients = stage.recipe.ingredients
-  if #ingredients ~= #suppliers or #suppliers > INPUT_LANES or stage.fuel then
+  if #ingredients > INPUT_LANES or stage.fuel then
     return nil
   end
-  local lanes = {}
-  for index, supplier in ipairs(suppliers) do
-    if ingredients[index].name ~= supplier.request.product then
+  local lanes, unmade = {}, {}
+  for index, ingredient in ipairs(ingredients) do
+    lanes[index] = ingredient.name
+    unmade[ingredient.name] = true
+  end
+  for _, supplier in ipairs(suppliers) do
+    if not unmade[supplier.request.product] then
       return nil
     end
-    lanes[index] = ingredients[index].name
+    unmade[supplier.request.product] = nil
   end
   return lanes
 end
@@ -333,8 +352,8 @@ local function size_stages(stage, wanted, sizes)
   local per_machine = stage.per_machine
   sizes.loads[stage] = wanted / per_machine.output
   sizes.machines[stage] = whole_machines(sizes.loads[stage])
-  for index, supplier in ipairs(stage.suppliers) do
-    size_stages(supplier, wanted * per_machine.inputs[index].per_minute / per_machine.output, sizes)
+  for _, supplier in ipairs(stage.suppliers) do
+    size_stages(supplier, wanted * eaten_of(per_machine.inputs, supplier.request.product) / per_machine.output, sizes)
   end
 end
 
@@ -402,8 +421,8 @@ local function final_output(stage, needed, sizes)
   local working = math.min(sizes and sizes.machines[stage] or math.huge, stage.machines_worth)
   local rates = sizes and sizes.rates[stage] or stage.per_machine
   local most = working * rates.output / needed
-  for index, supplier in ipairs(stage.suppliers) do
-    local supplier_needed = needed * stage.per_machine.inputs[index].per_minute / stage.per_machine.output
+  for _, supplier in ipairs(stage.suppliers) do
+    local supplier_needed = needed * eaten_of(stage.per_machine.inputs, supplier.request.product) / stage.per_machine.output
     most = math.min(most, final_output(supplier, supplier_needed, sizes))
   end
   return most

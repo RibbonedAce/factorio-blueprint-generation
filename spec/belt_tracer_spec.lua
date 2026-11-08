@@ -288,6 +288,84 @@ describe("belt tracer", function()
     end)
   end)
 
+  describe("belts of raw items that run to an inserter or into the side of a belt", function()
+    -- A belt running south down x = 4, a maker on its west side that puts "a" on the far (east, left) lane of its
+    -- first tile, and an eater on the east side that takes from its third tile. A belt of "wood" that the player
+    -- fills feeds the side of the second tile, from the west or from the east.
+    local function maker_belt_and_eater()
+      local machines = {
+        maker = {size = 2, eats = {}, makes = "a"},
+        eater = {size = 2, eats = {"a", "wood"}, makes = "product"},
+      }
+      local entities = all_of(
+        machine("maker", 1, 0), builders.inserter(3, 0, west),
+        belts_from(4, 0, south, 4),
+        builders.inserter(5, 2, west), machine("eater", 6, 2))
+      return entities, machines
+    end
+
+    it("puts what the player supplies on the near lane of the belt it feeds from the side", function()
+      local entities, machines = maker_belt_and_eater()
+      entities[#entities + 1] = builders.belt(3, 1, east)
+
+      local problems = tracer.problems(entities, {
+        machines = machines, raw = {}, product = "product", supplies = {{x = 3, y = 1, item = "wood"}},
+      })
+
+      assert.are.same({}, problems) -- the west side of a belt running south is its right lane, apart from the maker's left
+    end)
+
+    it("reports a lane that what the player supplies shares with what a machine makes", function()
+      local entities, machines = maker_belt_and_eater()
+      entities[#entities + 1] = builders.belt(5, 1, west)
+
+      local problems = tracer.problems(entities, {
+        machines = machines, raw = {}, product = "product", supplies = {{x = 5, y = 1, item = "wood"}},
+      })
+
+      assert.has_item_containing("the left lane at 4,1 carries a and wood", problems) -- fed from the east it lands on the left lane too
+    end)
+
+    it("reports an input inserter that never sees what the player was not told to supply", function()
+      local entities, machines = maker_belt_and_eater()
+      entities[#entities + 1] = builders.belt(3, 1, east)
+
+      local problems = tracer.problems(entities, {machines = machines, raw = {}, product = "product"})
+
+      assert.are.same({"the input inserter at 5,2 never sees wood"}, problems)
+    end)
+
+    it("puts what the player supplies on both lanes of its belt", function()
+      -- The supplied belt runs south down x = 4. A maker on its west side puts "a" on the far (east, left) lane of the
+      -- second tile, and a maker on its east side puts "b" on the far (west, right) lane of the same tile.
+      local machines = {
+        west_maker = {size = 2, eats = {}, makes = "a"}, east_maker = {size = 2, eats = {}, makes = "b"},
+      }
+      local entities = all_of(
+        machine("west_maker", 1, 1), builders.inserter(3, 1, west),
+        machine("east_maker", 6, 1), builders.inserter(5, 1, east),
+        belts_from(4, 0, south, 3))
+
+      local problems = tracer.problems(entities, {
+        machines = machines, raw = {}, product = "product", supplies = {{x = 4, y = 0, item = "wood"}},
+      })
+
+      assert.has_item_containing("the left lane at 4,1 carries a and wood", problems)
+      assert.has_item_containing("the right lane at 4,1 carries b and wood", problems)
+    end)
+
+    it("takes what the player supplies along a belt to an input inserter", function()
+      local machines = {eater = {size = 2, eats = {"wood"}, makes = "product"}}
+      local entities = all_of(belts_from(3, 0, south, 3), builders.inserter(4, 2, west), machine("eater", 5, 2))
+
+      local problems = tracer.problems(entities, {
+        machines = machines, raw = {}, product = "product", supplies = {{x = 3, y = 0, item = "wood"}},
+      })
+
+      assert.are.same({}, problems)
+    end)
+  end)
+
   it("reports a belt of raw items that something we made is put on", function()
     local entities = all_of(
       machine("furnace", 0, 0), builders.inserter(2, 0, west), belts_from(3, 0, south, 3),

@@ -37,6 +37,7 @@ local config = {
     ["firearm-magazine"] = true,
     ["light-armor"] = true,
     ["electronic-circuit"] = true,
+    ["small-electric-pole"] = true,
     ["transport-belt"] = true,
     ["burner-inserter"] = true,
     ["pipe-to-ground"] = true,

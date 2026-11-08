@@ -972,6 +972,126 @@ describe("generator", function()
     end)
   end)
 
+  describe("a recipe with one made ingredient and a raw one, so the raw item rides a belt of its own", function()
+    -- A furnace makes 18.75 plates a minute (speed 1, 3.2 s). An assembler (speed 0.5, 3x3) crafts every 0.5 s:
+    -- cables, 1 plate to 2 cables, make 100.8 cables a minute with two output inserters; poles, 1 wood and
+    -- 2 cables to 2 poles, would eat 60 wood and 120 cables a minute, but two input inserters move only
+    -- 100.8 items, so they make 67.2 poles a minute. A lane carries 450 cables, so at most 450 poles a minute.
+    local copper_plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}, category = "smelting"}
+    local cable = a_recipe{energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(2, "copper-cable")}}
+    local pole = a_recipe{
+      energy = 0.5, ingredients = {amount_of(1, "wood"), amount_of(2, "copper-cable")},
+      products = {amount_of(2, "small-electric-pole")},
+    }
+
+    local function pole_game()
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["copper-plate"] = copper_plate, ["copper-cable"] = cable, ["small-electric-pole"] = pole},
+      }
+    end
+
+    it("builds the machines of the made ingredient and of the final step, and none for the raw item", function()
+      _G.prototypes = pole_game()
+
+      local result = generator.generate("small-electric-pole", 100)
+
+      assert.are.equal(3, count_named(result.entities, "stone-furnace")) -- 50 plates for 100 cables / 18.75 = 2.67
+      assert.are.equal(3, count_named(result.entities, "assembling-machine-1")) -- 100 cables / 100.8 = 1 cable assembler, 100 poles / 67.2 = 1.49 pole assemblers
+    end)
+
+    it("describes the blueprint with the machines of every step and says nothing of the raw item", function()
+      _G.prototypes = pole_game()
+
+      local result = generator.generate("small-electric-pole", 100)
+
+      assert.are.equal(
+        "small-electric-pole: 100.8 per minute from 3 x stone-furnace, 1 x assembling-machine-1, 2 x assembling-machine-1",
+        result.description)
+    end)
+
+    it("tells the player to bring the raw item on a belt of its own, below the belt of the made item's ore", function()
+      _G.prototypes = pole_game()
+
+      local result = generator.generate("small-electric-pole", 60)
+
+      assert.are.same({
+        "blueprint-generation.generated-raw-belts",
+        {"",
+          {"blueprint-generation.generated-first-stage", "2", {"entity-name.stone-furnace"}, "37.5", {"item-name.copper-plate"}},
+          {"blueprint-generation.generated-next-stage", "1", {"entity-name.assembling-machine-1"}, "100.8", {"item-name.copper-cable"}},
+          {"blueprint-generation.generated-next-stage", "1", {"entity-name.assembling-machine-1"}, "67.2", {"item-name.small-electric-pole"}},
+        },
+        "60", -- what was asked for
+        {"",
+          {"blueprint-generation.raw-belt", {"item-name.copper-ore"}, {"item-name.coal"}},
+          "; ",
+          {"blueprint-generation.raw-belt-one-item", {"item-name.wood"}},
+        },
+      }, result.message)
+    end)
+
+    it("sets the recipe of every assembling machine and leaves the furnaces to pick their own", function()
+      _G.prototypes = pole_game()
+
+      local result = generator.generate("small-electric-pole", 100)
+
+      local recipes = {}
+      for _, entity in ipairs(result.entities) do
+        recipes[entity.name] = recipes[entity.name] or {}
+        recipes[entity.name][#recipes[entity.name] + 1] = entity.recipe or "none"
+      end
+      table.sort(recipes["assembling-machine-1"])
+      assert.are.same({"none", "none", "none"}, recipes["stone-furnace"])
+      assert.are.same({"copper-cable", "small-electric-pole", "small-electric-pole"}, recipes["assembling-machine-1"])
+    end)
+
+    it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
+      _G.prototypes = pole_game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("small-electric-pole", 100)
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("allows the rate when the lane of cables is exactly full", function()
+      _G.prototypes = pole_game()
+
+      local result = generator.generate("small-electric-pole", 450)
+
+      assert.is_not_nil(result)
+    end)
+
+    it("refuses the rate when the lane of cables is over full, naming the most", function()
+      _G.prototypes = pole_game()
+
+      local result, error_message = generator.generate("small-electric-pole", 451)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-rate-too-high", "450"}, error_message)
+    end)
+
+    it("refuses the recipe when the step with the raw item burns fuel", function()
+      local pole_in_a_furnace = a_recipe{
+        energy = 0.5, ingredients = {amount_of(1, "wood"), amount_of(2, "copper-cable")},
+        products = {amount_of(2, "small-electric-pole")}, category = "smelting",
+      }
+      _G.prototypes = fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["copper-plate"] = copper_plate, ["copper-cable"] = cable, ["small-electric-pole"] = pole_in_a_furnace},
+      }
+
+      local result, error_message = generator.generate("small-electric-pole", 10)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-chain-fuel", {"item-name.small-electric-pole"}}, error_message)
+    end)
+  end)
+
   describe("the most one blueprint can make, shown under the rate field", function()
     local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
@@ -1201,9 +1321,12 @@ describe("generator", function()
       assert.are.same({"blueprint-generation.error-chain-too-complex", {"item-name.iron-gear-wheel"}}, error_message)
     end)
 
-    it("refuses the request when a later step mixes the made ingredient with a raw one, naming the item", function()
+    it("refuses the request when a later step mixes the made ingredient with two raw ones, naming the item", function()
       local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
-      local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate"), amount_of(1, "stone")}, products = {amount_of(1, "iron-gear-wheel")}}
+      local gear = a_recipe{
+        energy = 0.5, ingredients = {amount_of(2, "iron-plate"), amount_of(1, "stone"), amount_of(1, "flint")},
+        products = {amount_of(1, "iron-gear-wheel")},
+      }
       _G.prototypes = fake_prototypes{
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
         recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},

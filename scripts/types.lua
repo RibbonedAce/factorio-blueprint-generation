@@ -30,8 +30,8 @@
 --   "ambiguous"          more than one recipe makes an item on the way
 --   "unsupported"        the recipe of an item on the way cannot be built
 --   "several-crafted"    a step has more than two ingredients that are made from others
---   "extra-ingredient"   a step mixes made ingredients with raw ones
---   "fork-in-chain"      a step with one made ingredient is fed by a step with two
+--   "extra-ingredient"   a step with made ingredients has more than two ingredients in all
+--   "fork-in-chain"      a step with one made ingredient is fed by a step with two inputs (two made ingredients, or one made and one raw)
 --   "cycle"              an item is, in the end, made from itself
 ---@alias bpgen.ChainReason "no-recipe"|"ambiguous"|"unsupported"|"several-crafted"|"extra-ingredient"|"fork-in-chain"|"cycle"
 
@@ -46,6 +46,7 @@
 ---@class bpgen.ChainStage : bpgen.Production  one step on the way from raw items to the product
 ---@field item string  the item this step makes
 ---@field suppliers bpgen.ChainStage[]  the steps that make its made ingredients, in the recipe's order: none for a step fed raw items, one in a chain, two for a recipe with two made ingredients
+---@field raw_item? string  the one raw ingredient of a step that has one made ingredient and one raw one: it rides the other lane of the input belt
 
 ---@class bpgen.RecipeItem
 ---@field name string
@@ -129,7 +130,12 @@
 ---@field machine string  prototype name of the machine
 ---@field shape bpgen.Shape  the machine size must be one `supports_machine_size` accepts
 ---@field recipe? string  the recipe to set on the machines; nil for a machine that picks its own recipe (a furnace)
----@field suppliers? bpgen.StageLayout[]  the stages whose products it eats, in the order of the recipe's ingredients; none or one in a chain, two when a recipe has two made ingredients (`blocks.build` uses it; `layout.build_chain` ignores it)
+---@field suppliers? (bpgen.StageLayout|bpgen.RawSupplier)[]  what it eats: the stages whose products it eats, in the order of the recipe's ingredients, then the raw item that goes with them, if any; none or one in a chain, two when a recipe has two made ingredients or one made ingredient and a raw one (`blocks.build` uses it; `layout.build_chain` ignores it)
+
+-- A raw item that a stage eats next to a made one: no machines, only a belt that brings the
+-- item to the column that eats it (see scripts/blocks.lua).
+---@class bpgen.RawSupplier
+---@field raw_item string  the item
 
 -- What a block is told about the product belt and the input belt of its chain.
 ---@class bpgen.BlockOptions
@@ -148,7 +154,7 @@
 
 -- The first tile of a belt of raw items, which runs south from there.
 ---@class bpgen.RawBelt
----@field stage bpgen.StageLayout  the stage fed raw items by the belt
+---@field stage bpgen.StageLayout|bpgen.RawSupplier  the stage fed raw items by the belt
 ---@field column integer  tile column
 ---@field row integer  tile row
 

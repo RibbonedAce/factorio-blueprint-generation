@@ -30,6 +30,13 @@
 -- The taller block goes on top, so that the final column, about as tall as a block, stands
 -- beside the shorter one. Every belt of raw items is fed from the west, at its own row.
 --
+-- A raw item that goes with a made one (wood next to copper cable) is a block with no
+-- machines: one belt tile, one row tall, which is the first tile of its product belt. It
+-- always goes below (every block with machines is taller), so its belt, a trail from the top left like any other belt of raw
+-- items, runs along the bottom of the blocks above it, and turns north, then east into the
+-- side of the input belt like the product belt of any lower block. The raw item arrives on
+-- the near lane, the made one on the far lane.
+--
 -- A block that has neighbours also keeps a line of poles beside its product belt, from its
 -- top to its bottom, because the poles of a wide block can be too far from the join for a
 -- wire: its tall column of furnaces is on the left, and the join is on the right.
@@ -313,7 +320,7 @@ local block_of
 
 -- The two blocks that make a stage's ingredients, the taller one first, as the upper block.
 -- Equally tall blocks stay in the recipe's order.
----@param suppliers bpgen.StageLayout[]
+---@param suppliers (bpgen.StageLayout|bpgen.RawSupplier)[]
 ---@param names bpgen.SharedNames
 ---@return bpgen.Block upper
 ---@return bpgen.Block lower
@@ -324,6 +331,13 @@ local function ordered_blocks(suppliers, names)
     return second, first
   end
   return first, second
+end
+
+-- The block of a raw item: the first tile of its belt, which the join gives its direction.
+---@param supplier bpgen.RawSupplier
+---@return bpgen.Block
+local function raw_block(supplier)
+  return {entities = {}, poles = {}, product_column = 0, height = 1, raw_belts = {{stage = supplier, column = 0, row = 0}}}
 end
 
 -- The block that makes what a stage makes, before it gets a line of poles.
@@ -343,11 +357,14 @@ end
 
 -- The block that makes what a stage makes. The last block of the blueprint has no
 -- neighbours, so it needs no line of poles.
----@param stage bpgen.StageLayout
+---@param stage bpgen.StageLayout|bpgen.RawSupplier
 ---@param names bpgen.SharedNames
 ---@param is_root boolean
 ---@return bpgen.Block
 function block_of(stage, names, is_root)
+  if stage.raw_item then
+    return raw_block(stage)
+  end
   local block = built_block(stage, names, is_root)
   if not is_root then
     extend_pole_line(block, names.pole)

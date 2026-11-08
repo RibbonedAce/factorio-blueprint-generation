@@ -146,6 +146,72 @@ describe("chain", function()
     end)
   end)
 
+  describe("resolve, for an item made from one made item and one raw one", function()
+    local pole_lookup = lookup_in{
+      ["pole"] = production{"wood", "copper-cable"},
+      ["copper-cable"] = production{"copper-plate"},
+      ["copper-plate"] = production{"copper-ore"},
+    }
+
+    it("gives the step a supplier for the made ingredient and names the raw one", function()
+      local stage = chain.resolve("pole", pole_lookup)
+
+      assert.are.same({"copper-plate", "copper-cable"}, items_of(stage.suppliers[1]))
+      assert.are.equal(1, #stage.suppliers)
+      assert.are.equal("wood", stage.raw_item)
+    end)
+
+    it("names the raw ingredient whichever place it has in the recipe", function()
+      local lookup = lookup_in{
+        ["pole"] = production{"copper-cable", "wood"},
+        ["copper-cable"] = production{"copper-plate"},
+      }
+
+      local stage = chain.resolve("pole", lookup)
+
+      assert.are.equal("wood", stage.raw_item)
+    end)
+
+    it("names no raw ingredient when every ingredient is made", function()
+      local stage = chain.resolve("gear", lookup_in{["gear"] = production{"plate"}, ["plate"] = production{"ore"}})
+
+      assert.is_nil(stage.raw_item)
+    end)
+
+    it("names no raw ingredient when the step is fed raw items", function()
+      local stage = chain.resolve("steel-thing", lookup_in{["steel-thing"] = production{"iron-ore", "coal"}})
+
+      assert.is_nil(stage.raw_item)
+    end)
+
+    it("reports the step that is the only ingredient of another when it has a raw ingredient too", function()
+      local lookup = lookup_in{
+        ["box"] = production{"pole"},
+        ["pole"] = production{"wood", "copper-cable"},
+        ["copper-cable"] = production{"copper-plate"},
+      }
+
+      local stage, reason, item = chain.resolve("box", lookup)
+
+      assert.is_nil(stage)
+      assert.are.equal("fork-in-chain", reason)
+      assert.are.equal("box", item)
+    end)
+
+    it("allows the step as one of two made ingredients of another", function()
+      local lookup = lookup_in{
+        ["panel"] = production{"plate", "pole"},
+        ["pole"] = production{"wood", "copper-cable"},
+        ["copper-cable"] = production{"copper-plate"},
+        ["plate"] = production{"ore"},
+      }
+
+      local stage = chain.resolve("panel", lookup)
+
+      assert.are.equal("wood", stage.suppliers[2].raw_item)
+    end)
+  end)
+
   describe("resolve, for an item that cannot be chained", function()
     it("reports that nothing makes the item when it is raw", function()
       local stage, reason, item = chain.resolve("iron-ore", lookup_in{})
@@ -215,9 +281,9 @@ describe("chain", function()
       assert.are.equal("thing", item)
     end)
 
-    it("reports the item when it mixes a made ingredient with a raw one", function()
+    it("reports the item when it mixes a made ingredient with two raw ones", function()
       local lookup = lookup_in{
-        ["thing"] = production{"iron-plate", "stone"},
+        ["thing"] = production{"iron-plate", "stone", "wood"},
         ["iron-plate"] = production{"iron-ore"},
       }
 

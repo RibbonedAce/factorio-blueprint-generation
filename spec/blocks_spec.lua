@@ -27,6 +27,16 @@ local function assemblers(machine, count, input_inserters, output_inserters, sup
   }
 end
 
+local function entities_named(entities, name)
+  local found = {}
+  for _, entity in ipairs(entities) do
+    if entity.name == name then
+      found[#found + 1] = entity
+    end
+  end
+  return found
+end
+
 local function tile_of(entity, size)
   return grid.top_left_tile(entity.position, size, size)
 end
@@ -234,6 +244,62 @@ describe("blocks", function()
     end)
   end)
 
+  describe("a raw item that goes with a made one, on a belt of its own", function()
+    -- A pole assembler eats wood and cables. The cables' block is one copper furnace and one cable assembler, with
+    -- a belt of raw items at (0, 0); it is the upper block. The wood is a block of its own with no machines, below:
+    -- one belt tile in the row under the join row, in the column where the lower block's product belt would run.
+    local function poles(first_raw)
+      local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)})
+      local wood = {raw_item = "wood"}
+      return assemblers("pole-assembler", 1, 2, 1, first_raw and {wood, cables} or {cables, wood})
+    end
+
+    -- Columns: -1 the wood's trail; 0 the copper's raw belt, 1 inserters, 2-3 the furnace, 4 inserters, 5 the
+    -- cables' input belt, 6 inserters, 7-9 the cable assembler, 10 the wood tile (north) or the join (east),
+    -- 11 the product belt of the cables, which goes on as the input belt of the poles, 12 inserters, 13-15 the pole assembler.
+    -- Rows: 0-2 the cables' block, 3 the join row, 4 the wood tile and the top row of the poles.
+    it("runs the raw item east along the bottom of the block above, then north, then east into the input belt", function()
+      local entities = blocks.build(poles(false), NAMES)
+
+      assert.are.same({3, 4}, belt_rows(entities, 10))
+      assert.are.equal(east, entity_at(entities, NAMES.belt, 10, 3, 1).direction) -- the join row, into the side of the input belt in column 11
+      assert.are.equal(north, entity_at(entities, NAMES.belt, 10, 4, 1).direction) -- the first tile of the raw item's belt
+    end)
+
+    it("brings the trail of the raw item down the west side and east along the row of its first tile", function()
+      local entities = blocks.build(poles(false), NAMES)
+
+      assert.are.same({0, 1, 2, 3, 4}, belt_rows(entities, -1))
+      assert.are.equal(south, entity_at(entities, NAMES.belt, -1, 3, 1).direction)
+      assert.are.equal(east, entity_at(entities, NAMES.belt, -1, 4, 1).direction)
+      assert.are.equal(east, entity_at(entities, NAMES.belt, 9, 4, 1).direction) -- the tile before the first tile of the raw item's belt
+    end)
+
+    it("lists the belt of the cables' ore first and the belt of the raw item last", function()
+      local _, raw_stages = blocks.build(poles(false), NAMES)
+
+      assert.are.equal("copper-furnace", raw_stages[1].machine)
+      assert.are.equal("wood", raw_stages[2].raw_item)
+    end)
+
+    it("puts the raw item below the made one when the recipe lists it first", function()
+      local listed_second = blocks.build(poles(false), NAMES)
+
+      local listed_first, raw_stages = blocks.build(poles(true), NAMES)
+
+      assert.are.same(listed_second, listed_first)
+      assert.are.equal("wood", raw_stages[2].raw_item)
+    end)
+
+    it("builds no machine for the raw item", function()
+      local entities = blocks.build(poles(false), NAMES)
+
+      assert.are.equal(1, #entities_named(entities, "pole-assembler"))
+      assert.are.equal(1, #entities_named(entities, "cable-assembler"))
+      assert.are.equal(1, #entities_named(entities, "copper-furnace"))
+    end)
+  end)
+
   describe("the recipe of the machines", function()
     it("sets the recipe of the machines of every block and of the final column, and none on the furnaces", function()
       local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)})
@@ -326,6 +392,7 @@ describe("blocks", function()
       ["underground-assembler"] = {size = 3, eats = {"iron-plate", "transport-belt"}, makes = "underground-belt"},
       ["other-belt-assembler"] = {size = 3, eats = {"iron-plate", "iron-gear-wheel"}, makes = "other-belt"},
       ["double-assembler"] = {size = 3, eats = {"transport-belt", "other-belt"}, makes = "double-belt"},
+      ["pole-assembler"] = {size = 3, eats = {"wood", "copper-cable"}, makes = "small-electric-pole"},
     }
     local raw = {["iron-furnace"] = true, ["copper-furnace"] = true}
 
@@ -402,6 +469,41 @@ describe("blocks", function()
                 assert.are.same({}, problems)
               end)
             end
+          end
+        end
+      end
+    end
+
+    -- Wood and cables to poles, with the stages listed in either order. The wood's belt is the last of the raw
+    -- belts, so it starts at (-1, 0): the cables' block is upper and its belt starts at (0, 0).
+    local function poles(copper_count, cable_count, pole_count, wood_first)
+      local cables = assemblers("cable-assembler", cable_count, 1, 2, {furnaces("copper-furnace", copper_count)})
+      local wood = {raw_item = "wood"}
+      return assemblers("pole-assembler", pole_count, 2, 1, wood_first and {wood, cables} or {cables, wood})
+    end
+
+    for _, copper_count in ipairs({1, 5}) do
+      for _, cable_count in ipairs({1, 3}) do
+        for _, pole_count in ipairs({1, 4}) do
+          for _, wood_first in ipairs({true, false}) do
+            local label = string.format("%d copper furnaces, %d cable and %d pole assemblers, wood %s", copper_count, cable_count, pole_count, wood_first and "first" or "second")
+
+            it("passes the validator when building " .. label, function()
+              local entities = blocks.build(poles(copper_count, cable_count, pole_count, wood_first), NAMES)
+
+              assert.are.same({}, validator.validate(entities, catalog()))
+            end)
+
+            it("puts the wood and the cables on a lane of their own where they are eaten when building " .. label, function()
+              local entities = blocks.build(poles(copper_count, cable_count, pole_count, wood_first), NAMES)
+
+              local problems = tracer.problems(entities, {
+                machines = machines, raw = raw, product = "small-electric-pole",
+                supplies = {{x = -1, y = 0, item = "wood"}},
+              })
+
+              assert.are.same({}, problems)
+            end)
           end
         end
       end

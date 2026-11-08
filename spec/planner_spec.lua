@@ -948,10 +948,10 @@ describe("planner", function()
       assert.near(18.75, plans[2].inputs[1].per_minute, 1e-6)
     end)
 
-    it("refuses a later stage that eats a second ingredient", function()
+    it("refuses a later stage with more than two ingredients", function()
       local stages = gear_chain(60).stages
       stages[2].recipe = {
-        energy = 0.5, ingredients = {amount_of(2, "iron-plate"), amount_of(1, "copper-plate")},
+        energy = 0.5, ingredients = {amount_of(2, "iron-plate"), amount_of(1, "copper-plate"), amount_of(1, "stone")},
         products = {amount_of(1, "iron-gear-wheel")},
       }
 
@@ -1133,10 +1133,29 @@ describe("planner", function()
       assert.are.equal("unsupported-recipe", reason)
     end)
 
-    it("refuses a stage whose ingredients are not made by the stages that feed it, in order", function()
+    it("sizes the stages that feed a stage by what it eats of each, whatever order they are listed in", function()
       local swapped = tree_of("electronic-circuit", circuit_recipe, 0.5, {copper_cables(), iron_plates()})
 
-      local plans, reason = planner.plan_tree(circuits(60, swapped))
+      local plans = planner.plan_tree(circuits(60, swapped))
+
+      assert.are.same({"iron-plate", "copper-cable"}, plans.plan.lanes) -- the recipe's order
+      assert.are.equal(2, plans.suppliers[1].plan.machines) -- 180 cables / 120 = 1.5
+      assert.are.equal(4, plans.suppliers[2].plan.machines) -- 60 plates / 18.75 = 3.2
+    end)
+
+    it("refuses a stage fed by a stage that makes none of its ingredients", function()
+      local wrong = tree_of("electronic-circuit", circuit_recipe, 0.5, {iron_plates(), tree_of("stone-brick", iron_recipe, 1, {}, "coal")})
+
+      local plans, reason = planner.plan_tree(circuits(60, wrong))
+
+      assert.is_nil(plans)
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("refuses a stage fed by two stages that make the same ingredient", function()
+      local twice = tree_of("electronic-circuit", circuit_recipe, 0.5, {iron_plates(), iron_plates()})
+
+      local plans, reason = planner.plan_tree(circuits(60, twice))
 
       assert.is_nil(plans)
       assert.are.equal("unsupported-recipe", reason)
@@ -1183,6 +1202,103 @@ describe("planner", function()
       assert.are.equal(6, plans.suppliers[1].suppliers[1].plan.machines) -- 360 plates for the u
       assert.are.equal(2, plans.suppliers[1].suppliers[2].plan.machines) -- 120 gears for the u
       assert.are.equal(1, plans.suppliers[2].plan.machines) -- 60 plates for the t
+    end)
+  end)
+
+  describe("plan_tree, for a recipe with one made ingredient and a raw one", function()
+    -- A pole: 1 wood and 2 cables make 2 poles, in 0.5 s. An assembler (speed 0.5) crafts 60 times a minute:
+    -- 60 wood and 120 cables in, 120 poles out. Cables: 1 plate to 2 cables, 120 cables is one assembler.
+    local pole_recipe = {
+      energy = 0.5, ingredients = {amount_of(1, "wood"), amount_of(2, "copper-cable")}, products = {amount_of(2, "pole")},
+    }
+    local cable_recipe = {energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(2, "copper-cable")}}
+    local copper_recipe = {energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}}
+
+    local function tree_of(product, recipe, machine_speed, suppliers, fuel)
+      return {stage = {product = product, recipe = recipe, machine_speed = machine_speed, fuel = fuel}, suppliers = suppliers}
+    end
+
+    local function cables()
+      return tree_of("copper-cable", cable_recipe, 0.5, {tree_of("copper-plate", copper_recipe, 1, {}, "coal")})
+    end
+
+    local function poles(rate, recipe)
+      return {
+        rate_per_minute = rate, lane_items_per_minute = 450,
+        root = tree_of("pole", recipe or pole_recipe, 0.5, {cables()}),
+      }
+    end
+
+    it("takes the raw item and the made one on a lane each, in the recipe's order", function()
+      local plans = planner.plan_tree(poles(60))
+
+      assert.are.same({"wood", "copper-cable"}, plans.plan.lanes)
+    end)
+
+    it("builds the machines of the made ingredient for its share of the rate", function()
+      local plans = planner.plan_tree(poles(60))
+
+      assert.are.equal(1, plans.plan.machines) -- 60 poles is 30 crafts, half an assembler
+      assert.are.equal(1, plans.suppliers[1].plan.machines) -- 60 cables, half an assembler
+      assert.are.equal(2, plans.suppliers[1].suppliers[1].plan.machines) -- 30 plates / 18.75 = 1.6
+    end)
+
+    it("sizes the made ingredient the same when the raw item comes after it in the recipe", function()
+      local cable_first = {
+        energy = 0.5, ingredients = {amount_of(2, "copper-cable"), amount_of(1, "wood")}, products = {amount_of(2, "pole")},
+      }
+
+      local plans = planner.plan_tree(poles(60, cable_first))
+
+      assert.are.same({"copper-cable", "wood"}, plans.plan.lanes)
+      assert.are.equal(2, plans.suppliers[1].suppliers[1].plan.machines) -- 30 plates / 18.75 = 1.6
+    end)
+
+    it("shows the stage eating the raw item as well", function()
+      local plans = planner.plan_tree(poles(60))
+
+      -- 2 copper furnaces make 37.5 plates, which is 75 cables and so 37.5 crafts of 1 wood and 2 cables
+      assert.are.same({{name = "wood", per_minute = 37.5}, {name = "copper-cable", per_minute = 75}}, plans.plan.inputs)
+    end)
+
+    it("refuses a rate that the lane of the raw item cannot carry", function()
+      local hungry = {
+        energy = 0.5, ingredients = {amount_of(10, "wood"), amount_of(2, "copper-cable")}, products = {amount_of(2, "pole")},
+      }
+
+      local plans, reason, max_rate = planner.plan_tree(poles(100, hungry))
+
+      assert.is_nil(plans)
+      assert.are.equal("rate-too-high", reason)
+      assert.near(90, max_rate, 1e-6) -- a lane carries 450 wood, 10 for each craft of 2 poles
+    end)
+
+    it("refuses a rate that the lane of the made ingredient cannot carry", function()
+      local plans, reason, max_rate = planner.plan_tree(poles(1000))
+
+      assert.is_nil(plans)
+      assert.are.equal("rate-too-high", reason)
+      assert.near(450, max_rate, 1e-6) -- a lane carries 450 cables, 2 for each craft of 2 poles
+    end)
+
+    it("refuses a stage with a raw item and a made one that burns fuel", function()
+      local root = tree_of("pole", pole_recipe, 0.5, {cables()}, "coal")
+
+      local _, reason = planner.plan_tree{rate_per_minute = 10, lane_items_per_minute = 450, root = root}
+
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("refuses a stage with a raw item and two made ones, which need three lanes", function()
+      local three = {
+        energy = 0.5, ingredients = {amount_of(1, "wood"), amount_of(2, "copper-cable"), amount_of(1, "copper-plate")},
+        products = {amount_of(2, "pole")},
+      }
+      local root = tree_of("pole", three, 0.5, {cables(), tree_of("copper-plate", copper_recipe, 1, {}, "coal")})
+
+      local _, reason = planner.plan_tree{rate_per_minute = 10, lane_items_per_minute = 450, root = root}
+
+      assert.are.equal("unsupported-recipe", reason)
     end)
   end)
 

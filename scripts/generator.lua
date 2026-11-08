@@ -208,6 +208,7 @@ end
 ---@field energy_source bpgen.EnergySource|nil  nil when the machine runs on something unhandled
 ---@field fuels table<string, true>  the items the machine can burn, empty for an electric one
 ---@field suppliers bpgen.StageData[]  the steps that make its made ingredients, in the recipe's order
+---@field raw_item string|nil  the raw ingredient that goes with the made ones, if any
 
 ---@param stage bpgen.ChainStage
 ---@return bpgen.StageData|nil
@@ -229,6 +230,7 @@ local function read_stage(stage)
     item = stage.item, recipe = stage.recipe, machine = stage.machine, machine_type = machine.type, fuel = stage.fuel,
     machine_speed = machine_speed, machine_size = square_size(machine),
     energy_source = energy_source, fuels = burnable_by(energy_source), suppliers = suppliers,
+    raw_item = stage.raw_item,
   }
 end
 
@@ -616,8 +618,10 @@ local function recipe_to_set(stage)
   return stage.recipe.name
 end
 
--- What the layout is told about a step and the steps that make its ingredients. A step
--- fed raw items is noted in `raw_lanes`, with the items on the lanes of its belt.
+-- What the layout is told about a step and what it eats: the steps that make its
+-- ingredients, then the raw item that goes with them, if any, which has no machines and
+-- only a belt. A step fed raw items, and the belt of a raw item, are noted in `raw_lanes`,
+-- with the items on the lanes of the belt.
 ---@param step bpgen.PlannedStage
 ---@param raw_lanes table<bpgen.StageLayout, string[]>
 ---@return bpgen.StageLayout
@@ -625,6 +629,12 @@ local function layout_stage(step, raw_lanes)
   local suppliers = {}
   for index, supplier in ipairs(step.suppliers) do
     suppliers[index] = layout_stage(supplier, raw_lanes)
+  end
+  local raw_item = step.stage.raw_item
+  if raw_item then
+    local raw_supplier = {raw_item = raw_item}
+    suppliers[#suppliers + 1] = raw_supplier
+    raw_lanes[raw_supplier] = {raw_item, raw_item}
   end
   local stage = {
     machine_count = step.plan.machines,
