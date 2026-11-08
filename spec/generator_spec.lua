@@ -595,6 +595,35 @@ describe("generator", function()
       assert.are.equal(6, count_named(result.entities, "stone-furnace")) -- 100.8 plates / 18.75 = 5.4
     end)
 
+    it("sets the recipe of the assembling machines in a chain", function()
+      _G.prototypes = gear_game()
+
+      local result = generator.generate("iron-gear-wheel", 50)
+
+      local assembler
+      for _, entity in ipairs(result.entities) do
+        if entity.name == "assembling-machine-1" then
+          assembler = entity
+        end
+      end
+      assert.are.equal("iron-gear-wheel", assembler.recipe)
+    end)
+
+    it("sets the name of the recipe, which need not be the name of what it makes", function()
+      local pipe_recipe = a_recipe{energy = 0.5, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "pipe")}}
+      _G.prototypes = gear_game{recipes = {["iron-plate"] = plate, ["pipe-from-plates"] = pipe_recipe}}
+
+      local result = generator.generate("pipe", 10)
+
+      local assembler
+      for _, entity in ipairs(result.entities) do
+        if entity.name == "assembling-machine-1" then
+          assembler = entity
+        end
+      end
+      assert.are.equal("pipe-from-plates", assembler.recipe)
+    end)
+
     it("builds one furnace for one gear a minute, since two plates are all it takes", function()
       _G.prototypes = gear_game()
 
@@ -872,6 +901,21 @@ describe("generator", function()
       local result = generator.generate("electronic-circuit", 100)
 
       assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("sets the recipe of every assembling machine and leaves the furnaces to pick their own", function()
+      _G.prototypes = circuit_game()
+
+      local result = generator.generate("electronic-circuit", 50)
+
+      local recipes = {}
+      for _, entity in ipairs(result.entities) do
+        recipes[entity.name] = recipes[entity.name] or {}
+        recipes[entity.name][#recipes[entity.name] + 1] = entity.recipe or "none"
+      end
+      table.sort(recipes["assembling-machine-1"])
+      assert.are.same({"none", "none", "none", "none", "none", "none", "none"}, recipes["stone-furnace"]) -- 3 + 4 furnaces
+      assert.are.same({"copper-cable", "copper-cable", "electronic-circuit", "electronic-circuit"}, recipes["assembling-machine-1"])
     end)
 
     it("allows the rate when the lane of cables is exactly full", function()

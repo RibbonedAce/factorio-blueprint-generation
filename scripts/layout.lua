@@ -424,7 +424,7 @@ function Builder:add_machine_row(index)
   local top = self:machine_top(index)
   local size = geometry.size
 
-  self:add({name = self.names.machine, position = grid.position(geometry.machine_column, top, size, size)})
+  self:add({name = self.names.machine, position = grid.position(geometry.machine_column, top, size, size), recipe = self.names.recipe})
   self:add_inserters(geometry.input_inserter_column, top, geometry.input_count)
   self:add_inserters(geometry.output_inserter_column, top, geometry.output_count)
 
@@ -552,7 +552,7 @@ local function columns_of(stages, names, entities, options)
   local origin = 0
   local first_row = chain_first_row(stages)
   for index, stage in ipairs(stages) do
-    local stage_names = {machine = stage.machine, belt = names.belt, inserter = names.inserter, pole = names.pole}
+    local stage_names = {machine = stage.machine, recipe = stage.recipe, belt = names.belt, inserter = names.inserter, pole = names.pole}
     local place = place_of(stage, index, #stages, origin, first_row, options)
     local builder = Builder.new(stage.machine_count, stage_names, stage.shape, entities, place)
     builders[index] = builder
@@ -636,14 +636,14 @@ function layout.build_chain(stages, names)
 end
 
 -- One column on its own: a chain of one stage.
--- names: {machine, belt, inserter, pole} prototype names.
+-- names: {machine, recipe (optional), belt, inserter, pole} prototype names.
 -- Returns a list of blueprint entities (tables with entity_number, name, position, ...).
 ---@param machine_count integer  at least 1
 ---@param names bpgen.Names
 ---@param shape bpgen.Shape  the machine size must be one `supports_machine_size` accepts
 ---@return bpgen.Entity[]
 function layout.build(machine_count, names, shape)
-  return layout.build_chain({{machine_count = machine_count, machine = names.machine, shape = shape}}, names)
+  return layout.build_chain({{machine_count = machine_count, machine = names.machine, recipe = names.recipe, shape = shape}}, names)
 end
 
 return layout

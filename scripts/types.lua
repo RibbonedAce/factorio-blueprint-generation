@@ -14,6 +14,7 @@
 
 ---@class bpgen.Names : bpgen.SharedNames  prototype names one column of the layout builds with
 ---@field machine string
+---@field recipe? string  the recipe to set on the machines: an assembling machine has to be told, a furnace picks its own
 
 ---@class bpgen.MachineChoice  the machine that makes the recipes of one category (see config.lua)
 ---@field machine string  machine prototype name
@@ -51,6 +52,7 @@
 ---@field amount number
 
 ---@class bpgen.Recipe  the numbers the planner needs, copied from a recipe prototype
+---@field name? string  the name of the recipe prototype, which a blueprint uses to set the recipe of an assembling machine
 ---@field energy number  seconds per craft at crafting speed 1
 ---@field ingredients bpgen.RecipeItem[]
 ---@field products bpgen.RecipeItem[]
@@ -126,6 +128,7 @@
 ---@field load? number  how many machines' worth of work the rate asks of the column: less than `machine_count` when the last machine is only partly used, `machine_count` when left out. It decides which way the belt to the next column runs, so that the direction does not change with the rate
 ---@field machine string  prototype name of the machine
 ---@field shape bpgen.Shape  the machine size must be one `supports_machine_size` accepts
+---@field recipe? string  the recipe to set on the machines; nil for a machine that picks its own recipe (a furnace)
 ---@field suppliers? bpgen.StageLayout[]  the stages whose products it eats, in the order of the recipe's ingredients; none or one in a chain, two when a recipe has two made ingredients (`blocks.build` uses it; `layout.build_chain` ignores it)
 
 -- What a block is told about the product belt and the input belt of its chain.
@@ -153,6 +156,7 @@
 ---@field name string
 ---@field position bpgen.Position
 ---@field direction? defines.direction
+---@field recipe? string  the recipe of an assembling machine
 
 ---@class bpgen.Entity : bpgen.NewEntity  one entity of a blueprint, as Factorio's set_blueprint_entities wants it
 ---@field entity_number integer

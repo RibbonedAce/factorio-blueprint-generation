@@ -234,6 +234,26 @@ describe("blocks", function()
     end)
   end)
 
+  describe("the recipe of the machines", function()
+    it("sets the recipe of the machines of every block and of the final column, and none on the furnaces", function()
+      local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)})
+      cables.recipe = "copper-cable"
+      local root = assemblers("circuit-assembler", 1, 2, 1, {furnaces("iron-furnace", 1), cables})
+      root.recipe = "electronic-circuit"
+
+      local entities = blocks.build(root, NAMES)
+
+      local recipes = {}
+      for _, entity in ipairs(entities) do
+        if entity.recipe then
+          recipes[#recipes + 1] = entity.name .. " " .. entity.recipe
+        end
+      end
+      table.sort(recipes)
+      assert.are.same({"cable-assembler copper-cable", "circuit-assembler electronic-circuit"}, recipes)
+    end)
+  end)
+
   describe("which block goes on top", function()
     it("puts the taller block on top and lists its stage first", function()
       local short, tall = furnaces("iron-furnace", 1), furnaces("copper-furnace", 3)

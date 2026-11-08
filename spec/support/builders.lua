@@ -234,6 +234,7 @@ function builders.fake_prototypes(options)
     local electric = fields.is_machine and not burner and not fields.heat
     return {
       localised_name = {"entity-name." .. name},
+      type = fields.type or (fields.is_machine and "assembling-machine" or nil),
       get_crafting_speed = function() return fields.crafting_speed or nil end,
       get_inserter_rotation_speed = function() return fields.rotation_speed or nil end,
       belt_speed = fields.belt_speed or nil,
@@ -248,7 +249,7 @@ function builders.fake_prototypes(options)
   end
 
   local entities = {
-    ["stone-furnace"] = entity("stone-furnace", {crafting_speed = furnace_speed, width = 2, height = 2, burns = {"chemical"}, is_machine = true}),
+    ["stone-furnace"] = entity("stone-furnace", {type = "furnace", crafting_speed = furnace_speed, width = 2, height = 2, burns = {"chemical"}, is_machine = true}),
     ["transport-belt"] = entity("transport-belt", {belt_speed = belt_speed}),
     ["inserter"] = entity("inserter", {rotation_speed = rotation_speed}),
     ["small-electric-pole"] = entity("small-electric-pole"),
@@ -262,6 +263,9 @@ function builders.fake_prototypes(options)
   end
 
   local recipes = options.recipes or {}
+  for name, recipe in pairs(recipes) do
+    recipe.name = name -- a recipe prototype knows its own name
+  end
   local items = {["coal"] = item("coal", {"chemical"})}
   for _, name in ipairs(options.items or {}) do
     items[name] = items[name] or item(name)

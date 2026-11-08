@@ -27,7 +27,7 @@ end
 ---@param prototype LuaRecipePrototype
 ---@return bpgen.Recipe|nil
 local function read_recipe(prototype)
-  local recipe = {energy = prototype.energy, ingredients = {}, products = {}}
+  local recipe = {name = prototype.name, energy = prototype.energy, ingredients = {}, products = {}}
   for _, ingredient in ipairs(prototype.ingredients) do
     if ingredient.type ~= "item" then
       return nil
@@ -201,6 +201,7 @@ end
 ---@field item string  the item the step makes
 ---@field recipe bpgen.Recipe
 ---@field machine string  machine prototype name
+---@field machine_type string  the type of the machine prototype: "furnace" or "assembling-machine", say
 ---@field fuel string|nil  item the machine burns, set by the config
 ---@field machine_speed number
 ---@field machine_size integer|nil  nil when the machine is not square
@@ -225,7 +226,7 @@ local function read_stage(stage)
   end
   local energy_source = read_energy_source(machine)
   return {
-    item = stage.item, recipe = stage.recipe, machine = stage.machine, fuel = stage.fuel,
+    item = stage.item, recipe = stage.recipe, machine = stage.machine, machine_type = machine.type, fuel = stage.fuel,
     machine_speed = machine_speed, machine_size = square_size(machine),
     energy_source = energy_source, fuels = burnable_by(energy_source), suppliers = suppliers,
   }
@@ -604,6 +605,17 @@ local function make_plans(job)
   return planned_tree(job.root, plans), nil
 end
 
+-- The recipe to set on the machines of a step: an assembling machine is blank until it is
+-- told, a furnace picks its recipe from what it is given and has no recipe to set.
+---@param stage bpgen.StageData
+---@return string|nil
+local function recipe_to_set(stage)
+  if stage.machine_type == "furnace" then
+    return nil
+  end
+  return stage.recipe.name
+end
+
 -- What the layout is told about a step and the steps that make its ingredients. A step
 -- fed raw items is noted in `raw_lanes`, with the items on the lanes of its belt.
 ---@param step bpgen.PlannedStage
@@ -618,6 +630,7 @@ local function layout_stage(step, raw_lanes)
     machine_count = step.plan.machines,
     load = step.plan.load,
     machine = step.stage.machine,
+    recipe = recipe_to_set(step.stage),
     shape = {
       machine_size = machine_size_of(step.stage),
       input_inserters = step.plan.input_inserters,

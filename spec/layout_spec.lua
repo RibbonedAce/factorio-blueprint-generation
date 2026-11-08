@@ -941,4 +941,42 @@ describe("layout", function()
       assert.are.equal(NAMES.machine, block.raw_belts[1].stage.machine)
     end)
   end)
+
+  describe("the recipe of the machines", function()
+    local shape = {machine_size = 3, input_inserters = 1, output_inserters = 1}
+
+    local function names_with(recipe)
+      return {machine = "assembling-machine-1", belt = NAMES.belt, inserter = NAMES.inserter, pole = NAMES.pole, recipe = recipe}
+    end
+
+    local function recipes_of(entities, machine_name)
+      local recipes = {}
+      for _, entity in ipairs(entities_named(entities, machine_name)) do
+        recipes[#recipes + 1] = entity.recipe or "none"
+      end
+      return recipes
+    end
+
+    it("sets the recipe named in the names on every machine of a column", function()
+      local entities = layout.build(3, names_with("iron-gear-wheel"), shape)
+
+      assert.are.same({"iron-gear-wheel", "iron-gear-wheel", "iron-gear-wheel"}, recipes_of(entities, "assembling-machine-1"))
+    end)
+
+    it("sets no recipe when none is named, as for a furnace, which picks its own", function()
+      local entities = layout.build(2, names_with(nil), shape)
+
+      assert.are.same({"none", "none"}, recipes_of(entities, "assembling-machine-1"))
+    end)
+
+    it("sets the recipe of each column of a chain from its own stage", function()
+      local entities = layout.build_chain({
+        {machine_count = 2, machine = "stone-furnace", shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}},
+        {machine_count = 1, machine = "assembling-machine-1", recipe = "iron-gear-wheel", shape = shape},
+      }, NAMES)
+
+      assert.are.same({"none", "none"}, recipes_of(entities, "stone-furnace"))
+      assert.are.same({"iron-gear-wheel"}, recipes_of(entities, "assembling-machine-1"))
+    end)
+  end)
 end)
