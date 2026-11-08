@@ -37,6 +37,12 @@ local config = {
     ["firearm-magazine"] = true,
     ["light-armor"] = true,
     ["electronic-circuit"] = true,
+    ["transport-belt"] = true,
+    ["burner-inserter"] = true,
+    ["pipe-to-ground"] = true,
+    ["boiler"] = true,
+    ["offshore-pump"] = true,
+    ["automation-science-pack"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns
