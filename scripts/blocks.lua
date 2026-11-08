@@ -10,31 +10,35 @@
 -- made ingredients is built, over and over for as deep as the recipe goes.
 --
 -- The two blocks are stacked, and the column goes to the right of them, beside the lower
--- one. The product belt of the upper block (v) goes on, down the column to the right of
--- the lower block, and becomes the input belt of the final column. The product belt of
--- the lower block runs north and turns east (>) in the row between the blocks, into the
--- side of that belt. Inserters put what they make on the far lane of a belt, and a belt
--- that feeds the side of another puts everything on its near lane, so the two products
--- ride different lanes of the input belt, and the final column's inserters take both.
--- Two blocks of one furnace each and an assembler (F furnace, A assembler, } an inserter
--- that moves things east, + a pole, v ^ > belts):
+-- one. The upper block stays in the corner, and its product belt (v) goes straight on, down
+-- the column to the right of the lower block's, and becomes the input belt of the final
+-- column. The lower block is moved until its product belt is in the column beside the input
+-- belt: east when the lower block is narrower, west when it is as wide or wider, which puts it
+-- in negative columns (its belt of raw items then needs no turn: its trail is the belt). It
+-- starts in the row where its product belt turns east (>) into the side of the input belt (the
+-- join row): its first output inserter drops onto that turn, which is a curve, but the turn
+-- puts everything on one lane anyway. Inserters put what they make on the far lane of a belt,
+-- and a belt that feeds the side of another puts everything on its near lane, so the two
+-- products ride different lanes of the input belt, and the final column's inserters take both.
+-- Two equally wide blocks of one furnace each and an assembler (F furnace, A assembler, } an
+-- inserter that moves things east, + a pole, v ^ > belts):
 --
---       x: 0 1 2 3 4 5 6 7 8 9 10 11 12
---   row 0:   . v } F F } v
---   row 1:   . . + F F + v
---   row 2:   . . . . . > v          <- the join row: the lower block starts below it
---   row 3:   v } F F } ^ v } A A A  }  v
---   row 4:   . + F F + ^ v } A A A  +  v
---   row 5:   . . . . . . . + A A A  .  v
+--       x: -1 0 1 2 3 4 5 6 7 8 9 10 11
+--   row 0:    v v } F F } v
+--   row 1:    v . + F F + v
+--   row 2:    v } F F } > v          <- the join row: the lower block starts here
+--   row 3:    . + F F + ^ v } A A A  }  v
+--   row 4:    . . . . . . v } A A A  +  v
+--   row 5:    . . . . . . . + A A A  .  v
 --
 -- The taller block goes on top, so that the final column, about as tall as a block, stands
 -- beside the shorter one. Every belt of raw items is fed from the west, at its own row.
 --
 -- A raw item that goes with a made one (wood next to copper cable) is a block with no
 -- machines: one belt tile, one row tall, which is the first tile of its product belt. It
--- always goes below (every block with machines is taller), so its belt, a trail from the top left like any other belt of raw
--- items, runs along the bottom of the blocks above it, and turns north, then east into the
--- side of the input belt like the product belt of any lower block. The raw item arrives on
+-- always goes below (every block with machines is taller), so its belt, a trail from the top
+-- left like any other belt of raw items, runs along the join row, below the blocks above it,
+-- and its first tile is the turn east into the side of the input belt. The raw item arrives on
 -- the near lane, the made one on the far lane.
 --
 -- A block that has neighbours also keeps a line of poles beside its product belt, from its
@@ -48,9 +52,9 @@ local blocks = {}
 
 -- Where two blocks meet and feed the column that eats what they make.
 ---@class bpgen.Junction
----@field lower_column integer  tile column of the lower block's product belt
+---@field lower_column integer  tile column of the lower block's product belt, beside the input belt
 ---@field input_column integer  tile column of the upper block's product belt, which goes on as the input belt of the final column
----@field row integer  the row between the blocks, where the lower block's product belt turns into the input belt
+---@field row integer  the first row of the lower block, where its product belt turns east into the input belt
 
 -- A block that has neighbours keeps a line of poles in the column beside its product belt
 -- (where its last column's output inserters are), from the top of the block to the bottom,
@@ -126,19 +130,21 @@ end
 ---@param lower bpgen.Block
 ---@return bpgen.Junction
 local function junction_of(upper, lower)
-  local lower_column = math.max(upper.product_column - 1, lower.product_column)
-  return {lower_column = lower_column, input_column = lower_column + 1, row = upper.height}
+  return {lower_column = upper.product_column - 1, input_column = upper.product_column, row = upper.height}
 end
 
--- Moves the two blocks into place and returns the entities of both. The upper block is
--- one column further east than the lower, so that its product belt can go on beside it.
+-- Moves the lower block into place, below the upper block, and returns the entities of both.
+-- The upper block stays where it is, in the corner. The lower block is moved so that its
+-- product belt is beside the upper block's: east when it is narrower, west when it is as wide
+-- or wider, which puts it in negative columns, where its belt of raw items is its own trail.
+-- It starts in the join row: its first output inserter then drops onto the belt tile that
+-- turns east there, a curve, which side-loads everything it carries onto one lane anyway.
 ---@param upper bpgen.Block
 ---@param lower bpgen.Block
 ---@param junction bpgen.Junction
 ---@return bpgen.Entity[]
 local function place_blocks(upper, lower, junction)
-  shift(upper, junction.input_column - upper.product_column, 0)
-  shift(lower, junction.lower_column - lower.product_column, junction.row + 1)
+  shift(lower, junction.lower_column - lower.product_column, junction.row)
   local entities = {}
   absorb(entities, upper)
   absorb(entities, lower)
@@ -152,7 +158,7 @@ end
 ---@param junction bpgen.Junction
 ---@param lower_height integer
 local function add_lower_belt(entities, belt_name, junction, lower_height)
-  for row = junction.row + 1, junction.row + lower_height do
+  for row = junction.row + 1, junction.row + lower_height - 1 do
     add_belt(entities, belt_name, junction.lower_column, row, defines.direction.north)
   end
   add_belt(entities, belt_name, junction.lower_column, junction.row, defines.direction.east)
@@ -240,7 +246,7 @@ local function composite_block(upper, lower, stage, names, is_root)
     entities = entities,
     poles = append(append(append({}, upper.poles), lower.poles), final.poles),
     product_column = final.product_column,
-    height = junction.row + 1 + math.max(lower.height, final.height),
+    height = math.max(junction.row + lower.height, junction.row + 1 + final.height),
     raw_belts = append(append({}, upper.raw_belts), lower.raw_belts),
   }
 end
@@ -374,8 +380,9 @@ end
 
 -- The tiles of a trail that brings a belt of raw items to the top left of the blueprint:
 -- from the top row of the blueprint, level with the top of the first belt, down
--- `entry_column` (west of the blueprint), then east along the row of the belt, into its
--- first tile.
+-- `entry_column` (west of the blueprint, or the column of the belt itself when that is
+-- west of the others), then east along the row of the belt, into its first tile. A belt
+-- in the entry column has no tiles to the east: the trail only makes it longer.
 ---@param belt bpgen.RawBelt
 ---@param entry_column integer
 ---@param top_row integer  the row of the first belt of raw items of the blueprint
@@ -393,10 +400,11 @@ end
 
 -- Brings every belt of raw items to the top left, so that the player can lay them all
 -- in from one corner: a belt that does not start in the top left corner gets a trail
--- along the west side of the blueprint. The trails run down columns west of the blueprint,
--- the lower the belt the further west, so that a trail turns east below the trails
--- of the belts above it and none crosses another. The blueprint stands in a frame whose
--- x = 0 is its west side.
+-- along the west side of the blueprint. The trails run down columns west of the blueprint
+-- (or west of the others, for a lower block that sticks out to the west: its belt of raw
+-- items is the trail), the lower the belt the further west, so that a trail turns east
+-- below the trails of the belts above it and none crosses another. The first belt, of the
+-- block in the corner, is in column 0.
 ---@param block bpgen.Block
 ---@param belt_name string
 local function add_trails(block, belt_name)
@@ -404,7 +412,7 @@ local function add_trails(block, belt_name)
   local entry_column = 0
   for _, belt in ipairs(block.raw_belts) do
     if belt.column ~= 0 or belt.row ~= top_row then
-      entry_column = entry_column - 1
+      entry_column = math.min(entry_column - 1, belt.column)
       for _, tile in ipairs(trail_tiles(belt, entry_column, top_row)) do
         add_belt(block.entities, belt_name, tile.column, tile.row, tile.direction)
       end

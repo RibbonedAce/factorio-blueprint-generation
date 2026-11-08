@@ -76,54 +76,54 @@ end
 
 describe("blocks", function()
   describe("two blocks of one furnace each and an assembler that eats what they make", function()
-    -- The first-listed furnace block is the upper one when the blocks are equally tall, so its belts
-    -- stand one column east of the lower block's. Rows 0 and 1 are the upper block, row 2 the join row,
-    -- rows 3 and 4 the lower block. Columns: upper block 1 (raw belt), 2 (inserters), 3-4 (furnace),
-    -- 5 (inserters), 6 (product belt, which goes on as the assembler's input belt); lower block 0, 1, 2-3,
-    -- 4, 5 (product belt, running north); the assembler's input inserters in 7, the machine in 8-10, its
-    -- output inserters in 11 and its output belt in 12.
+    -- The upper block is in the corner, in columns 0 to 5: 0 (raw belt), 1 (inserters), 2-3 (furnace),
+    -- 4 (inserters), 5 (product belt, which goes on as the input belt of the final column). The lower block is as
+    -- wide, so it is moved one column west to put its product belt in column 4, beside it: columns -1 (raw belt),
+    -- 0, 1-2, 3 and 4. Rows 0 and 1 are the upper block; the lower block starts in row 2, the join row, where its
+    -- product belt turns east into the side of the input belt. The assembler's input inserters are in column 6,
+    -- the machine in 7-9, its output inserters in 10 and its output belt in 11.
     --
-    --      x: 0 1 2 3 4 5 6 7 8 9 10 11 12
-    --  row 0:   v } F F } v
-    --  row 1:     + F F + v
-    --  row 2:           > v
-    --  row 3:   v } F F } ^ v } A A A  }  v
-    --  row 4:     + F F + ^ v } A A A  +  v
+    --      x: -1 0 1 2 3 4 5 6 7 8 9 10 11
+    --  row 0:    . v } I I } v
+    --  row 1:    . . + I I + v
+    --  row 2:    v } K K } > v
+    --  row 3:    . + K K + ^ v } A A A  }  v
+    --  row 4:    . . . . . . v } A A A  +  v
     local iron, copper = furnaces("iron-furnace", 1), furnaces("copper-furnace", 1)
     local root = assemblers("circuit-assembler", 1, 2, 1, {iron, copper})
     local entities, raw_stages = blocks.build(root, NAMES)
 
     it("lets the upper block's product belt go on south as the input belt of the final column", function()
-      assert.are.same({0, 1, 2, 3, 4}, belt_rows(entities, 6)) -- down to the last input inserter, in row 4
-      assert.are.same({south}, belt_directions(entities, 6))
+      assert.are.same({0, 1, 2, 3, 4}, belt_rows(entities, 5)) -- down to the last input inserter, in row 4
+      assert.are.same({south}, belt_directions(entities, 5))
     end)
 
     it("runs the lower block's product belt north, from its last row up to the join row", function()
-      assert.are.same({2, 3, 4}, belt_rows(entities, 5)) -- the tile in the join row turns east
-      assert.are.equal(north, entity_at(entities, NAMES.belt, 5, 4, 1).direction)
-      assert.are.equal(north, entity_at(entities, NAMES.belt, 5, 3, 1).direction)
+      assert.are.equal(north, entity_at(entities, NAMES.belt, 4, 3, 1).direction)
     end)
 
     it("turns the lower block's product belt east into the side of the input belt in the join row", function()
-      local turn = assert(entity_at(entities, NAMES.belt, 5, 2, 1))
+      local turn = assert(entity_at(entities, NAMES.belt, 4, 2, 1))
 
       assert.are.equal(east, turn.direction)
     end)
 
     it("puts the final column to the right of the lower block, starting below the join row", function()
-      assert.is_not_nil(entity_at(entities, "circuit-assembler", 8, 3, 3))
+      assert.is_not_nil(entity_at(entities, "circuit-assembler", 7, 3, 3))
     end)
 
     it("draws the final product belt along the final column", function()
-      assert.are.same({3, 4, 5}, belt_rows(entities, 12))
+      assert.are.same({3, 4, 5}, belt_rows(entities, 11))
     end)
 
-    it("places the lower block below the join row", function()
-      assert.is_not_nil(entity_at(entities, "copper-furnace", 2, 3, 2))
+    it("starts the lower block in the join row, so its first output inserter drops onto the turn", function()
+      assert.is_not_nil(entity_at(entities, "copper-furnace", 1, 2, 2))
+      assert.is_not_nil(entity_at(entities, NAMES.inserter, 3, 2, 1))
     end)
 
-    it("places the upper block at the top, one column further east than the lower block", function()
-      assert.is_not_nil(entity_at(entities, "iron-furnace", 3, 0, 2))
+    it("keeps the upper block in the corner and moves the lower block, which is as wide, one column west", function()
+      assert.is_not_nil(entity_at(entities, "iron-furnace", 2, 0, 2))
+      assert.is_not_nil(entity_at(entities, "copper-furnace", 1, 2, 2))
     end)
 
     it("lists the stages fed raw items from the top of the blueprint down", function()
@@ -135,6 +135,30 @@ describe("blocks", function()
       for index, entity in ipairs(entities) do
         assert.are.equal(index, entity.entity_number)
       end
+    end)
+  end)
+
+  describe("two blocks of which the upper is wider", function()
+    -- The upper block is 4 furnaces (8 rows) and a cable assembler, 12 columns wide, so its product belt is in
+    -- column 11 and goes straight on south as the input belt of the final column. The lower block is one furnace
+    -- column, 6 columns wide: it is moved east until its product belt is in column 10, beside the input belt, and
+    -- starts in row 8, the join row. Its belt of raw items comes in at column 5. (A lower block that is as wide or
+    -- wider is moved west instead, see the blocks above and below.)
+    local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 4)})
+    local root = assemblers("circuit-assembler", 1, 2, 1, {cables, furnaces("iron-furnace", 1)})
+    local entities = blocks.build(root, NAMES)
+
+    it("lets the upper block's product belt go on south as the input belt of the final column", function()
+      assert.are.same({south}, belt_directions(entities, 11))
+      assert.are.equal(east, entity_at(entities, NAMES.belt, 10, 8, 1).direction) -- the lower block's turn, beside it
+    end)
+
+    it("puts the lower block against the input belt, starting in the join row", function()
+      assert.is_not_nil(entity_at(entities, "iron-furnace", 7, 8, 2))
+    end)
+
+    it("keeps the upper block in the corner", function()
+      assert.is_not_nil(entity_at(entities, "copper-furnace", 2, 0, 2))
     end)
   end)
 
@@ -177,14 +201,16 @@ describe("blocks", function()
 
     it("adds a pole at the top of a block whose last column starts further down", function()
       -- The lower block is a tree 6 rows tall whose final column covers rows 3 to 5 of it; the upper block is
-      -- 4 furnaces (8 rows), so the tree starts in row 9 and its first pole would be in row 13 without the line.
+      -- 4 furnaces (8 rows), so the tree starts in row 8 and its first pole would be in row 12 without the line.
+      -- The tree is 7 columns wider than the furnaces' block, so it is moved 7 columns west: its output inserters
+      -- are in column 3.
       local tree = assemblers("belt-assembler", 1, 2, 1, {furnaces("iron-furnace", 1), furnaces("copper-furnace", 1)})
       local root = assemblers("circuit-assembler", 1, 2, 1, {tree, furnaces("iron-furnace", 4)})
 
       local entities = blocks.build(root, NAMES)
 
-      local head = assert(poles_at(entities, 11, 9)) -- the top row of the tree, in the column of the tree's output inserters
-      assert.is_true(wired(assert(poles_at(entities, 11, 13)), head))
+      local head = assert(poles_at(entities, 3, 8)) -- the top row of the tree, in the column of the tree's output inserters
+      assert.is_true(wired(assert(poles_at(entities, 3, 12)), head))
     end)
 
     it("adds no poles to the last block of the blueprint, which has no neighbours", function()
@@ -195,46 +221,56 @@ describe("blocks", function()
 
       local entities = blocks.build(root, NAMES)
 
-      assert.is_nil(poles_at(entities, 21, 17))
+      assert.is_nil(poles_at(entities, 16, 4)) -- the line of a block with neighbours would go up from the pole in row 10
     end)
   end)
 
   describe("the belts of raw items, which all start at the top left", function()
-    -- The small tree again: the upper block's belt of raw items starts at (1, 0), one column east of the corner,
-    -- and the lower block's at (0, 3). Each gets a trail along the west side of the blueprint, the lower belt's
-    -- one further west, so that no trail crosses another.
+    -- The small tree again: the upper block's belt of raw items starts at (0, 0), in the corner, and the lower
+    -- block's, moved one column west, at (-1, 2).
     local function small_tree()
       local root = assemblers("circuit-assembler", 1, 2, 1, {furnaces("iron-furnace", 1), furnaces("copper-furnace", 1)})
       return (blocks.build(root, NAMES))
     end
 
-    it("runs the trail of the upper block's belt along the top row, east into the belt", function()
+    it("gives the upper block's belt no trail, since it starts in the corner", function()
       local entities = small_tree()
 
-      assert.are.same({0, 3}, belt_rows(entities, -1)) -- row 0 is this trail, which turns east at once; row 3 is the lower trail passing east
-      assert.are.equal(east, entity_at(entities, NAMES.belt, -1, 0, 1).direction) -- in the top row, level with the top of the other belt
-      assert.are.equal(east, entity_at(entities, NAMES.belt, 0, 0, 1).direction) -- the tile before the belt, which is in column 1
+      assert.are.equal(south, entity_at(entities, NAMES.belt, 0, 0, 1).direction)
+      assert.are.same({}, belt_rows(entities, -2))
     end)
 
-    it("runs the trail of a lower belt further west, down to its row, then east into the belt", function()
+    it("makes the belt of a lower block that sticks out to the west longer, with no turn", function()
       local entities = small_tree()
 
-      assert.are.same({0, 1, 2, 3}, belt_rows(entities, -2)) -- from the top row
-      assert.are.equal(south, entity_at(entities, NAMES.belt, -2, 2, 1).direction)
-      assert.are.equal(east, entity_at(entities, NAMES.belt, -2, 3, 1).direction)
-      assert.are.equal(east, entity_at(entities, NAMES.belt, -1, 3, 1).direction) -- next to the belt in column 0
+      assert.are.same({0, 1, 2}, belt_rows(entities, -1)) -- from the top row down to the first row of the block
+      assert.are.same({south}, belt_directions(entities, -1))
     end)
 
-    it("gives no trail to a belt that already starts in the top left corner", function()
-      -- The upper block is 4 furnaces and a cable assembler (8 rows), 11 columns wide: its belt starts at (0, 0).
-      -- The lower block starts in row 9.
+    it("lets each belt of a tree that sticks out far to the west run straight down its own column", function()
+      -- The lower block is a tree of two furnaces, 12 columns wide, below a block of 4 furnaces 6 columns wide:
+      -- moved 7 columns west, its two belts of raw items are in columns -7 and -8.
+      local tree = assemblers("belt-assembler", 1, 2, 1, {furnaces("iron-furnace", 1), furnaces("iron-furnace", 1)})
+      local root = assemblers("circuit-assembler", 1, 2, 1, {furnaces("copper-furnace", 4), tree})
+
+      local entities = blocks.build(root, NAMES)
+
+      assert.are.same({0, 1, 2, 3, 4, 5, 6, 7, 8}, belt_rows(entities, -7)) -- down to the first row of the tree
+      assert.are.same({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, belt_rows(entities, -8)) -- down to the first row of the tree's lower block
+      assert.are.same({}, belt_rows(entities, -9))
+    end)
+
+    it("gives the lower belt a longer trail when the upper block is wider, so the belt starts further east", function()
+      -- The upper block is 4 furnaces and a cable assembler (8 rows), 12 columns wide; the lower block is a
+      -- furnace column 6 columns wide, moved 5 columns east, so its belt starts at (5, 8).
       local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 4)})
       local root = assemblers("circuit-assembler", 1, 2, 1, {cables, furnaces("iron-furnace", 1)})
 
       local entities = blocks.build(root, NAMES)
 
-      assert.are.same({0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, belt_rows(entities, -1)) -- only the lower belt's trail
+      assert.are.same({0, 1, 2, 3, 4, 5, 6, 7, 8}, belt_rows(entities, -1)) -- only the lower belt's trail
       assert.are.same({}, belt_rows(entities, -2))
+      assert.are.equal(east, entity_at(entities, NAMES.belt, 4, 8, 1).direction) -- next to the belt in column 5
     end)
 
     it("gives a chain no trail, since its belt starts in the corner", function()
@@ -244,35 +280,46 @@ describe("blocks", function()
     end)
   end)
 
+  describe("a block that is a tree itself, above another block", function()
+    it("starts the block below it in the row under the tree, when the tree ends with its lower block", function()
+      -- The tree is two blocks of 3 furnaces, 6 rows each, one above the other, and a final column of 3 rows beside
+      -- the lower one: 12 rows. It is taller than the furnace block below it, so it goes on top, and the block
+      -- below starts in row 12.
+      local tree = assemblers("belt-assembler", 1, 2, 1, {furnaces("iron-furnace", 3), furnaces("copper-furnace", 3)})
+      local root = assemblers("underground-assembler", 1, 2, 1, {tree, furnaces("iron-furnace", 1)})
+
+      local entities = blocks.build(root, NAMES)
+
+      assert.are.equal(east, entity_at(entities, NAMES.belt, -1, 12, 1).direction) -- the trail of the lower block's belt, in its first row
+      assert.is_nil(entity_at(entities, NAMES.belt, -1, 13, 1))
+    end)
+  end)
+
   describe("a raw item that goes with a made one, on a belt of its own", function()
     -- A pole assembler eats wood and cables. The cables' block is one copper furnace and one cable assembler, with
-    -- a belt of raw items at (0, 0); it is the upper block. The wood is a block of its own with no machines, below:
-    -- one belt tile in the row under the join row, in the column where the lower block's product belt would run.
+    -- a belt of raw items at (0, 0); it is the upper block, 12 columns wide, rows 0 to 2. The wood is a block of its
+    -- own with no machines, below: one belt tile in the join row (row 3), in column 10, beside the input belt in
+    -- column 11. The wood tile is the turn: the trail brings the wood east along the join row into it.
     local function poles(first_raw)
       local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)})
       local wood = {raw_item = "wood"}
       return assemblers("pole-assembler", 1, 2, 1, first_raw and {wood, cables} or {cables, wood})
     end
 
-    -- Columns: -1 the wood's trail; 0 the copper's raw belt, 1 inserters, 2-3 the furnace, 4 inserters, 5 the
-    -- cables' input belt, 6 inserters, 7-9 the cable assembler, 10 the wood tile (north) or the join (east),
-    -- 11 the product belt of the cables, which goes on as the input belt of the poles, 12 inserters, 13-15 the pole assembler.
-    -- Rows: 0-2 the cables' block, 3 the join row, 4 the wood tile and the top row of the poles.
-    it("runs the raw item east along the bottom of the block above, then north, then east into the input belt", function()
+    it("runs the raw item east along the join row, below the block above, into the side of the input belt", function()
       local entities = blocks.build(poles(false), NAMES)
 
-      assert.are.same({3, 4}, belt_rows(entities, 10))
-      assert.are.equal(east, entity_at(entities, NAMES.belt, 10, 3, 1).direction) -- the join row, into the side of the input belt in column 11
-      assert.are.equal(north, entity_at(entities, NAMES.belt, 10, 4, 1).direction) -- the first tile of the raw item's belt
+      assert.are.same({3}, belt_rows(entities, 10))
+      assert.are.equal(east, entity_at(entities, NAMES.belt, 10, 3, 1).direction) -- the first tile of the raw item's belt is the turn
     end)
 
-    it("brings the trail of the raw item down the west side and east along the row of its first tile", function()
+    it("brings the trail of the raw item down the west side and east along the join row", function()
       local entities = blocks.build(poles(false), NAMES)
 
-      assert.are.same({0, 1, 2, 3, 4}, belt_rows(entities, -1))
-      assert.are.equal(south, entity_at(entities, NAMES.belt, -1, 3, 1).direction)
-      assert.are.equal(east, entity_at(entities, NAMES.belt, -1, 4, 1).direction)
-      assert.are.equal(east, entity_at(entities, NAMES.belt, 9, 4, 1).direction) -- the tile before the first tile of the raw item's belt
+      assert.are.same({0, 1, 2, 3}, belt_rows(entities, -1))
+      assert.are.equal(south, entity_at(entities, NAMES.belt, -1, 2, 1).direction)
+      assert.are.equal(east, entity_at(entities, NAMES.belt, -1, 3, 1).direction)
+      assert.are.equal(east, entity_at(entities, NAMES.belt, 9, 3, 1).direction) -- the tile before the first tile of the raw item's belt
     end)
 
     it("lists the belt of the cables' ore first and the belt of the raw item last", function()
@@ -329,7 +376,7 @@ describe("blocks", function()
 
       assert.are.equal(tall, raw_stages[1]) -- three furnaces are six rows, one is two
       assert.are.equal(short, raw_stages[2])
-      assert.is_not_nil(entity_at(entities, "copper-furnace", 3, 0, 2))
+      assert.is_not_nil(entity_at(entities, "copper-furnace", 2, 0, 2))
     end)
 
     it("keeps the recipe's order when the blocks are equally tall", function()
@@ -522,20 +569,8 @@ describe("blocks", function()
 
       local entities = blocks.build(root, NAMES)
 
-      local product_belts = #belt_rows(entities, 12) + #belt_rows(entities, 13) -- the inner and the outer column
+      local product_belts = #belt_rows(entities, 11) + #belt_rows(entities, 12) -- the inner and the outer column
       assert.are.equal(2 * 6 + 1, product_belts)
-    end)
-
-    it("puts the lower block against the input belt when the upper block is wider", function()
-      -- The upper block is a furnace column and a cable column: 4 furnaces are 8 rows and its product belt is in
-      -- column 11. The lower block is one furnace column, 6 columns wide, so its product belt is in column 10 and
-      -- its furnace in columns 7 and 8, from row 9 (row 8, below the upper block, is the join row).
-      local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 4)})
-      local root = assemblers("circuit-assembler", 1, 2, 1, {cables, furnaces("iron-furnace", 1)})
-
-      local entities = blocks.build(root, NAMES)
-
-      assert.is_not_nil(entity_at(entities, "iron-furnace", 7, 9, 2))
     end)
 
     -- A block that is itself a tree on both sides: two transport belt makers, each of plates and gears.
