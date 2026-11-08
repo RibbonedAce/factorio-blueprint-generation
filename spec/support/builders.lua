@@ -16,6 +16,7 @@ builders.NAMES = {
   machine = "stone-furnace",
   belt = "transport-belt",
   inserter = "inserter",
+  long_inserter = "long-handed-inserter",
   pole = "small-electric-pole",
 }
 
@@ -59,6 +60,15 @@ end
 ---@return table  an entity without its number yet (see `blueprint_of`)
 function builders.inserter(tile_x, tile_y, direction)
   return {name = builders.NAMES.inserter, position = grid.position(tile_x, tile_y), direction = direction}
+end
+
+-- A long-handed inserter: like `inserter`, but it picks up from and drops onto the tile two tiles away.
+---@param tile_x number
+---@param tile_y number
+---@param direction? defines.direction
+---@return table  an entity without its number yet (see `blueprint_of`)
+function builders.long_inserter(tile_x, tile_y, direction)
+  return {name = builders.NAMES.long_inserter, position = grid.position(tile_x, tile_y), direction = direction}
 end
 
 -- Poles can be given another prototype name, for tests that need a second kind of pole.
@@ -115,6 +125,7 @@ function builders.a_catalog(options)
     },
     [names.belt] = {kind = "belt", width = 1, height = 1},
     [names.inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true},
+    [names.long_inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true, reach = 2},
     [names.pole] = {
       kind = "pole", width = 1, height = 1,
       supply_radius = options.pole_supply_radius or 2.5,
@@ -195,6 +206,7 @@ end
 --                           (the stone furnace is always there, 2 x 2); default none
 --   belt_speed              the transport belt's speed, default 0.03125;
 --                           `false` makes it an entity without a belt speed
+--   long_inserter_rotation_speed the long-handed inserter's, default 0.02 (72 items a minute)
 --   inserter_rotation_speed the inserter's rotation speed, default 0.014 (the basic
 --                           inserter, 50.4 items a minute); `false` makes it an
 --                           entity that is not an inserter
@@ -206,7 +218,7 @@ end
 -- form {filter = "fuel-category", ["fuel-category"] = name} combined with "or"
 -- (anything else is an error), and an empty list of filters gives every item,
 -- as the worst case of what the game might do.
----@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, missing_entities?: string[]}
+---@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, missing_entities?: string[]}
 ---@return table  a stand-in for the game's `prototypes`
 function builders.fake_prototypes(options)
   options = options or {}
@@ -219,6 +231,7 @@ function builders.fake_prototypes(options)
   local furnace_speed = option(options.furnace_speed, 1)
   local belt_speed = option(options.belt_speed, 0.03125)
   local rotation_speed = option(options.inserter_rotation_speed, 0.014)
+  local long_rotation_speed = option(options.long_inserter_rotation_speed, 0.02)
 
   local function as_set(names)
     local set = {}
@@ -252,6 +265,7 @@ function builders.fake_prototypes(options)
     ["stone-furnace"] = entity("stone-furnace", {type = "furnace", crafting_speed = furnace_speed, width = 2, height = 2, burns = {"chemical"}, is_machine = true}),
     ["transport-belt"] = entity("transport-belt", {belt_speed = belt_speed}),
     ["inserter"] = entity("inserter", {rotation_speed = rotation_speed}),
+    ["long-handed-inserter"] = entity("long-handed-inserter", {rotation_speed = long_rotation_speed}),
     ["small-electric-pole"] = entity("small-electric-pole"),
   }
   for name, machine in pairs(options.machines or {}) do

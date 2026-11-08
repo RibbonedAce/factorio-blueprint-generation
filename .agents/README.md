@@ -14,6 +14,7 @@ Persistent notes for the AI assistant (Claude) working on this repo. They exist 
 8. [research/api-reference-2.1.23.md](research/api-reference-2.1.23.md): the verified API names and signatures this mod needs, read from the official JSON files. Check it before writing any code that calls the game API.
 
 9. [recipe-tree-plan.md](recipe-tree-plan.md): the proposed recursive block layout for recipes with two made ingredients, starting with the electronic circuit (a proposal until the owner approves it).
+10. [multi-input-plan.md](multi-input-plan.md): the plan for recipes with 3 or 4 ingredients, starting with the inserter: a second input belt reached by long-handed inserters. Decisions confirmed by the owner 2026-11-07; not implemented yet.
 
 ## Maintenance rules
 

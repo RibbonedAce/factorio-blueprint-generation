@@ -7,7 +7,7 @@
 -- once and hands that value to whoever asked for it.
 
 ---@class bpgen.Config
----@field entities {belt: string, inserter: string, pole: string}
+---@field entities {belt: string, inserter: string, long_inserter: string, pole: string}
 ---@field products table<string, true>  the items a player may ask for, by name
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
 ---@field default_product string  the item the window starts with; must be a key of `products`
@@ -18,6 +18,7 @@ local config = {
   entities = {
     belt = "transport-belt",
     inserter = "inserter",
+    long_inserter = "long-handed-inserter", -- for a second input belt (recipes with three or four ingredients)
     pole = "small-electric-pole",
   },
 
@@ -38,6 +39,27 @@ local config = {
     ["light-armor"] = true,
     ["electronic-circuit"] = true,
     ["small-electric-pole"] = true,
+    -- Three ingredients: a second input belt, reached by long-handed inserters.
+    ["inserter"] = true,
+    ["long-handed-inserter"] = true,
+    ["fast-inserter"] = true,
+    ["assembling-machine-1"] = true,
+    ["electric-mining-drill"] = true,
+    ["burner-mining-drill"] = true,
+    ["radar"] = true,
+    ["rocket-launcher"] = true,
+    ["gun-turret"] = true,
+    ["submachine-gun"] = true,
+    ["steam-engine"] = true,
+    ["steam-turbine"] = true,
+    ["lab"] = true,
+    ["splitter"] = true,
+    ["fast-splitter"] = true,
+    ["small-lamp"] = true,
+    ["power-switch"] = true,
+    -- Four ingredients.
+    ["programmable-speaker"] = true,
+    ["shotgun"] = true,
     ["transport-belt"] = true,
     ["burner-inserter"] = true,
     ["pipe-to-ground"] = true,

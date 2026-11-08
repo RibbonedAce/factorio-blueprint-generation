@@ -366,6 +366,71 @@ describe("belt tracer", function()
     end)
   end)
 
+  describe("long-handed inserters", function()
+    -- A maker at x = 0..1 puts "b" on the belt running south down x = 3 (the far lane of its first tile). The belt
+    -- next to it, down x = 4, is the one a plain inserter in x = 5 would take from. A long-handed inserter in x = 5,
+    -- in row 2, takes from the belt in x = 3 instead, over the belt in x = 4, into an eater at x = 6..7.
+    local function belts_and_a_long_inserter_and_an_eater(eats)
+      local machines = {
+        maker_b = {size = 2, eats = {}, makes = "b"},
+        eater = {size = 2, eats = eats, makes = "product"},
+      }
+      local entities = all_of(
+        machine("maker_b", 0, 0), builders.inserter(2, 0, west), belts_from(3, 0, south, 4),
+        belts_from(4, 0, south, 4),
+        builders.long_inserter(5, 2, west), machine("eater", 6, 2))
+      return entities, machines
+    end
+
+    it("takes from the belt two tiles away, over the belt next to it", function()
+      local entities, machines = belts_and_a_long_inserter_and_an_eater({"b"})
+
+      local problems = tracer.problems(entities, {machines = machines, raw = {}, product = "product"})
+
+      assert.are.same({}, problems)
+    end)
+
+    it("does not take from the belt next to it, which a plain inserter would", function()
+      -- The belt in x = 4 now carries "a", put there by a maker on its east side in row -2; the eater wants it
+      -- too, but the long-handed inserter only sees the belt in x = 3.
+      local entities, machines = belts_and_a_long_inserter_and_an_eater({"a", "b"})
+      machines.maker_a = {size = 2, eats = {}, makes = "a"}
+      entities[#entities + 1] = machine("maker_a", 6, -2)
+      entities[#entities + 1] = builders.inserter(5, -2, east)
+      entities[#entities + 1] = builders.belt(4, -2, south)
+      entities[#entities + 1] = builders.belt(4, -1, south)
+
+      local problems = tracer.problems(entities, {machines = machines, raw = {}, product = "product"})
+
+      assert.are.same({"the input inserter at 5,2 never sees a"}, problems)
+    end)
+
+    it("sees what a machine eats between its plain inserter and its long-handed one, each on its own belt", function()
+      -- The eater has a plain inserter in row 3 taking from the belt in x = 4 (which carries "a", put there by a maker
+      -- on its east side in row -2) and the long-handed inserter in row 2 taking from the belt in x = 3 (which carries "b").
+      local entities, machines = belts_and_a_long_inserter_and_an_eater({"a", "b"})
+      machines.maker_a = {size = 2, eats = {}, makes = "a"}
+      entities[#entities + 1] = machine("maker_a", 6, -2)
+      entities[#entities + 1] = builders.inserter(5, -2, east)
+      entities[#entities + 1] = builders.belt(4, -2, south)
+      entities[#entities + 1] = builders.belt(4, -1, south)
+      entities[#entities + 1] = builders.inserter(5, 3, west)
+
+      local problems = tracer.problems(entities, {machines = machines, raw = {}, product = "product"})
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports a long-handed inserter that puts items on a belt, which the tracer does not follow", function()
+      local machines = {maker = {size = 2, eats = {}, makes = "a"}}
+      local entities = all_of(machine("maker", 0, 0), builders.long_inserter(3, 0, west), belts_from(5, 0, south, 3))
+
+      local problems = tracer.problems(entities, {machines = machines, raw = {}, product = "product"})
+
+      assert.has_item_containing("the long-handed inserter at 3,0 puts items on a belt", problems)
+    end)
+  end)
+
   it("reports a belt of raw items that something we made is put on", function()
     local entities = all_of(
       machine("furnace", 0, 0), builders.inserter(2, 0, west), belts_from(3, 0, south, 3),

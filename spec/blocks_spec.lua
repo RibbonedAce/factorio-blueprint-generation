@@ -37,6 +37,23 @@ local function entities_named(entities, name)
   return found
 end
 
+-- An assembler whose machines each have a plain inserter and a long-handed one (in the row under it). The plain
+-- inserter takes from belt a, the input belt next to the inserters; the long-handed one from belt b, one column further
+-- west. `machine` says which assembler it is, for the tracer.
+local function gadget_assembler(count, suppliers, machine)
+  return {
+    machine_count = count, machine = machine or "gadget-assembler",
+    shape = {machine_size = 3, input_inserters = 1, long_inserters = 1, output_inserters = 1},
+    suppliers = suppliers,
+  }
+end
+
+-- The same block, said to ride belt b.
+local function on_belt_b(block)
+  block.belt = "b"
+  return block
+end
+
 local function tile_of(entity, size)
   return grid.top_left_tile(entity.position, size, size)
 end
@@ -273,6 +290,19 @@ describe("blocks", function()
       assert.are.equal(east, entity_at(entities, NAMES.belt, 4, 8, 1).direction) -- next to the belt in column 5
     end)
 
+    it("gives a trail to a belt in column 0 below the top row, where a lower block that is one column narrower leaves it", function()
+      -- The upper block is one assembler fed raw items: columns 0 (raw belt), 1, 2-4, 5, and its product belt in column 6,
+      -- 3 rows. The lower block is one furnace column with its product belt in column 5, right beside the input belt in
+      -- column 6, so it is not moved: its belt of raw items is at (0, 3).
+      local assembler = assemblers("chest-assembler", 1, 1, 1, {})
+      local root = assemblers("circuit-assembler", 1, 2, 1, {assembler, furnaces("iron-furnace", 1)})
+
+      local entities = blocks.build(root, NAMES)
+
+      assert.are.same({0, 1, 2, 3}, belt_rows(entities, -1))
+      assert.are.equal(east, entity_at(entities, NAMES.belt, -1, 3, 1).direction)
+    end)
+
     it("gives a chain no trail, since its belt starts in the corner", function()
       local entities = blocks.build(assemblers("gear-assembler", 2, 2, 1, {furnaces("iron-furnace", 3)}), NAMES)
 
@@ -292,6 +322,160 @@ describe("blocks", function()
 
       assert.are.equal(east, entity_at(entities, NAMES.belt, -1, 12, 1).direction) -- the trail of the lower block's belt, in its first row
       assert.is_nil(entity_at(entities, NAMES.belt, -1, 13, 1))
+    end)
+  end)
+
+  describe("three or four suppliers, some of them on a second input belt", function()
+    -- The final column is a "gadget" assembler (see `gadget_assembler`). Furnace blocks are 6 columns wide (the
+    -- product belt in column 5), 2 rows a furnace.
+    --
+    -- Belt a is the product belt of the top block (3 furnaces, rows 0-5, column 5). Belt b starts at the top row of
+    -- the second block (2 furnaces, moved two columns west, product belt in column 3, rows 6-9), whose belt turns
+    -- east into it. The last block (1 furnace, moved one column west, rows 10-11) drops on belt b, in column 4.
+    describe("two on belt b and one on belt a", function()
+      local top, joiner, source = furnaces("iron-furnace", 3), on_belt_b(furnaces("copper-furnace", 2)), on_belt_b(furnaces("brick-furnace", 1))
+      local entities, raw_stages = blocks.build(gadget_assembler(1, {top, joiner, source}), NAMES)
+
+      it("runs belt a down from the top row to the row of the final column's plain inserter", function()
+        assert.are.same({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, belt_rows(entities, 5))
+        assert.are.same({south}, belt_directions(entities, 5))
+      end)
+
+      it("turns the belt of the second block east at its top row into the head of belt b", function()
+        assert.are.same({6, 7, 8, 9}, belt_rows(entities, 3))
+        assert.are.equal(east, entity_at(entities, NAMES.belt, 3, 6, 1).direction)
+        assert.are.equal(north, entity_at(entities, NAMES.belt, 3, 7, 1).direction)
+      end)
+
+      it("runs belt b south from the top row of the second block to the final column's long-handed inserter", function()
+        assert.are.same({6, 7, 8, 9, 10, 11}, belt_rows(entities, 4))
+        assert.are.same({south}, belt_directions(entities, 4))
+      end)
+
+      it("puts the final column beside the last block, with its plain inserter in the first row", function()
+        assert.is_not_nil(entity_at(entities, "gadget-assembler", 7, 10, 3))
+        assert.are.equal(NAMES.inserter, entity_at(entities, NAMES.inserter, 6, 10, 1).name)
+      end)
+
+      it("puts the long-handed inserter under the plain one, taking from belt b over belt a", function()
+        assert.are.equal(NAMES.long_inserter, entity_at(entities, NAMES.long_inserter, 6, 11, 1).name)
+      end)
+
+      it("lists the stages fed raw items from the top of the blueprint down", function()
+        assert.are.same({top, joiner, source}, raw_stages)
+      end)
+    end)
+
+    -- Belt a is the product belt of the top block (3 furnaces, rows 0-5, column 5) with the second block's belt
+    -- turning east into its side (2 furnaces, column 4, rows 6-9). The last block (1 furnace, rows 10-11) drops on belt b,
+    -- which starts at its top row in the same column 4 as the tail of the second block's belt, pointing away from it.
+    describe("one on belt b and two on belt a", function()
+      local top, side, source = furnaces("iron-furnace", 3), furnaces("copper-furnace", 2), on_belt_b(furnaces("brick-furnace", 1))
+      local entities = blocks.build(gadget_assembler(1, {top, side, source}), NAMES)
+
+      it("turns the belt of the second block east into the side of belt a", function()
+        assert.are.equal(east, entity_at(entities, NAMES.belt, 4, 6, 1).direction)
+        assert.are.equal(north, entity_at(entities, NAMES.belt, 4, 9, 1).direction)
+      end)
+
+      it("starts belt b at the top row of the last block, pointing away from the tail of the belt above", function()
+        assert.are.equal(south, entity_at(entities, NAMES.belt, 4, 10, 1).direction)
+        assert.are.equal(south, entity_at(entities, NAMES.belt, 4, 11, 1).direction)
+      end)
+
+      it("runs belt a down to the row of the final column's plain inserter", function()
+        assert.are.same({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, belt_rows(entities, 5))
+      end)
+    end)
+
+    describe("two on each belt", function()
+      -- Rows: top block 0-5, second 6-9 (belt a side-load, column 4), third 10-13 (column 3, turning east at row 10
+      -- into the head of belt b), last 14-15 (drops on belt b in column 4). The final column starts in row 14.
+      local top, side = furnaces("iron-furnace", 3), furnaces("copper-furnace", 2)
+      local joiner, source = on_belt_b(furnaces("brick-furnace", 2)), on_belt_b(furnaces("stick-furnace", 1))
+      local entities = blocks.build(gadget_assembler(1, {top, side, joiner, source}), NAMES)
+
+      it("runs belt b from the head of the third block to the long-handed inserter of the final column", function()
+        assert.are.equal(south, entity_at(entities, NAMES.belt, 4, 10, 1).direction)
+        assert.are.equal(south, entity_at(entities, NAMES.belt, 4, 15, 1).direction)
+        assert.is_nil(entity_at(entities, NAMES.belt, 4, 16, 1))
+      end)
+
+      it("turns the belt of the third block east into the head of belt b", function()
+        assert.are.equal(east, entity_at(entities, NAMES.belt, 3, 10, 1).direction)
+      end)
+
+      it("puts the final column beside the last block", function()
+        assert.is_not_nil(entity_at(entities, "gadget-assembler", 7, 14, 3))
+      end)
+    end)
+
+    it("puts the taller block of belt a on top when the recipe lists the shorter one first", function()
+      local short, tall = furnaces("iron-furnace", 1), furnaces("copper-furnace", 3)
+      local source = on_belt_b(furnaces("brick-furnace", 1))
+
+      local _, raw_stages = blocks.build(gadget_assembler(1, {short, tall, source}), NAMES)
+
+      assert.are.same({tall, short, source}, raw_stages)
+    end)
+
+    it("leaves an empty row between two blocks when a belt running north in the first row of the lower block would feed the tail of a belt above it", function()
+      -- The circuit block above is rows 0-7 (2 iron furnaces, a cable block of 2 copper furnaces and a cable assembler,
+      -- and the circuit assembler): its cable belt, column 4, ends in row 7. The gear block below (3 furnaces) has the
+      -- belt from its furnaces to its assembler in column 4 too, running north up to its first row. Right under the
+      -- circuit block it would run its plates into the cable belt, so the gear block starts in row 9, not 8.
+      local circuit = assemblers("circuit-assembler", 1, 2, 1, {
+        furnaces("iron-furnace", 2),
+        assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)}),
+      })
+      local gear = assemblers("gear-assembler", 1, 2, 1, {furnaces("iron-furnace", 3)})
+
+      local entities = blocks.build(gadget_assembler(1, {circuit, gear, on_belt_b(furnaces("brick-furnace", 1))}), NAMES)
+
+      assert.is_not_nil(entity_at(entities, "iron-furnace", 1, 9, 2)) -- the first furnace of the gear block
+      assert.is_nil(entity_at(entities, NAMES.belt, 4, 8, 1)) -- the row between is empty
+    end)
+
+    it("pushes the final column down until its first long-handed inserter sees what the last block drops, when that block drops it in one row", function()
+      -- The last block is itself a gadget block: its final column is its lowest part, with one output inserter, in row 11
+      -- of the whole blueprint. Belt b runs south, so a long-handed inserter above that row would never see a gadget.
+      -- The outer final column has two machines with long-handed inserters in the second row of each, so it starts in row 10.
+      local inner = on_belt_b(gadget_assembler(1, {
+        furnaces("iron-furnace", 1),
+        assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)}),
+        on_belt_b(furnaces("brick-furnace", 1)),
+      }, "inner-assembler"))
+      local outer = gadget_assembler(2, {furnaces("iron-furnace", 1), inner, furnaces("brick-furnace", 2)}, "outer-assembler")
+
+      local entities = blocks.build(outer, NAMES)
+
+      assert.is_not_nil(entity_at(entities, "outer-assembler", 7, 10, 3))
+      assert.are.equal(NAMES.long_inserter, entity_at(entities, NAMES.long_inserter, 6, 11, 1).name)
+    end)
+
+    it("pushes the final column down until the last of its machines sees every drop of a much taller last block", function()
+      -- The last block is 5 furnaces under a block of 3 (rows 6-15), its output inserters in rows 6, 8, 10, 12 and 14.
+      -- Two machines, long-handed inserters in the second row of each: the first sees its half of the drops from row 9,
+      -- but the second, 3 rows lower, must reach row 14, so the final column starts in row 10 (long-handed inserters in
+      -- rows 11 and 14).
+      local top, source = furnaces("iron-furnace", 3), on_belt_b(furnaces("brick-furnace", 5))
+
+      local entities = blocks.build(gadget_assembler(2, {top, source}), NAMES)
+
+      assert.is_not_nil(entity_at(entities, "gadget-assembler", 7, 10, 3))
+      assert.are.equal(NAMES.long_inserter, entity_at(entities, NAMES.long_inserter, 6, 14, 1).name)
+    end)
+
+    it("pushes the final column down until its last long-handed inserter is level with the last output inserter of the last block", function()
+      -- The last block is 4 furnaces (8 rows, rows 6-13 under a top block of 3 furnaces); its output inserters are in
+      -- rows 6, 8, 10 and 12. The final column is one machine whose long-handed inserter is its second row, so it starts
+      -- in row 11 and the long-handed inserter, in row 12, is level with the last output inserter.
+      local top, source = furnaces("iron-furnace", 3), on_belt_b(furnaces("brick-furnace", 4))
+
+      local entities = blocks.build(gadget_assembler(1, {top, source}), NAMES)
+
+      assert.is_not_nil(entity_at(entities, "gadget-assembler", 7, 11, 3))
+      assert.are.equal(NAMES.long_inserter, entity_at(entities, NAMES.long_inserter, 6, 12, 1).name)
     end)
   end)
 
@@ -440,8 +624,11 @@ describe("blocks", function()
       ["other-belt-assembler"] = {size = 3, eats = {"iron-plate", "iron-gear-wheel"}, makes = "other-belt"},
       ["double-assembler"] = {size = 3, eats = {"transport-belt", "other-belt"}, makes = "double-belt"},
       ["pole-assembler"] = {size = 3, eats = {"wood", "copper-cable"}, makes = "small-electric-pole"},
+      ["brick-furnace"] = {size = 2, eats = {"stone"}, makes = "stone-brick"},
+      ["gadget-assembler"] = {size = 3, eats = {"iron-plate", "copper-cable", "stone-brick"}, makes = "gadget"},
+      ["outer-assembler"] = {size = 3, eats = {"iron-plate", "gadget", "stone-brick"}, makes = "outer-gadget"},
     }
-    local raw = {["iron-furnace"] = true, ["copper-furnace"] = true}
+    local raw = {["iron-furnace"] = true, ["copper-furnace"] = true, ["brick-furnace"] = true}
 
     local function catalog()
       local entries = builders.a_catalog{pole_supply_radius = 2.5, pole_wire_reach = 7.5}
@@ -555,6 +742,157 @@ describe("blocks", function()
         end
       end
     end
+
+    -- Gadgets from iron plates, cables, stone bricks and (in the third shape) gears, in three shapes: the recipe's
+    -- ingredients split as 1 on belt a and 2 on belt b, as 2 and 1, and as 2 and 2; the suppliers listed in either order.
+    local gadget_shapes = {
+      {label = "1 on belt a and 2 on belt b", on_b = {cables = true, bricks = true}, eats = {"iron-plate", "copper-cable", "stone-brick"}},
+      {label = "2 on belt a and 1 on belt b", on_b = {bricks = true}, eats = {"iron-plate", "copper-cable", "stone-brick"}},
+      {label = "2 on each belt", on_b = {bricks = true, gears = true}, eats = {"iron-plate", "copper-cable", "stone-brick", "iron-gear-wheel"}},
+    }
+
+    local function gadgets(iron_count, brick_count, gadget_count, shape, forward)
+      local suppliers = {
+        iron = furnaces("iron-furnace", iron_count),
+        cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)}),
+        bricks = furnaces("brick-furnace", brick_count),
+        gears = assemblers("gear-assembler", 1, 2, 1, {furnaces("iron-furnace", 2)}),
+      }
+      local order = shape.on_b.gears and {"iron", "cables", "bricks", "gears"} or {"iron", "cables", "bricks"}
+      local list = {}
+      for index = 1, #order do
+        local name = order[forward and index or #order + 1 - index]
+        list[index] = shape.on_b[name] and on_belt_b(suppliers[name]) or suppliers[name]
+      end
+      return gadget_assembler(gadget_count, list)
+    end
+
+    -- The machines of the tracer, with the gadget assembler eating what the shape says.
+    local function machines_eating(eats)
+      local copy = {}
+      for name, machine in pairs(machines) do
+        copy[name] = machine
+      end
+      copy["gadget-assembler"] = {size = 3, eats = eats, makes = "gadget"}
+      return copy
+    end
+
+    for _, shape in ipairs(gadget_shapes) do
+      for _, iron_count in ipairs({1, 4}) do
+        for _, brick_count in ipairs({1, 3}) do
+          for _, gadget_count in ipairs({1, 3}) do
+            for _, forward in ipairs({true, false}) do
+              local label = string.format("%d iron and %d brick furnaces and %d gadget assemblers, %s, %s", iron_count, brick_count, gadget_count, shape.label, forward and "listed in order" or "listed backwards")
+
+              it("passes the validator when building " .. label, function()
+                local entities = blocks.build(gadgets(iron_count, brick_count, gadget_count, shape, forward), NAMES)
+
+                assert.are.same({}, validator.validate(entities, catalog()))
+              end)
+
+              it("puts every item on a lane of its own where it is eaten when building " .. label, function()
+                local entities = blocks.build(gadgets(iron_count, brick_count, gadget_count, shape, forward), NAMES)
+
+                local problems = tracer.problems(entities, {machines = machines_eating(shape.eats), raw = raw, product = "gadget"})
+
+                assert.are.same({}, problems)
+              end)
+            end
+          end
+        end
+      end
+    end
+
+    -- A circuit block above a gear block, the counts chosen so that the columns of belts of the two line up for some of
+    -- them: the belt between the furnaces and the assembler of the gear block runs north up to its first row, right
+    -- under a belt of the circuit block.
+    for _, iron_count in ipairs({1, 2, 3}) do
+      for _, copper_count in ipairs({1, 2, 3}) do
+        for _, gear_furnaces in ipairs({2, 3, 4}) do
+          local label = string.format("%d iron and %d copper furnaces in the circuit block above %d in the gear block", iron_count, copper_count, gear_furnaces)
+
+          local function stacked()
+            local circuit = assemblers("circuit-assembler", 1, 2, 1, {
+              furnaces("iron-furnace", iron_count),
+              assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", copper_count)}),
+            })
+            local gear = assemblers("gear-assembler", 1, 2, 1, {furnaces("iron-furnace", gear_furnaces)})
+            return gadget_assembler(1, {circuit, gear, on_belt_b(furnaces("brick-furnace", 1))})
+          end
+
+          it("passes the validator when building " .. label, function()
+            local entities = blocks.build(stacked(), NAMES)
+
+            assert.are.same({}, validator.validate(entities, catalog()))
+          end)
+
+          it("keeps the items of the two blocks apart when building " .. label, function()
+            local entities = blocks.build(stacked(), NAMES)
+
+            local problems = tracer.problems(entities, {
+              machines = machines_eating({"electronic-circuit", "iron-gear-wheel", "stone-brick"}), raw = raw, product = "gadget",
+            })
+
+            assert.are.same({}, problems)
+          end)
+        end
+      end
+    end
+
+    -- A gadget assembler that is itself one of the suppliers of an outer one: the inner block has a second belt of its own.
+    for _, iron_count in ipairs({1, 3}) do
+      for _, outer_count in ipairs({1, 2}) do
+        for _, inner_on_b in ipairs({true, false}) do
+          local label = string.format("%d iron furnaces and %d outer assemblers, the inner gadgets on belt %s", iron_count, outer_count, inner_on_b and "b" or "a")
+
+          local function nested()
+            local inner = gadget_assembler(1, {
+              furnaces("iron-furnace", 1),
+              assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)}),
+              on_belt_b(furnaces("brick-furnace", 1)),
+            })
+            local outer_suppliers = {furnaces("iron-furnace", iron_count), inner, on_belt_b(furnaces("brick-furnace", 2))}
+            if inner_on_b then
+              on_belt_b(inner)
+              outer_suppliers[3] = furnaces("brick-furnace", 2)
+              outer_suppliers[3].belt = nil
+            end
+            return gadget_assembler(outer_count, outer_suppliers, "outer-assembler")
+          end
+
+          it("passes the validator when building a gadget inside a gadget with " .. label, function()
+            local entities = blocks.build(nested(), NAMES)
+
+            assert.are.same({}, validator.validate(entities, catalog()))
+          end)
+
+          it("puts every item on a lane of its own where it is eaten when building a gadget inside a gadget with " .. label, function()
+            local entities = blocks.build(nested(), NAMES)
+
+            local problems = tracer.problems(entities, {machines = machines, raw = raw, product = "outer-gadget"})
+
+            assert.are.same({}, problems)
+          end)
+        end
+      end
+    end
+
+    it("puts a raw item alone on belt a, with the other two ingredients on belt b", function()
+      -- Wood rides both lanes of belt a, whose head is the raw block in the corner: its belt starts at (0, 0).
+      local machines_with_wood = machines_eating({"wood", "copper-cable", "stone-brick"})
+      local suppliers = {
+        {raw_item = "wood"},
+        on_belt_b(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)})),
+        on_belt_b(furnaces("brick-furnace", 1)),
+      }
+
+      local entities = blocks.build(gadget_assembler(2, suppliers), NAMES)
+
+      assert.are.same({}, validator.validate(entities, catalog()))
+      assert.are.same({}, tracer.problems(entities, {
+        machines = machines_with_wood, raw = raw, product = "gadget", supplies = {{x = 0, y = 0, item = "wood"}},
+      }))
+    end)
 
     it("wires a tree to the block below it from the poles at the bottom of the tree", function()
       -- Six furnaces in each plate column make the lower block of the transport belt tree 12 rows tall, so the

@@ -433,6 +433,90 @@ describe("layout", function()
     end)
   end)
 
+  describe("a 3x3 machine fed by a plain and a long-handed inserter and emptied by one", function()
+    -- The plain inserter takes from the input belt in column 0; the long-handed one, in the same column of
+    -- inserters, takes from the belt one column further west (column -1), over the input belt.
+    local shape = {machine_size = 3, input_inserters = 1, long_inserters = 1, output_inserters = 1}
+
+    it("puts the long-handed inserter in the row under the plain one, in the same column, for every machine", function()
+      local entities = layout.build(2, NAMES, shape)
+
+      assert.are.equal(NAMES.inserter, name_at(entities, 1, 0))
+      assert.are.equal(NAMES.long_inserter, name_at(entities, 1, 1))
+      assert.are.equal(NAMES.inserter, name_at(entities, 1, 3)) -- the second machine, rows 3 to 5
+      assert.are.equal(NAMES.long_inserter, name_at(entities, 1, 4))
+      assert.are.equal(2, count_named(entities, NAMES.long_inserter))
+    end)
+
+    it("points the long-handed inserters the same way as the plain ones, at the machine", function()
+      local entities = layout.build(1, NAMES, shape)
+
+      assert.are.equal(direction_at(entities, 1, 0), direction_at(entities, 1, 1))
+    end)
+
+    it("puts the pole of the input side under the long-handed inserter", function()
+      local entities = layout.build(2, NAMES, shape)
+
+      local poles = entities_named(entities, NAMES.pole)
+      assert.are.same({
+        {x = 1, y = 2}, -- after the plain inserter in row 0 and the long-handed one in row 1
+        {x = 5, y = 1}, -- after the one output inserter in row 0
+      }, tiles_of(poles))
+    end)
+
+    it("stacks machines with no pole row between them when the two inserters leave a tile free", function()
+      local entities = layout.build(2, NAMES, shape)
+
+      assert.are.equal(NAMES.machine, name_at(entities, 2, 0, 3))
+      assert.are.equal(NAMES.machine, name_at(entities, 2, 3, 3))
+    end)
+
+    it("separates the machines with rows of poles when the inserters fill every tile beside them", function()
+      local full = {machine_size = 3, input_inserters = 2, long_inserters = 1, output_inserters = 1}
+
+      local entities = layout.build(2, NAMES, full)
+
+      assert.are.equal(NAMES.machine, name_at(entities, 2, 1, 3)) -- a row of poles above the first machine
+      assert.are.equal(NAMES.machine, name_at(entities, 2, 5, 3)) -- and one between the machines
+    end)
+
+    it("ends the input belt at the last plain inserter, not at the last long-handed one", function()
+      local entities = layout.build(2, NAMES, shape)
+
+      local rows = {}
+      for _, belt in ipairs(entities_named(entities, NAMES.belt)) do
+        if grid.top_left_tile(belt.position).x == 0 then
+          rows[#rows + 1] = grid.top_left_tile(belt.position).y
+        end
+      end
+      table.sort(rows)
+      assert.are.same({0, 1, 2, 3}, rows) -- the second machine's plain inserter is in row 3, its long-handed one in row 4
+    end)
+
+    it("passes the validator when a belt runs in the column west of the input belt for the long-handed inserters", function()
+      local entities = layout.build(2, NAMES, shape)
+      for row = 0, 4 do
+        local belt = builders.belt(-1, row)
+        belt.entity_number = #entities + 1
+        entities[#entities + 1] = belt
+      end
+      local catalog = builders.a_catalog{machine_size = 3, machine_needs_power = true}
+
+      local problems = validator.validate(entities, catalog)
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports in the validator a long-handed inserter that has no belt in the column west of the input belt", function()
+      local entities = layout.build(1, NAMES, shape)
+      local catalog = builders.a_catalog{machine_size = 3, machine_needs_power = true}
+
+      local problems = validator.validate(entities, catalog)
+
+      assert.has_item_containing("nothing to pick up from", problems)
+    end)
+  end)
+
   describe("max_input_inserters", function()
     it("leaves a tile beside the machine free for a pole when counting input inserters", function()
       assert.are.equal(1, layout.max_input_inserters(2))
@@ -894,50 +978,70 @@ describe("layout", function()
     end
 
     it("gives every pole of the block", function()
-      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 0}
+      local block = furnaces_and_assemblers{product_belt = false}
 
       assert.are.equal(count_named(block.entities, NAMES.pole), #block.poles)
     end)
 
     it("gives the column of the product belt, which is the output belt of the last column", function()
-      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 0}
+      local block = furnaces_and_assemblers{product_belt = false}
 
       assert.are.equal(11, block.product_column) -- the assemblers' output inserters are in column 10
     end)
 
     it("gives the rows of the tallest column as its height", function()
-      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 0}
+      local block = furnaces_and_assemblers{product_belt = false}
 
       assert.are.equal(14, block.height) -- seven furnaces of two rows; the assemblers take six
     end)
 
     it("does not draw the product belt when whoever uses the block draws it", function()
-      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 0}
+      local block = furnaces_and_assemblers{product_belt = false}
 
       assert.are.same({}, belt_rows(block.entities, 11))
       assert.are.same({}, belt_rows(block.entities, 12))
     end)
 
     it("draws the product belt, wound for two output inserters, when it is the last block", function()
-      local block = furnaces_and_assemblers{product_belt = true, input_belt_rows_above = 0}
+      local block = furnaces_and_assemblers{product_belt = true}
 
       assert.are.equal(2 * 6 + 1, #belt_rows(block.entities, 11) + #belt_rows(block.entities, 12))
     end)
 
-    it("starts the input belt above the first row when it comes down from above", function()
-      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 3}
+    it("gives the rows where the output inserters of the last column drop on the product belt", function()
+      local block = furnaces_and_assemblers{product_belt = false}
 
-      local rows = belt_rows(block.entities, 0)
-      assert.are.equal(-3, rows[1])
-      assert.are.equal(12, rows[#rows]) -- the last furnace's input inserter is in row 12
+      assert.are.same({first = 0, last = 4}, block.output_rows) -- the assemblers' two output inserters, in rows 0 and 1 and 3 and 4
+    end)
+
+    it("gives the rows of the first and the last long-handed inserter of the first column", function()
+      local stage = {machine_count = 2, machine = ASSEMBLER, shape = {machine_size = 3, input_inserters = 1, long_inserters = 1, output_inserters = 1}}
+
+      local block = layout.chain_block({stage}, NAMES, {product_belt = false})
+
+      assert.are.same({first = 1, last = 4}, block.long_rows) -- the long-handed inserters are in rows 1 and 4, under the plain ones in rows 0 and 3
+    end)
+
+    it("gives no row of a long-handed inserter when the column has none", function()
+      local block = furnaces_and_assemblers{product_belt = false}
+
+      assert.is_nil(block.long_rows)
+    end)
+
+    it("lists the belt of the first column in the first row of its machines, one down when poles take the row above", function()
+      local stage = {machine_count = 1, machine = ASSEMBLER, shape = {machine_size = 3, input_inserters = 3, output_inserters = 1}}
+
+      local block = layout.chain_block({stage}, NAMES, {product_belt = false})
+
+      assert.are.equal(1, block.raw_belts[1].row) -- three input inserters fill the side of the machine, so a row of poles comes first
     end)
 
     it("lists the first tile of the belt of the first column, with its stage", function()
-      local block = furnaces_and_assemblers{product_belt = false, input_belt_rows_above = 3}
+      local block = furnaces_and_assemblers{product_belt = false}
 
       assert.are.equal(1, #block.raw_belts)
       assert.are.equal(0, block.raw_belts[1].column)
-      assert.are.equal(-3, block.raw_belts[1].row) -- where its belt starts, three rows above the first row
+      assert.are.equal(0, block.raw_belts[1].row) -- where its belt starts, the first row
       assert.are.equal(NAMES.machine, block.raw_belts[1].stage.machine)
     end)
   end)

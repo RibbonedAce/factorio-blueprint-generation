@@ -118,10 +118,10 @@ local WINDING_OUTPUT_INSERTERS = 2
 -- Machines of these sizes (in tiles) can be powered by small poles placed as described above.
 local SUPPORTED_MACHINE_SIZES = {[2] = true, [3] = true}
 
--- The most inserters the input side of a machine gets: one fewer than the machine
--- is tall, so one tile beside the machine stays free for a pole. With every tile
--- beside it taken by an inserter, the machines would have to be spaced apart with
--- a row of poles between them (see "pole row" below).
+-- The most inserters the input side of a machine gets, plain and long-handed together:
+-- one fewer than the machine is tall, so one tile beside the machine stays free for a
+-- pole. With every tile beside it taken by an inserter, the machines would have to be
+-- spaced apart with a row of poles between them (see "pole row" below).
 ---@param machine_size integer
 ---@return integer
 function layout.max_input_inserters(machine_size)
@@ -148,10 +148,10 @@ end
 ---@class bpgen.Geometry
 ---@field size integer  machine size
 ---@field input_belt_column integer  where the belt that feeds the machines runs (the previous column's output belt, in a chain)
----@field input_belt_first_row integer  tile row where that belt starts: the first machine row, or higher when the belt comes down from above
 ---@field input_inserter_column integer
 ---@field machine_column integer
----@field input_count integer  input inserters per machine
+---@field input_count integer  plain input inserters per machine
+---@field long_count integer  long-handed input inserters per machine, in the rows under the plain ones
 ---@field output_count integer  output inserters per machine
 ---@field output_inserter_column integer
 ---@field output_belt_column integer  the belt the product leaves on: the outer one when the belt winds
@@ -176,7 +176,7 @@ end
 ---@param shape bpgen.Shape
 ---@return boolean
 local function needs_pole_rows(shape)
-  return math.max(shape.input_inserters, shape.output_inserters) >= shape.machine_size
+  return math.max(shape.input_inserters + (shape.long_inserters or 0), shape.output_inserters) >= shape.machine_size
 end
 
 -- Where a column sits in its chain. A single column is a chain of one.
@@ -186,7 +186,6 @@ end
 ---@field feeds_next boolean  the output belt feeds another column of machines, so it stays a plain belt
 ---@field draws_input_belt boolean  false when the previous column's output belt is this one's input belt
 ---@field draws_output_belt boolean  false when whoever uses the block draws its product belt (see `bpgen.Block`)
----@field input_belt_rows_above integer  how many rows above the first machine row the input belt starts: 0, unless the belt comes down from above
 ---@field load number  how many machines' worth of work the column does (see `bpgen.StageLayout`)
 
 ---@param shape bpgen.Shape
@@ -200,9 +199,9 @@ local function geometry_of(shape, place)
   return {
     size = size,
     input_count = shape.input_inserters,
+    long_count = shape.long_inserters or 0,
     output_count = shape.output_inserters,
     input_belt_column = place.origin,
-    input_belt_first_row = place.first_row - place.input_belt_rows_above,
     input_inserter_column = place.origin + INPUT_INSERTER_OFFSET,
     machine_column = machine_column,
     output_inserter_column = machine_column + size,
@@ -303,6 +302,19 @@ function Builder:last_input_row()
   return self:machine_top(self.machine_count - 1) + self.geometry.input_count - 1
 end
 
+-- The tile row of the first long-handed input inserter, in the first machine.
+---@return integer
+function Builder:first_long_row()
+  return self:machine_top(0) + self.geometry.input_count
+end
+
+-- The tile row of the last long-handed input inserter, which is also the last input
+-- inserter of the machine, since the long-handed ones stand under the plain ones.
+---@return integer
+function Builder:last_long_row()
+  return self:machine_top(self.machine_count - 1) + self.geometry.input_count + self.geometry.long_count - 1
+end
+
 -- The tile row of the last output inserter, where the last machine drops its product.
 ---@return integer
 function Builder:last_output_row()
@@ -355,12 +367,12 @@ function Builder:add_winding_output_belt()
   end
 end
 
--- The input belt runs south from its first row (the first machine's top row, unless it
--- comes down from above) and stops at the last input inserter: nothing below it
--- would be picked up.
+-- The input belt runs south from the first machine's top row and stops at the last
+-- input inserter: nothing below it would be picked up. (A column that eats what other
+-- blocks make has its input belt drawn from the top of the blueprint by whoever uses it.)
 function Builder:add_input_belt()
   local geometry = self.geometry
-  local first_row = geometry.input_belt_first_row
+  local first_row = geometry.first_row
   self:add_belt_column(geometry.input_belt_column, first_row, self:last_input_row() - first_row + 1, defines.direction.south)
 end
 
@@ -393,15 +405,16 @@ function Builder:add_belts()
   end
 end
 
--- `count` inserters in a column, one under the next, from row `top`. An inserter's
--- `direction` is the side it PICKS UP from. All of them move things eastward
--- (belt -> machine, machine -> belt), so all pick up from the west.
+-- `count` inserters of prototype `name` in a column, one under the next, from row `top`.
+-- An inserter's `direction` is the side it PICKS UP from. All of them move things
+-- eastward (belt -> machine, machine -> belt), so all pick up from the west.
+---@param name string
 ---@param column integer
 ---@param top integer
 ---@param count integer
-function Builder:add_inserters(column, top, count)
+function Builder:add_inserters(name, column, top, count)
   for row = top, top + count - 1 do
-    self:add({name = self.names.inserter, position = grid.position(column, row), direction = defines.direction.west})
+    self:add({name = name, position = grid.position(column, row), direction = defines.direction.west})
   end
 end
 
@@ -425,11 +438,12 @@ function Builder:add_machine_row(index)
   local size = geometry.size
 
   self:add({name = self.names.machine, position = grid.position(geometry.machine_column, top, size, size), recipe = self.names.recipe})
-  self:add_inserters(geometry.input_inserter_column, top, geometry.input_count)
-  self:add_inserters(geometry.output_inserter_column, top, geometry.output_count)
+  self:add_inserters(self.names.inserter, geometry.input_inserter_column, top, geometry.input_count)
+  self:add_inserters(self.names.long_inserter, geometry.input_inserter_column, top + geometry.input_count, geometry.long_count)
+  self:add_inserters(self.names.inserter, geometry.output_inserter_column, top, geometry.output_count)
 
   if not geometry.has_pole_rows and index % MACHINES_PER_POLE == 0 then
-    self:add_pole_pair(top + geometry.input_count, top + geometry.output_count)
+    self:add_pole_pair(top + geometry.input_count + geometry.long_count, top + geometry.output_count)
   end
 end
 
@@ -535,7 +549,6 @@ local function place_of(stage, index, count, origin, first_row, options)
     feeds_next = not (is_last and options.product_belt),
     draws_input_belt = index == 1,
     draws_output_belt = not is_last or options.product_belt,
-    input_belt_rows_above = options.input_belt_rows_above,
     load = stage.load or stage.machine_count,
   }
 end
@@ -552,7 +565,10 @@ local function columns_of(stages, names, entities, options)
   local origin = 0
   local first_row = chain_first_row(stages)
   for index, stage in ipairs(stages) do
-    local stage_names = {machine = stage.machine, recipe = stage.recipe, belt = names.belt, inserter = names.inserter, pole = names.pole}
+    local stage_names = {
+      machine = stage.machine, recipe = stage.recipe, belt = names.belt, inserter = names.inserter,
+      long_inserter = names.long_inserter, pole = names.pole,
+    }
     local place = place_of(stage, index, #stages, origin, first_row, options)
     local builder = Builder.new(stage.machine_count, stage_names, stage.shape, entities, place)
     builders[index] = builder
@@ -591,8 +607,8 @@ local function tallest_end_row(builders)
 end
 
 -- `stages` go from the one fed raw items (or, for a column that stands to the right of
--- other blocks, from the one whose input belt `options.input_belt_rows_above` lengthens)
--- to the last. Returns the chain as a block: its entities, which are numbered from 1 in
+-- other blocks, from the one whose input belt they draw above) to the last. Returns the
+-- chain as a block: its entities, which are numbered from 1 in
 -- a frame whose x = 0 is the input belt of the first column and y = 0 its first row, and
 -- what whoever uses it needs to know about it (see `bpgen.Block`). The belt of the first
 -- column is listed in `raw_belts`, as if it carried raw items: whoever uses a column that
@@ -610,15 +626,18 @@ function layout.chain_block(stages, names, options)
     builder:wire_poles()
   end
   wire_columns(builders)
+  local first, last = builders[1], builders[#builders]
   return {
     entities = entities,
     poles = poles_of(builders),
-    product_column = builders[#builders].geometry.output_belt_column,
+    product_column = last.geometry.output_belt_column,
+    output_rows = {first = last.geometry.first_row, last = last:last_output_row()},
+    long_rows = first.geometry.long_count > 0 and {first = first:first_long_row(), last = first:last_long_row()} or nil,
     height = tallest_end_row(builders),
     raw_belts = {{
       stage = stages[1],
       column = builders[1].geometry.input_belt_column,
-      row = builders[1].geometry.input_belt_first_row,
+      row = builders[1].geometry.first_row,
     }},
   }
 end
@@ -632,7 +651,7 @@ end
 ---@param names bpgen.SharedNames
 ---@return bpgen.Entity[]
 function layout.build_chain(stages, names)
-  return layout.chain_block(stages, names, {product_belt = true, input_belt_rows_above = 0}).entities
+  return layout.chain_block(stages, names, {product_belt = true}).entities
 end
 
 -- One column on its own: a chain of one stage.

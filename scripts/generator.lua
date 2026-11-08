@@ -62,13 +62,19 @@ end
 -- The building blocks every column of the blueprint shares.
 ---@return bpgen.SharedNames
 local function shared_names()
-  return {belt = config.entities.belt, inserter = config.entities.inserter, pole = config.entities.pole}
+  return {
+    belt = config.entities.belt, inserter = config.entities.inserter,
+    long_inserter = config.entities.long_inserter, pole = config.entities.pole,
+  }
 end
 
+-- Whether the buildings that every blueprint needs exist. The long-handed inserter is
+-- not one of them: only recipes with three or more ingredients use it, and the owner
+-- wants nothing refused on its account (a later feature will look at what is unlocked).
 ---@param names bpgen.SharedNames
 ---@return boolean
 local function all_entities_exist(names)
-  for _, entity_name in pairs(names) do
+  for _, entity_name in ipairs({names.belt, names.inserter, names.pole}) do
     if not prototypes.entity[entity_name] then
       return false
     end
@@ -244,6 +250,7 @@ end
 ---@field names bpgen.SharedNames  the prototype names every column builds with
 ---@field belt_speed number
 ---@field inserter_rotation_speed number
+---@field long_inserter_rotation_speed number  the long-handed inserter's, or the plain inserter's when the game has none
 
 -- Why the recipe tree could not be made, as a message for the player.
 ---@param reason bpgen.ChainReason
@@ -282,17 +289,22 @@ local function read_root(item_name)
   return root, nil
 end
 
--- The speeds of the belt and of the inserter the layout uses, or nil when one of them
--- is missing from the game. `belt_speed` is nil unless the entity really is a
--- transport belt, and the rotation speed is nil unless it really is an inserter.
+-- The speeds of the belt and of the inserters the layout uses, or nil when the belt or
+-- the plain inserter is missing from the game. `belt_speed` is nil unless the entity
+-- really is a transport belt, and the rotation speeds are nil unless they really are
+-- inserters. A game without a long-handed inserter gets the plain inserter's speed for it.
 ---@param names bpgen.SharedNames
 ---@return number|nil belt_speed
 ---@return number|nil inserter_rotation_speed
+---@return number|nil long_inserter_rotation_speed
 local function read_speeds(names)
   if not all_entities_exist(names) then
     return nil
   end
-  return prototypes.entity[names.belt].belt_speed, prototypes.entity[names.inserter].get_inserter_rotation_speed()
+  local inserter_speed = prototypes.entity[names.inserter].get_inserter_rotation_speed()
+  local long = prototypes.entity[names.long_inserter]
+  local long_speed = long and long.get_inserter_rotation_speed() or inserter_speed
+  return prototypes.entity[names.belt].belt_speed, inserter_speed, long_speed
 end
 
 -- The job for this request, or nil and the message for the player when the item is
@@ -306,8 +318,8 @@ local function read_job(item_name, rate_per_minute)
     return nil, error_message("error-unsupported-item")
   end
   local names = shared_names()
-  local belt_speed, rotation_speed = read_speeds(names)
-  if not (belt_speed and rotation_speed) then
+  local belt_speed, rotation_speed, long_rotation_speed = read_speeds(names)
+  if not (belt_speed and rotation_speed and long_rotation_speed) then
     return nil, error_message("error-missing-prototype")
   end
   local root, problem = read_root(item_name)
@@ -321,6 +333,7 @@ local function read_job(item_name, rate_per_minute)
     names = names,
     belt_speed = belt_speed,
     inserter_rotation_speed = rotation_speed,
+    long_inserter_rotation_speed = long_rotation_speed,
   }
 end
 
@@ -551,6 +564,7 @@ local function stage_request(job, stage)
     fuel = stage.fuel,
     inserters = {
       items_per_minute = planner.inserter_items_per_minute(job.inserter_rotation_speed),
+      long_items_per_minute = planner.inserter_items_per_minute(job.long_inserter_rotation_speed),
       max_input = layout.max_input_inserters(machine_size),
       max_output = layout.max_output_inserters(machine_size),
     },
@@ -618,10 +632,25 @@ local function recipe_to_set(stage)
   return stage.recipe.name
 end
 
+-- Whether the product of a step rides belt b of the stage that eats it, the belt that
+-- long-handed inserters take from (see `bpgen.Belts`).
+---@param plan bpgen.Plan  of the stage that eats it
+---@param item string  what the step makes
+---@return boolean
+local function rides_belt_b(plan, item)
+  for _, name in ipairs(plan.belts.b) do
+    if name == item then
+      return true
+    end
+  end
+  return false
+end
+
 -- What the layout is told about a step and what it eats: the steps that make its
--- ingredients, then the raw item that goes with them, if any, which has no machines and
--- only a belt. A step fed raw items, and the belt of a raw item, are noted in `raw_lanes`,
--- with the items on the lanes of the belt.
+-- ingredients, each saying which belt of this step it rides, then the raw item that goes
+-- with them, if any, which has no machines and only a belt (on belt a). A step fed raw
+-- items, and the belt of a raw item, are noted in `raw_lanes`, with the items on the
+-- lanes of the belt.
 ---@param step bpgen.PlannedStage
 ---@param raw_lanes table<bpgen.StageLayout, string[]>
 ---@return bpgen.StageLayout
@@ -629,6 +658,7 @@ local function layout_stage(step, raw_lanes)
   local suppliers = {}
   for index, supplier in ipairs(step.suppliers) do
     suppliers[index] = layout_stage(supplier, raw_lanes)
+    suppliers[index].belt = rides_belt_b(step.plan, supplier.stage.item) and "b" or "a"
   end
   local raw_item = step.stage.raw_item
   if raw_item then
@@ -644,6 +674,7 @@ local function layout_stage(step, raw_lanes)
     shape = {
       machine_size = machine_size_of(step.stage),
       input_inserters = step.plan.input_inserters,
+      long_inserters = step.plan.long_inserters,
       output_inserters = step.plan.output_inserters,
     },
     suppliers = suppliers,

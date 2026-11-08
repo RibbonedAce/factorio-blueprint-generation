@@ -18,9 +18,12 @@ local EPSILON = 1e-9
 -- layout.lua); the product then travels on both lanes.
 local WINDING_OUTPUT_INSERTERS = 2
 
--- The input belt of a stage has two lanes, so a stage takes at most this many items
--- from it: its ingredients and its fuel, or one made ingredient on each lane.
+-- The input belt of a stage has two lanes, so a stage fed raw items takes at most this
+-- many items from it: its ingredients and its fuel. A stage fed by other stages has two
+-- belts, one next to its machines and one beyond it (see `bpgen.Belts`), so it takes at
+-- most twice as many ingredients, one on each lane.
 local INPUT_LANES = 2
+local MOST_INGREDIENTS = 2 * INPUT_LANES
 
 -- Add up how many of `item_name` one craft of the recipe makes.
 ---@param recipe bpgen.Recipe
@@ -110,18 +113,6 @@ local function lanes_carrying(lanes, item_name)
   return count
 end
 
--- How many items a minute these inputs add up to.
----@param inputs bpgen.PlanInput[]
----@return number
-local function total_per_minute(inputs)
-  ---@type number
-  local total = 0
-  for _, input in ipairs(inputs) do
-    total = total + input.per_minute
-  end
-  return total
-end
-
 -- How much of its full speed a machine can use on one side: 1 unless the flow
 -- of that side (items a minute) is more than its inserters can move.
 ---@param flow number
@@ -134,62 +125,169 @@ local function side_fraction(flow, most_movable)
   return most_movable / flow
 end
 
--- How much of its full speed a machine can use: what the side that its
--- inserters hold back the most allows.
----@param input_flow number
----@param output_flow number
----@param inserters bpgen.InserterLimits|nil
----@return number
-local function usable_fraction(input_flow, output_flow, inserters)
-  if not inserters then
-    return 1
-  end
-  return math.min(
-    side_fraction(input_flow, inserters.max_input * inserters.items_per_minute),
-    side_fraction(output_flow, inserters.max_output * inserters.items_per_minute))
+-- How many inserters it takes to move `items_per_machine` a minute when one moves
+-- `inserter_items_per_minute`: at least one.
+---@param items_per_machine number
+---@param inserter_items_per_minute number
+---@return integer
+local function inserters_needed(items_per_machine, inserter_items_per_minute)
+  return math.max(1, math.ceil(items_per_machine / inserter_items_per_minute - EPSILON))
 end
 
--- How many inserters one side of a machine needs to carry `items_per_machine` a
--- minute. Without an inserter limit one is enough.
----@param items_per_machine number
----@param inserters bpgen.InserterLimits|nil
----@return integer
-local function inserters_needed(items_per_machine, inserters)
-  if not inserters then
-    return 1
+-- What one long-handed inserter moves a minute: the figure the limits give, or a plain
+-- inserter's when they give none.
+---@param limits bpgen.InserterLimits
+---@return number
+local function long_rate(limits)
+  return limits.long_items_per_minute or limits.items_per_minute
+end
+
+-- Which ingredients ride which of the two input belts of a stage. Belt `a` is next to
+-- the machines and plain inserters take from it; belt `b` is one column further out
+-- and long-handed inserters take from it, over belt `a`. Each belt has two lanes, one
+-- ingredient on each (a belt of raw items fills both lanes of its own).
+---@class bpgen.Belts
+---@field a string[]
+---@field b string[]
+
+-- How many inserters of each kind a machine's input side has.
+---@class bpgen.InputInserters
+---@field a integer  plain ones, for belt a
+---@field b integer  long-handed ones, for belt b
+
+-- What one machine eats of each ingredient and makes a minute at full speed.
+---@param request bpgen.StageRequest
+---@return bpgen.PlanInput[] inputs
+---@return number output
+local function full_speed(request)
+  local recipe = request.recipe
+  local crafts_per_minute = 60 * request.machine_speed / recipe.energy
+  local inputs = {}
+  for _, ingredient in ipairs(recipe.ingredients) do
+    inputs[#inputs + 1] = {name = ingredient.name, per_minute = crafts_per_minute * ingredient.amount}
   end
-  return math.max(1, math.ceil(items_per_machine / inserters.items_per_minute - EPSILON))
+  return inputs, crafts_per_minute * amount_made(recipe, request.product)
+end
+
+-- How many items a minute the ingredients named in `names` add up to.
+---@param inputs bpgen.PlanInput[]
+---@param names string[]
+---@return number
+local function flow_of(inputs, names)
+  local wanted = {}
+  for _, name in ipairs(names) do
+    wanted[name] = true
+  end
+  ---@type number
+  local total = 0
+  for _, input in ipairs(inputs) do
+    if wanted[input.name] then
+      total = total + input.per_minute
+    end
+  end
+  return total
+end
+
+-- How much of its full speed a machine can use for what the inserters of its input
+-- side can move: the belt that holds it back the most decides.
+---@param flows {a: number, b: number}  items a minute that each belt brings, at full speed
+---@param counts bpgen.InputInserters
+---@param limits bpgen.InserterLimits
+---@return number
+local function input_fraction(flows, counts, limits)
+  return math.min(
+    side_fraction(flows.a, counts.a * limits.items_per_minute),
+    side_fraction(flows.b, counts.b * long_rate(limits)))
+end
+
+-- How the input slots of a machine are shared between the belts: all to belt a when belt b
+-- carries nothing, otherwise the split (at least one slot each) that lets the machine run
+-- fastest, the first one when several do. Nil when there are too few slots for two belts.
+---@param flows {a: number, b: number}
+---@param limits bpgen.InserterLimits
+---@param has_b boolean  whether belt b carries anything
+---@return bpgen.InputInserters|nil
+local function allotted_counts(flows, limits, has_b)
+  if not has_b then
+    return {a = limits.max_input, b = 0}
+  end
+  local best, best_fraction
+  for plain = 1, limits.max_input - 1 do
+    local counts = {a = plain, b = limits.max_input - plain}
+    local fraction = input_fraction(flows, counts, limits)
+    if not best_fraction or fraction > best_fraction + EPSILON then
+      best, best_fraction = counts, fraction
+    end
+  end
+  return best
+end
+
+-- The counts cut down to what a machine that is used for `share` of its time needs:
+-- a machine that takes two inserters to run flat out takes one for 40%.
+---@param counts bpgen.InputInserters
+---@param flows {a: number, b: number}
+---@param limits bpgen.InserterLimits
+---@param share number
+---@return bpgen.InputInserters
+local function trimmed_counts(counts, flows, limits, share)
+  return {
+    a = math.min(counts.a, inserters_needed(share * flows.a, limits.items_per_minute)),
+    b = counts.b == 0 and 0 or math.min(counts.b, inserters_needed(share * flows.b, long_rate(limits))),
+  }
 end
 
 ---@class bpgen.MachineRates  what ONE machine does each minute, once its inserters are counted
 ---@field output number  items of the product it makes
 ---@field inputs bpgen.PlanInput[]  what it eats, per ingredient, in the recipe's order
----@field input_inserters integer  on its input side
+---@field input_inserters integer  plain inserters on its input side, for belt a
+---@field long_inserters integer  long-handed inserters on its input side, for belt b
 ---@field output_inserters integer  on its output side
 
 -- What ONE machine does each minute. When the inserters cannot keep up with it at
 -- full speed, it simply waits for items, so every number shrinks by the same
--- fraction, and the inserters are counted for what it really moves.
+-- fraction, and the inserters are counted for what it really moves. `share` is how
+-- much of its full speed the busiest machine of the stage is used at. A machine that
+-- is only partly used (`partial`: its share, and what it does at full use) gets only
+-- the inserters that share needs. Returns nil when the machine has too few input slots
+-- for both belts.
 ---@param request bpgen.StageRequest
----@return bpgen.MachineRates
-local function rates_per_machine(request)
-  local recipe = request.recipe
-  local crafts_per_minute = 60 * request.machine_speed / recipe.energy
-  local output = crafts_per_minute * amount_made(recipe, request.product)
-  local inputs = {}
-  for _, ingredient in ipairs(recipe.ingredients) do
-    inputs[#inputs + 1] = {name = ingredient.name, per_minute = crafts_per_minute * ingredient.amount}
+---@param belts bpgen.Belts
+---@param partial? {share: number, rates: bpgen.MachineRates}
+---@return bpgen.MachineRates|nil
+local function rates_per_machine(request, belts, partial)
+  local inputs, output = full_speed(request)
+  local limits = request.inserters
+  local has_b = #belts.b > 0
+  local flows = {a = flow_of(inputs, belts.a), b = flow_of(inputs, belts.b)}
+  local fraction, counts, output_inserters = 1, {a = 1, b = has_b and 1 or 0}, 1
+  if limits then
+    local allotted = allotted_counts(flows, limits, has_b)
+    if not allotted then
+      return nil
+    end
+    local reference = partial and {
+      flows = {a = flow_of(partial.rates.inputs, belts.a), b = flow_of(partial.rates.inputs, belts.b)},
+      output = partial.rates.output,
+      share = partial.share,
+    } or {flows = flows, output = output, share = 1}
+    local movable = trimmed_counts(allotted, reference.flows, limits, reference.share)
+    local movable_out = math.min(limits.max_output, inserters_needed(reference.share * reference.output, limits.items_per_minute))
+    fraction = math.min(input_fraction(flows, movable, limits), side_fraction(output, movable_out * limits.items_per_minute))
+    counts = {
+      a = inserters_needed(flows.a * fraction, limits.items_per_minute),
+      b = has_b and inserters_needed(flows.b * fraction, long_rate(limits)) or 0,
+    }
+    output_inserters = inserters_needed(output * fraction, limits.items_per_minute)
   end
-  local fraction = usable_fraction(total_per_minute(inputs), output, request.inserters)
   for _, input in ipairs(inputs) do
     input.per_minute = input.per_minute * fraction
   end
-  output = output * fraction
   return {
-    output = output,
+    output = output * fraction,
     inputs = inputs,
-    input_inserters = inserters_needed(total_per_minute(inputs), request.inserters),
-    output_inserters = inserters_needed(output, request.inserters),
+    input_inserters = counts.a,
+    long_inserters = counts.b,
+    output_inserters = output_inserters,
   }
 end
 
@@ -266,25 +364,27 @@ end
 ---@field suppliers bpgen.StageContext[]  the stages whose products it eats, in the order of the recipe's ingredients
 ---@field lane_items_per_minute number
 ---@field lanes string[]  the item on each lane of the belt that feeds the stage
+---@field belts bpgen.Belts  which of its ingredients ride which input belt
 ---@field winds boolean  whether this stage's output belt may wind (only the root stage's can)
 ---@field per_machine bpgen.MachineRates
 ---@field machines_worth number  how many machines' worth of work the belts of a column carry before a lane is full (not a whole number)
 
--- The items on the lanes of the belt that feeds a stage, or nil when they do not
--- fit. A stage fed raw items shares the two lanes among them and its fuel (see
--- `assign_lanes`). Every other stage eats the products of the stages that feed it,
--- each on the one lane its product travels on, and at most one more item, a raw one
--- on the other lane (nothing could put a fuel on that belt), so it has at most two
--- ingredients. The stages that feed it make ingredients of its recipe, in any order.
+-- The items on the lanes of the belts that feed a stage, or nil when they do not
+-- fit. A stage fed raw items shares the two lanes of its belt among them and its fuel
+-- (see `assign_lanes`). Every other stage eats the products of the stages that feed it,
+-- each on the one lane its product travels on, and at most one raw item, which has no
+-- stage (nothing could put a fuel on those belts), so it has at most four ingredients.
+-- The stages that feed it make ingredients of its recipe, in any order.
 ---@param stage bpgen.StageRequest
 ---@param suppliers bpgen.StageContext[]  the stages that feed it
 ---@return string[]|nil lanes  the ingredients, in the recipe's order
+---@return table<string, true>|nil raw  the ingredients that no stage makes; nil for a stage fed raw items
 local function stage_lanes(stage, suppliers)
   if #suppliers == 0 then
     return assign_lanes(stage.recipe.ingredients, stage.fuel)
   end
   local ingredients = stage.recipe.ingredients
-  if #ingredients > INPUT_LANES or stage.fuel then
+  if #ingredients > MOST_INGREDIENTS or stage.fuel then
     return nil
   end
   local lanes, unmade = {}, {}
@@ -298,7 +398,96 @@ local function stage_lanes(stage, suppliers)
     end
     unmade[supplier.request.product] = nil
   end
-  return lanes
+  return lanes, unmade
+end
+
+-- The ingredients on belts a and b for one way of splitting them: the ingredients whose
+-- bit is set in `mask` go on belt b. Nil when a belt would have more than two, or a raw
+-- ingredient would go on belt b (a belt of raw items fills both lanes, so it can only be
+-- side-loaded onto belt a). Also gives how late in the recipe the ingredients of belt b
+-- are, as the sum of their places.
+---@param lanes string[]
+---@param mask integer
+---@param raw table<string, true>
+---@return bpgen.Belts|nil
+---@return integer|nil later
+local function split_ingredients(lanes, mask, raw)
+  local belts, later = {a = {}, b = {}}, 0
+  for index, name in ipairs(lanes) do
+    if math.floor(mask / 2 ^ (index - 1)) % 2 == 1 then
+      if raw[name] then
+        return nil
+      end
+      belts.b[#belts.b + 1] = name
+      later = later + index
+    else
+      belts.a[#belts.a + 1] = name
+    end
+  end
+  if #belts.a > INPUT_LANES or #belts.b > INPUT_LANES then
+    return nil
+  end
+  return belts, later
+end
+
+-- How much of its full speed a machine can use for this split, or nil when its slots
+-- cannot serve both belts. Without an inserter limit every split is as good.
+---@param inputs bpgen.PlanInput[]
+---@param belts bpgen.Belts
+---@param limits bpgen.InserterLimits|nil
+---@return number|nil
+local function split_fraction(inputs, belts, limits)
+  if not limits then
+    return 1
+  end
+  local flows = {a = flow_of(inputs, belts.a), b = flow_of(inputs, belts.b)}
+  local counts = allotted_counts(flows, limits, true)
+  return counts and input_fraction(flows, counts, limits)
+end
+
+-- Whether a split beats the best so far: it runs the machine faster, or equally fast with
+-- fewer ingredients on belt b, or equally fast with as many there but later in the recipe.
+---@param candidate {fraction: number, belts: bpgen.Belts, later: integer}
+---@param best {fraction: number, belts: bpgen.Belts, later: integer}|nil
+---@return boolean
+local function is_better(candidate, best)
+  if not best then
+    return true
+  end
+  if math.abs(candidate.fraction - best.fraction) > EPSILON then
+    return candidate.fraction > best.fraction
+  end
+  if #candidate.belts.b ~= #best.belts.b then
+    return #candidate.belts.b < #best.belts.b
+  end
+  return candidate.later > best.later
+end
+
+-- Which ingredients ride which belt. A stage with up to two ingredients keeps them all on
+-- belt a. With three or four, the split that lets a machine run fastest (see
+-- `is_better`): it depends only on what one machine eats, not on the rate. Nil when no
+-- split fits.
+---@param stage bpgen.StageRequest
+---@param lanes string[]
+---@param raw table<string, true>
+---@return bpgen.Belts|nil
+local function choose_belts(stage, lanes, raw)
+  if #lanes <= INPUT_LANES then
+    return {a = lanes, b = {}}
+  end
+  local inputs = full_speed(stage)
+  local best
+  for mask = 1, 2 ^ #lanes - 1 do
+    local belts, later = split_ingredients(lanes, mask, raw)
+    local fraction = belts and split_fraction(inputs, belts, stage.inserters)
+    if belts and fraction then
+      local candidate = {fraction = fraction, belts = belts, later = later}
+      if is_better(candidate, best) then
+        best = candidate
+      end
+    end
+  end
+  return best and best.belts
 end
 
 -- Everything the planner works out about a stage and the stages that feed it before
@@ -317,14 +506,19 @@ local function stage_context(tree, request, is_root)
     end
   end
   local stage = tree.stage
-  local lanes = stage_lanes(stage, suppliers)
+  local lanes, raw = stage_lanes(stage, suppliers)
   if not lanes or not is_supported(stage.recipe, stage.product) then
+    return nil
+  end
+  local belts = choose_belts(stage, lanes, raw or {})
+  local per_machine = belts and rates_per_machine(stage, belts)
+  if not (belts and per_machine) then
     return nil
   end
   ---@type bpgen.StageContext
   local context = {
     request = stage, suppliers = suppliers, lane_items_per_minute = request.lane_items_per_minute,
-    lanes = lanes, winds = is_root, per_machine = rates_per_machine(stage), machines_worth = 0,
+    lanes = lanes, belts = belts, winds = is_root, per_machine = per_machine, machines_worth = 0,
   }
   context.machines_worth = machines_per_belt(context)
   return context
@@ -372,19 +566,7 @@ local function stage_rates(stage, load)
   if not limits or used >= 1 - EPSILON then
     return stage.per_machine
   end
-  local trimmed = {
-    items_per_minute = limits.items_per_minute,
-    max_input = math.min(limits.max_input, inserters_needed(used * total_per_minute(stage.per_machine.inputs), limits)),
-    max_output = math.min(limits.max_output, inserters_needed(used * stage.per_machine.output, limits)),
-  }
-  local request = stage.request
-  return rates_per_machine{
-    product = request.product,
-    recipe = request.recipe,
-    machine_speed = request.machine_speed,
-    fuel = request.fuel,
-    inserters = trimmed,
-  }
+  return rates_per_machine(stage.request, stage.belts, {share = used, rates = stage.per_machine}) --[[@as bpgen.MachineRates]] -- it fitted once, at full speed
 end
 
 -- Fills in what one machine does for a stage and for the stages that feed it.
@@ -446,7 +628,9 @@ local function stage_plan(stage, machines, load, rates, output)
     output_per_minute = output,
     inputs = total_inputs(stage.per_machine.inputs, output / stage.per_machine.output), -- the same fractions of its inputs and output, trimmed or not
     lanes = stage.lanes,
+    belts = stage.belts,
     input_inserters = rates.input_inserters,
+    long_inserters = rates.long_inserters,
     output_inserters = rates.output_inserters,
   }
 end
@@ -478,23 +662,32 @@ end
 --    machine_speed = the machine's crafting speed,
 --    fuel = optional item the machine burns (a stage fed raw items only; it takes one
 --           lane of the input belt),
---    inserters = optional {items_per_minute, max_input, max_output}: how much one
---           inserter moves, and how many inserters the input side and the output
---           side of a machine get. A machine that would need more runs slower, at
---           what they can move. Two output inserters put the product on both lanes
---           of the output belt, but only for the root stage}
+--    inserters = optional {items_per_minute, long_items_per_minute, max_input,
+--           max_output}: how much one inserter (and one long-handed inserter, a plain
+--           one's figure when left out) moves, and how many inserters the input side
+--           (shared between plain and long-handed ones) and the output side of a
+--           machine get. A machine that would need more runs slower, at what they can
+--           move. Two output inserters put the product on both lanes of the output
+--           belt, but only for the root stage}
 --
 -- A stage fed raw items shares the two lanes of its input belt among them and its
 -- fuel: one item fills both lanes, two items get a lane each, and more are refused.
--- Any other stage eats exactly the products of the stages that feed it (at most two),
--- each on the one lane it travels on.
+-- Any other stage eats the products of the stages that feed it, and at most one raw
+-- item more, each on the one lane it travels on. With one or two ingredients they all
+-- ride the belt next to the machines (belt a). With three or four there is a second
+-- belt (b), reached by long-handed inserters, and the planner splits the ingredients
+-- between the belts, at most two on each and a raw one only on belt a, so that a
+-- machine runs fastest (`choose_belts`).
 --
 -- On success returns a tree of plans in the shape of the request's: for each stage
---   {machines, output_per_minute, inputs, lanes, input_inserters, output_inserters}
+--   {machines, output_per_minute, inputs, lanes, belts, input_inserters,
+--    long_inserters, output_inserters}
 --   inputs   {{name, per_minute}, ...} what the machines eat in total, per ingredient
---   lanes    the item on each lane of the input belt (two entries for a stage fed raw
---            items, one for each made ingredient of any other)
---   *_inserters  inserters per machine, on each side
+--   lanes    the item on each lane of the input belts (two entries for a stage fed raw
+--            items, one for each ingredient of any other)
+--   belts    {a = {...}, b = {...}} which ingredients ride which belt
+--   *_inserters  inserters per machine: plain ones for belt a and the input side,
+--            long-handed ones for belt b, plain ones for the output side
 -- Each stage makes what the stages it feeds eat, and the root makes at least the rate
 -- asked.
 -- On failure returns nil, a reason string, and sometimes an extra value:

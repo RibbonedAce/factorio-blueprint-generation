@@ -44,13 +44,47 @@ An electronic circuit is an iron plate and three copper cables, and the cables a
 
 A small electric pole is a wood and two copper cables. The cables get a block, as above. The wood has no recipe, so it needs no machines: it is a block of its own that is only a belt, one row tall, which always goes below the other block. Its belt is a trail from the top left like the others, so it runs along the bottom of the cables' block, and its first tile turns east into the side of the input belt, where the wood lands on the near lane while the cables are on the far one. The pole machines take both. The wood is the last of the belts of raw items the message lists.
 
+### Recipes with three or four ingredients
+
+A belt has only two lanes, so a machine that eats three or four items takes them from two belts side by side: belt a, next to its inserters, and belt b, one column further west. A plain inserter takes from belt a, and a long-handed inserter, standing in the same column of inserters, reaches over belt a to take from belt b. Each machine gets one plain and one long-handed inserter (a machine has room for two inserters on its input side). Which ingredients go on which belt is decided for speed: a long-handed inserter moves 72 items a minute against 50.4 for a plain one, so the mod tries every split (at most two ingredients on a belt, a raw item only on belt a) and takes the one that lets a machine run fastest. An inserter, for example, wants 60 circuits, 60 gears and 60 plates a minute at full speed: with the circuits alone on belt a and the other two on belt b, an assembler makes 36 a minute; the other splits make 25.
+
+The blocks that make the ingredients stand one above the other. The ingredients of belt a come first from the top, the first one's product belt becoming belt a and the second one's turning into its side, as with two ingredients. Then come the ingredients of belt b: the first one's product belt turns east into the head of belt b, and the last one drops its product on belt b as it runs south past it. The final column stands beside that last block. Belt b runs south, so an inserter sees only what was dropped north of it: the final column is moved down just far enough for its first long-handed inserter to see its machine's share of the drops and its last one to see all of them. Belts cannot cross, which is why the order is fixed.
+
+Two blocks are never stacked with a belt of one right under a belt of the other (the belt between two columns can run north up to the first row of a block, and would feed the belt above): there is an empty row between them then.
+
+The long-handed inserter is unlocked by the same research as the assembling machine. The mod does not check that you have it. It uses the speed of the game's long-handed inserter (the plain inserter's if the game has none), and the blueprint places long-handed inserters whatever the research.
+
+| Item | Ingredients | Belts of raw items |
+|---|---|---|
+| Inserter | 1 electronic circuit, 1 iron gear wheel, 1 iron plate | copper ore and coal; 3 x iron ore and coal |
+| Long-handed inserter | 1 iron gear wheel, 1 iron plate, 1 inserter | 5 x iron ore and coal; copper ore and coal |
+| Fast inserter | 2 electronic circuit, 2 iron plate, 1 inserter | 2 x copper ore and coal; 5 x iron ore and coal |
+| Assembling machine 1 | 3 electronic circuit, 5 iron gear wheel, 9 iron plate | copper ore and coal; 3 x iron ore and coal |
+| Electric mining drill | 3 electronic circuit, 5 iron gear wheel, 10 iron plate | copper ore and coal; 3 x iron ore and coal |
+| Burner mining drill | 3 iron gear wheel, 1 stone furnace, 3 iron plate | 2 x iron ore and coal; stone on both lanes |
+| Radar | 5 electronic circuit, 5 iron gear wheel, 10 iron plate | copper ore and coal; 3 x iron ore and coal |
+| Rocket launcher | 5 iron plate, 5 iron gear wheel, 5 electronic circuit | 3 x iron ore and coal; copper ore and coal |
+| Gun turret | 10 iron gear wheel, 10 copper plate, 20 iron plate | 2 x iron ore and coal; copper ore and coal |
+| Submachine gun | 10 iron gear wheel, 5 copper plate, 10 iron plate | 2 x iron ore and coal; copper ore and coal |
+| Steam engine | 8 iron gear wheel, 5 pipe, 10 iron plate | 3 x iron ore and coal |
+| Steam turbine | 50 iron gear wheel, 50 copper plate, 20 pipe | 2 x iron ore and coal; copper ore and coal |
+| Lab | 10 electronic circuit, 10 iron gear wheel, 4 transport belt | copper ore and coal; 4 x iron ore and coal |
+| Splitter | 5 electronic circuit, 5 iron plate, 4 transport belt | copper ore and coal; 4 x iron ore and coal |
+| Fast splitter | 1 splitter, 10 iron gear wheel, 10 electronic circuit | 6 x iron ore and coal; 2 x copper ore and coal |
+| Small lamp | 1 electronic circuit, 3 copper cable, 1 iron plate | 2 x copper ore and coal; 2 x iron ore and coal |
+| Power switch | 5 iron plate, 5 copper cable, 2 electronic circuit | 2 x iron ore and coal; 2 x copper ore and coal |
+| Programmable speaker | 3 iron plate, 4 iron stick, 5 copper cable, 4 electronic circuit | 3 x iron ore and coal; 2 x copper ore and coal |
+| Shotgun | 15 iron plate, 5 iron gear wheel, 10 copper plate, 5 wood | copper ore and coal; wood on both lanes; 2 x iron ore and coal |
+
+Heavy recipes run slowly: with two inserters per machine, an assembling machine 1 making assembling machines (17 items a craft) manages about 6 a minute, so 30 a minute takes 5 machines. The most a blueprint can make is shown under the rate field; the inserter, for instance, tops out at 150 a minute, the circuit block's limit.
+
 ### How the columns are found
 
 The table only says which items you can ask for. The steps come from the game's recipes: the mod looks up the recipe that makes the item, then the recipes for the ingredients that are themselves made, and so on until the ingredients are raw (no recipe it can build makes them, like ores and stone). The machine of each step comes from the recipe's category, set in `scripts/config.lua` (smelting: stone furnace burning coal; crafting: assembling machine 1). A request is refused, with a message, when:
 
 - no recipe the mod can build makes the item, or more than one does (it cannot choose between them yet);
-- a step has more than two ingredients that are themselves made (a belt has two lanes, one for each);
-- a step has made ingredients and more than two ingredients in all (a belt has two lanes: two made ingredients, or one made ingredient and one raw item), or has one made ingredient that itself comes from two inputs (a column on top of a block with two inputs is not laid out yet);
+- a step has more than four ingredients that are themselves made (two belts have four lanes, one for each);
+- a step has made ingredients and more than four ingredients in all, or more than one raw item (a belt of raw items fills both lanes, so it takes a lane of its own and only one is laid out), or has one made ingredient that itself comes from two or more inputs (a column on top of a block with several inputs is not laid out yet);
 - a step that is fed by other steps needs fuel. The raw items and the fuel ride on the belts of the steps that are fed raw items;
 - a recipe has a fluid among its ingredients, or makes more than one product.
 

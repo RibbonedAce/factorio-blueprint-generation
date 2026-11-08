@@ -11,6 +11,7 @@
 ---@field belt string
 ---@field inserter string
 ---@field pole string
+---@field long_inserter? string  the long-handed inserter, for a machine that takes from a second input belt
 
 ---@class bpgen.Names : bpgen.SharedNames  prototype names one column of the layout builds with
 ---@field machine string
@@ -60,6 +61,7 @@
 
 ---@class bpgen.InserterLimits  what limits feeding and emptying a machine
 ---@field items_per_minute number  what one inserter moves
+---@field long_items_per_minute? number  what one long-handed inserter moves; a plain inserter's figure when nil
 ---@field max_input integer  how many inserters the input side of a machine gets
 ---@field max_output integer  how many inserters the output side of a machine gets
 
@@ -103,8 +105,10 @@
 ---@field load number  how many machines' worth of work the rate asks of the stage: less than `machines` when the last machine is only partly used
 ---@field output_per_minute number
 ---@field inputs bpgen.PlanInput[]  per ingredient, in the recipe's order
----@field lanes string[]  the item on each of the input belt's two lanes
----@field input_inserters integer  per machine
+---@field lanes string[]  the item on each lane of the input belt: two for a stage fed raw items, one for each ingredient of any other
+---@field belts bpgen.Belts  which ingredients ride which input belt: all on belt a, except for a stage with three or four ingredients
+---@field input_inserters integer  plain inserters per machine, for belt a
+---@field long_inserters integer  long-handed inserters per machine, for belt b (0 when belt b carries nothing)
 ---@field output_inserters integer  per machine
 
 ---@class bpgen.Position  the centre of an entity, in tiles
@@ -120,7 +124,8 @@
 -- What the layout needs to know about the machine.
 ---@class bpgen.Shape
 ---@field machine_size integer  tiles wide and tall; see `supports_machine_size`
----@field input_inserters integer  per machine, at most `machine_size`
+---@field input_inserters integer  plain inserters per machine, for the input belt next to the machine
+---@field long_inserters? integer  long-handed inserters per machine, in the rows under the plain ones, for a second belt one column further out (0 when nil); the two kinds together are at most `machine_size`
 ---@field output_inserters integer  per machine, at most `machine_size`; a 3x3 machine with two (and no pole rows) gets a winding output belt
 
 -- One column of machines in a chain.
@@ -129,6 +134,7 @@
 ---@field load? number  how many machines' worth of work the rate asks of the column: less than `machine_count` when the last machine is only partly used, `machine_count` when left out. It decides which way the belt to the next column runs, so that the direction does not change with the rate
 ---@field machine string  prototype name of the machine
 ---@field shape bpgen.Shape  the machine size must be one `supports_machine_size` accepts
+---@field belt? "a"|"b"  for a stage that is a supplier: which input belt of the stage that eats it the product rides ("a" when nil): belt a is next to the machines, belt b one column further out, for the long-handed inserters
 ---@field recipe? string  the recipe to set on the machines; nil for a machine that picks its own recipe (a furnace)
 ---@field suppliers? (bpgen.StageLayout|bpgen.RawSupplier)[]  what it eats: the stages whose products it eats, in the order of the recipe's ingredients, then the raw item that goes with them, if any; none or one in a chain, two when a recipe has two made ingredients or one made ingredient and a raw one (`blocks.build` uses it; `layout.build_chain` ignores it)
 
@@ -137,10 +143,9 @@
 ---@class bpgen.RawSupplier
 ---@field raw_item string  the item
 
--- What a block is told about the product belt and the input belt of its chain.
+-- What a block is told about the product belt of its chain.
 ---@class bpgen.BlockOptions
 ---@field product_belt boolean  whether the chain draws its product belt, and may wind it (the last block of a blueprint), or whoever uses the block draws it
----@field input_belt_rows_above integer  how many rows above its first row the input belt of the first column starts: 0 for a column fed raw items, more for a column to the right of other blocks, whose input belt comes down from above
 
 -- A part of a blueprint that makes one item: the columns of a chain, or two blocks and
 -- the column that eats what they make. A block stands in a frame whose x = 0 is its
@@ -150,6 +155,8 @@
 ---@field poles bpgen.Entity[]  every pole of the block, for wiring it to its neighbours. A block that has neighbours also has a line of poles in the column beside its product belt, from within 2 rows of its top to within 2 rows of its bottom
 ---@field product_column integer  tile column of the product belt, the rightmost column. The block does not draw it unless it is the last block of the blueprint
 ---@field height integer  rows
+---@field output_rows {first: integer, last: integer}  the rows where the output inserters of the last column drop onto the product belt
+---@field long_rows? {first: integer, last: integer}  the rows of the first and the last long-handed input inserter of the first column, nil when it has none
 ---@field raw_belts bpgen.RawBelt[]  where the belts of raw items start, from the top of the block down
 
 -- The first tile of a belt of raw items, which runs south from there.

@@ -23,6 +23,7 @@
 --   {kind = "belt" | "machine" | "inserter" | "pole",
 --    width = tiles, height = tiles,
 --    needs_power = true,          -- optional, for things a pole must reach
+--    reach = tiles,               -- inserters only: how far away it picks up and drops, default 1
 --    supply_radius = tiles,       -- poles only: how far from its centre it powers
 --    wire_reach = tiles}          -- poles only: the longest wire it can hold
 --
@@ -196,8 +197,9 @@ local function check_inserter(inserter, offsets, index, problems)
     add_problem(problems, inserter, "has no usable direction")
     return
   end
-  local from = entity_beside(index, inserter, offset.x, offset.y)
-  local to = entity_beside(index, inserter, -offset.x, -offset.y)
+  local reach = index.catalog[inserter.name].reach or 1
+  local from = entity_beside(index, inserter, offset.x * reach, offset.y * reach)
+  local to = entity_beside(index, inserter, -offset.x * reach, -offset.y * reach)
   check_inserter_ends(inserter, from, to, index, problems)
 end
 
@@ -332,6 +334,7 @@ end
 ---@field width number  tiles
 ---@field height number  tiles
 ---@field needs_power? boolean
+---@field reach? number  inserters only: tiles away that it picks up and drops, 1 by default (2 for a long-handed inserter)
 ---@field supply_radius? number  poles only
 ---@field wire_reach? number  poles only
 

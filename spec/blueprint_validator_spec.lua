@@ -16,6 +16,7 @@ local builders = require("spec.support.builders")
 local validator = require("spec.support.blueprint_validator")
 
 local belt, furnace, inserter, pole = builders.belt, builders.furnace, builders.inserter, builders.pole
+local long_inserter = builders.long_inserter
 local blueprint_of, wire_between, a_catalog = builders.blueprint_of, builders.wire_between, builders.a_catalog
 local west, north = defines.direction.west, defines.direction.north
 
@@ -146,6 +147,41 @@ describe("blueprint validator", function()
 
     it("reports an inserter when it moves items from one belt to another with no machine involved", function()
       local entities = blueprint_of(belt(0, 0), inserter(1, 0, west), belt(2, 0), pole(1, 1))
+
+      local problems = validator.validate(entities, a_catalog{})
+
+      assert.has_item_containing("does not touch a machine", problems)
+    end)
+  end)
+
+  describe("long-handed inserters, which reach two tiles", function()
+    it("reports no problems when a long-handed inserter picks up two tiles away, over a belt, and drops two tiles in", function()
+      -- Facing west at (2, 0) it picks up from tile (0, 0), over the belt in (1, 0), and drops onto tile (4, 0), the far column of the furnace.
+      local entities = blueprint_of(belt(0, 0), belt(1, 0), long_inserter(2, 0, west), furnace(3, 0), pole(2, 1))
+
+      local problems = validator.validate(entities, a_catalog{})
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports a long-handed inserter when only the tile next to it holds something to pick up", function()
+      local entities = blueprint_of(belt(1, 0), long_inserter(2, 0, west), furnace(3, 0), pole(2, 1)) -- tile (0, 0) is empty
+
+      local problems = validator.validate(entities, a_catalog{})
+
+      assert.has_item_containing("nothing to pick up from", problems)
+    end)
+
+    it("reports a long-handed inserter when only the tile next to it holds something to drop onto", function()
+      local entities = blueprint_of(belt(0, 0), long_inserter(2, 0, west), belt(3, 0), pole(2, 1)) -- tile (4, 0) is empty
+
+      local problems = validator.validate(entities, a_catalog{})
+
+      assert.has_item_containing("nothing to drop onto", problems)
+    end)
+
+    it("reports a long-handed inserter when it moves items from one belt to another with no machine involved", function()
+      local entities = blueprint_of(belt(0, 0), long_inserter(2, 0, west), belt(4, 0), pole(2, 1))
 
       local problems = validator.validate(entities, a_catalog{})
 

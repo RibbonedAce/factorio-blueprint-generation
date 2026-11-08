@@ -1092,6 +1092,152 @@ describe("generator", function()
     end)
   end)
 
+  describe("a recipe with three made ingredients, so the final machines take from a second input belt", function()
+    -- A furnace makes 18.75 plates a minute (speed 1, 3.2 s), or 18.75 bricks from 2 stone each. An assembler (speed 0.5,
+    -- 3x3) crafts every 1 s. Gears, 2 plates each, would eat 120 plates a minute, but the two plain inserters of a gear
+    -- assembler move 100.8: 50.4 gears a minute. "Inserters" (the recipe is a stand-in) take a gear, a brick and a plate each,
+    -- 60 of each a minute at full speed; a plain inserter moves 50.4 items a minute, a long-handed one 72, and a machine has
+    -- two input slots. The gear alone on belt a (50.4 / 60 = 0.84), the brick and the plate on belt b (72 / 120 = 0.6): 0.6,
+    -- so 36 inserters a minute for each final assembler.
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local brick = a_recipe{energy = 3.2, ingredients = {amount_of(2, "stone")}, products = {amount_of(1, "stone-brick")}, category = "smelting"}
+    local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+    local inserter = a_recipe{
+      energy = 0.5, ingredients = {amount_of(1, "iron-gear-wheel"), amount_of(1, "stone-brick"), amount_of(1, "iron-plate")},
+      products = {amount_of(1, "inserter")},
+    }
+
+    local function inserter_game(extra)
+      extra = extra or {}
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-gear-wheel"] = gear, ["inserter"] = inserter},
+        missing_entities = extra.missing_entities,
+        long_inserter_rotation_speed = extra.long_inserter_rotation_speed,
+      }
+    end
+
+    it("builds the machines of every step: furnaces for the plates of the gears, the bricks and the plates, assemblers for the gears and the inserters", function()
+      _G.prototypes = inserter_game()
+
+      local result = generator.generate("inserter", 36)
+
+      assert.are.equal(8, count_named(result.entities, "stone-furnace")) -- 72 plates for 36 gears / 18.75 = 3.8, 36 bricks / 18.75 = 1.9, 36 plates / 18.75 = 1.9
+      assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- one for the gears, one for the inserters
+    end)
+
+    it("gives each final assembler a long-handed inserter, and builds one for each 36 a minute", function()
+      _G.prototypes = inserter_game()
+
+      local result = generator.generate("inserter", 100)
+
+      assert.are.equal(3, count_named(result.entities, "long-handed-inserter")) -- 100 / 36 = 2.8 final assemblers
+    end)
+
+    it("describes the blueprint with the machines of every step, each after the steps that feed it", function()
+      _G.prototypes = inserter_game()
+
+      local result = generator.generate("inserter", 36)
+
+      assert.are.equal(
+        "inserter: 36 per minute from 4 x stone-furnace, 1 x assembling-machine-1, 2 x stone-furnace, 2 x stone-furnace, 1 x assembling-machine-1",
+        result.description)
+    end)
+
+    it("tells the player what each step makes and what goes on each belt of raw items, from the top down", function()
+      _G.prototypes = inserter_game()
+
+      local result = generator.generate("inserter", 36)
+
+      assert.are.same({
+        "blueprint-generation.generated-raw-belts",
+        {"",
+          {"blueprint-generation.generated-first-stage", "4", {"entity-name.stone-furnace"}, "75", {"item-name.iron-plate"}},
+          {"blueprint-generation.generated-next-stage", "1", {"entity-name.assembling-machine-1"}, "50.4", {"item-name.iron-gear-wheel"}},
+          {"blueprint-generation.generated-other-stage", "2", {"entity-name.stone-furnace"}, "37.5", {"item-name.stone-brick"}},
+          {"blueprint-generation.generated-other-stage", "2", {"entity-name.stone-furnace"}, "37.5", {"item-name.iron-plate"}},
+          {"blueprint-generation.generated-next-stage", "1", {"entity-name.assembling-machine-1"}, "36", {"item-name.inserter"}},
+        },
+        "36", -- what was asked for
+        {"",
+          {"blueprint-generation.raw-belt", {"item-name.iron-ore"}, {"item-name.coal"}}, -- the gears' plates, on top
+          "; ",
+          {"blueprint-generation.raw-belt", {"item-name.stone"}, {"item-name.coal"}},
+          "; ",
+          {"blueprint-generation.raw-belt", {"item-name.iron-ore"}, {"item-name.coal"}},
+        },
+      }, result.message)
+    end)
+
+    it("sets the recipe of every assembling machine and leaves the furnaces to pick their own", function()
+      _G.prototypes = inserter_game()
+
+      local result = generator.generate("inserter", 36)
+
+      local recipes = {}
+      for _, entity in ipairs(result.entities) do
+        recipes[entity.name] = recipes[entity.name] or {}
+        recipes[entity.name][#recipes[entity.name] + 1] = entity.recipe or "none"
+      end
+      table.sort(recipes["assembling-machine-1"])
+      assert.are.same({"inserter", "iron-gear-wheel"}, recipes["assembling-machine-1"])
+      assert.are.equal(8, #recipes["stone-furnace"])
+      assert.are.equal("none", recipes["stone-furnace"][1])
+    end)
+
+    it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
+      _G.prototypes = inserter_game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("inserter", 100)
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("names the most a lane carries when the lane of plates for the gears fills first", function()
+      _G.prototypes = inserter_game()
+
+      assert.are.same({"blueprint-generation.max-rate", "225"}, generator.max_rate_message("inserter")) -- 450 plates, 2 for each gear
+    end)
+
+    it("refuses the rate when it is more than that", function()
+      _G.prototypes = inserter_game()
+
+      local result, error_message = generator.generate("inserter", 226)
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-rate-too-high", "225"}, error_message)
+    end)
+
+    it("takes the long-handed inserter's speed from the game", function()
+      -- At the plain inserter's speed (0.014) the belt b side is 50.4 / 120 = 0.42 too: 25.2 a minute, 100 / 25.2 = 3.97.
+      _G.prototypes = inserter_game{long_inserter_rotation_speed = 0.014}
+
+      local result = generator.generate("inserter", 100)
+
+      assert.are.equal(4, count_named(result.entities, "long-handed-inserter"))
+    end)
+
+    it("plans with the plain inserter's speed when the game has no long-handed inserter, and refuses nothing", function()
+      _G.prototypes = inserter_game{missing_entities = {"long-handed-inserter"}}
+
+      local result = generator.generate("inserter", 100)
+
+      assert.are.equal(4, count_named(result.entities, "long-handed-inserter")) -- the blueprint still has them, as 25.2 a minute machines
+    end)
+
+    it("builds a recipe with one input belt when the game has no long-handed inserter", function()
+      _G.prototypes = inserter_game{missing_entities = {"long-handed-inserter"}}
+
+      local result = generator.generate("iron-gear-wheel", 10)
+
+      assert.is_not_nil(result)
+      assert.are.equal(0, count_named(result.entities, "long-handed-inserter"))
+    end)
+  end)
+
   describe("the most one blueprint can make, shown under the rate field", function()
     local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
@@ -1305,14 +1451,23 @@ describe("generator", function()
       assert.are.same({"blueprint-generation.error-ambiguous-recipe", {"item-name.iron-plate"}}, error_message)
     end)
 
-    it("refuses the request when a step needs three made ingredients, naming the item", function()
+    it("refuses the request when a step needs five made ingredients, naming the item", function()
       local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
       local copper = a_recipe{energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}, category = "smelting"}
       local brick = a_recipe{energy = 3.2, ingredients = {amount_of(2, "stone")}, products = {amount_of(1, "stone-brick")}, category = "smelting"}
-      local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate"), amount_of(1, "copper-plate"), amount_of(1, "stone-brick")}, products = {amount_of(1, "iron-gear-wheel")}}
+      local cable = a_recipe{energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(2, "copper-cable")}}
+      local pipe = a_recipe{energy = 0.5, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "pipe")}}
+      local gear = a_recipe{
+        energy = 0.5,
+        ingredients = {amount_of(2, "iron-plate"), amount_of(1, "copper-plate"), amount_of(1, "stone-brick"), amount_of(1, "copper-cable"), amount_of(1, "pipe")},
+        products = {amount_of(1, "iron-gear-wheel")},
+      }
       _G.prototypes = fake_prototypes{
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
-        recipes = {["iron-plate"] = plate, ["copper-plate"] = copper, ["stone-brick"] = brick, ["iron-gear-wheel"] = gear},
+        recipes = {
+          ["iron-plate"] = plate, ["copper-plate"] = copper, ["stone-brick"] = brick, ["copper-cable"] = cable, ["pipe"] = pipe,
+          ["iron-gear-wheel"] = gear,
+        },
       }
 
       local result, error_message = generator.generate("iron-gear-wheel", 10)

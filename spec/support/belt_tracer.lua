@@ -17,15 +17,19 @@
 --   * a belt with one belt feeding it from the side and none behind it is a curve, and
 --     keeps each lane's identity;
 --   * an inserter takes from both lanes of a belt.
--- The problems are text. They are: a lane that carries two items, an input inserter that
--- never sees something its machine eats, an item nobody eats, a belt that carries the product together with something else, and a belt
+-- The problems are text. They are: a lane that carries two items, an input inserter of a machine
+-- whose inserters, all of them together, never see something it eats, an item nobody eats, a belt that carries the product together with something else, and a belt
 -- of raw items that something we made is put on.
 --
 -- `options.machines` says, by entity name, what each machine is: {size, eats = items,
 -- makes = item}. `options.raw` lists, by name, the machines fed by belts of raw items,
 -- which the player supplies (those belts hold nothing of ours). `options.product` is the
 -- item of the blueprint. The names of belts and inserters are "transport-belt" and
--- "inserter" unless `options.belt` and `options.inserter` say otherwise.
+-- "inserter" unless `options.belt` and `options.inserter` say otherwise. A long-handed inserter
+-- (`options.long_inserter`, "long-handed-inserter" by default) picks up from and drops onto the tile
+-- two away, over whatever stands between. The tracer follows it only when it takes from a belt into a
+-- machine; one that puts items on a belt is reported, since the lane rules above are for a belt next to
+-- the inserter.
 -- `options.supplies` (optional) lists the belts of raw items that run to an input inserter
 -- or to the side of another belt without passing a machine, which the player fills: each is
 -- {x = tile column, y = tile row, item = name} for the first tile of the belt, and the item
@@ -115,14 +119,16 @@ local function index_of(entities, options)
   return index
 end
 
--- The entity on the tile one step from `entity` the way `way` points.
+-- The entity on the tile `distance` steps (one by default) from `entity` the way `way` points.
 ---@param index bpgen.TraceIndex
 ---@param entity table
 ---@param way defines.direction
+---@param distance? integer
 ---@return table|nil
-local function entity_beside(index, entity, way)
+local function entity_beside(index, entity, way, distance)
   local tile = index.tile[entity]
-  return index.by_tile[tile_key(tile.x + VECTOR[way].x, tile.y + VECTOR[way].y)]
+  distance = distance or 1
+  return index.by_tile[tile_key(tile.x + VECTOR[way].x * distance, tile.y + VECTOR[way].y * distance)]
 end
 
 ---@param index bpgen.TraceIndex
@@ -206,13 +212,18 @@ local function is_belt(index, entity)
   return entity ~= nil and entity.name == (index.options.belt or "transport-belt")
 end
 
--- Notes which kind of inserter this is, if it moves between a machine and a belt.
+-- Notes which kind of inserter this is, if it moves between a machine and a belt. `reach` is
+-- how many tiles away it picks up and drops.
 ---@param index bpgen.TraceIndex
 ---@param inserter table
-local function classify(index, inserter)
-  local from = entity_beside(index, inserter, inserter.direction)
-  local to = entity_beside(index, inserter, OPPOSITE[inserter.direction])
-  if is_machine(index, from) and is_belt(index, to) then
+---@param reach integer
+local function classify(index, inserter, reach)
+  local from = entity_beside(index, inserter, inserter.direction, reach)
+  local to = entity_beside(index, inserter, OPPOSITE[inserter.direction], reach)
+  if is_machine(index, from) and is_belt(index, to) and reach > 1 then
+    local tile = index.tile[inserter]
+    index.problems[#index.problems + 1] = string.format("the long-handed inserter at %g,%g puts items on a belt, which the tracer does not follow", tile.x, tile.y)
+  elseif is_machine(index, from) and is_belt(index, to) then
     index.makers[#index.makers + 1] = {inserter = inserter, machine = from, belt = to}
   elseif is_belt(index, from) and is_machine(index, to) then
     index.takers[#index.takers + 1] = {inserter = inserter, machine = to, belt = from}
@@ -346,13 +357,30 @@ local function check_raw_taker(index, taker)
   end
 end
 
--- An input inserter sees every item its machine eats on the belt it takes from. Returns
--- the items that its machine eats.
+-- The items that the input inserters of each machine see between them, each on the belt it
+-- takes from (a machine with a plain and a long-handed inserter sees two belts). The
+-- machines fed by belts of raw items are left out.
+---@param index bpgen.TraceIndex
+---@return table<table, table<string, true>>  by machine
+local function seen_by_machine(index)
+  local seen = {}
+  for _, taker in ipairs(index.takers) do
+    if not index.options.raw[taker.machine.name] then
+      seen[taker.machine] = seen[taker.machine] or {}
+      add_items(seen[taker.machine], items_on(index, taker.belt))
+    end
+  end
+  return seen
+end
+
+-- Between them, the input inserters of a machine see every item it eats; an inserter of a
+-- machine that none of them sees the item for is reported. Adds the items that the machine
+-- eats to `eaten`.
 ---@param index bpgen.TraceIndex
 ---@param taker table
+---@param seen table<string, true>  what all the input inserters of its machine see
 ---@param eaten table<string, true>  the items some machine eats, to add to
-local function check_taker(index, taker, eaten)
-  local seen = items_on(index, taker.belt)
+local function check_taker(index, taker, seen, eaten)
   local tile = index.tile[taker.inserter]
   for _, item in ipairs(index.options.machines[taker.machine.name].eats) do
     eaten[item] = true
@@ -362,16 +390,17 @@ local function check_taker(index, taker, eaten)
   end
 end
 
--- Every input inserter sees what its machine eats. Returns the items that some machine eats.
+-- Every machine sees what it eats. Returns the items that some machine eats.
 ---@param index bpgen.TraceIndex
 ---@return table<string, true>
 local function check_inputs(index)
   local eaten = {}
+  local seen = seen_by_machine(index)
   for _, taker in ipairs(index.takers) do
     if index.options.raw[taker.machine.name] then
       check_raw_taker(index, taker)
     else
-      check_taker(index, taker, eaten)
+      check_taker(index, taker, seen[taker.machine], eaten)
     end
   end
   return eaten
@@ -419,7 +448,9 @@ function tracer.problems(entities, options)
   note_supplies(index)
   for _, entity in ipairs(entities) do
     if entity.name == (options.inserter or "inserter") then
-      classify(index, entity)
+      classify(index, entity, 1)
+    elseif entity.name == (options.long_inserter or "long-handed-inserter") then
+      classify(index, entity, 2)
     end
   end
   note_drops(index)
