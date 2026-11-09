@@ -66,6 +66,9 @@ local config = {
     ["boiler"] = true,
     ["offshore-pump"] = true,
     ["automation-science-pack"] = true,
+    ["underground-belt"] = true,
+    ["repair-pack"] = true,
+    ["shotgun-shell"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns
