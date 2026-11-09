@@ -69,8 +69,9 @@ local function shared_names()
 end
 
 -- Whether the buildings that every blueprint needs exist. The long-handed inserter is
--- not one of them: only recipes with three or more ingredients use it, and the owner
--- wants nothing refused on its account (a later feature will look at what is unlocked).
+-- not one of them: only recipes with three or more ingredients use it, and a game
+-- without one is not refused (it gets the plain inserter's speed for it). Whether the
+-- player has UNLOCKED these recipes is a separate question (see `locked_item`).
 ---@param names bpgen.SharedNames
 ---@return boolean
 local function all_entities_exist(names)
@@ -335,6 +336,23 @@ local function read_job(item_name, rate_per_minute)
     inserter_rotation_speed = rotation_speed,
     long_inserter_rotation_speed = long_rotation_speed,
   }
+end
+
+-- The item whose recipe the force has not unlocked yet, or nil when the force has it. Only
+-- the recipe of the product is looked at (owner, 2026-11-08): in the game a recipe is never
+-- unlocked before those of its ingredients, nor before the crafting machine it needs, and
+-- the buildings (long-handed inserter, belt, inserter, pole) are left to a later feature
+-- that will unlock by the entities a blueprint places. A recipe the force does not know at
+-- all is not held against it: there is nothing to unlock.
+---@param job bpgen.Job
+---@param force LuaForce
+---@return string|nil item
+local function locked_item(job, force)
+  local recipe = force.recipes[job.root.recipe.name or job.root.item]
+  if recipe and not recipe.enabled then
+    return job.root.item
+  end
+  return nil
 end
 
 -- Whether the fuel the config sets for a machine suits it: an electric
@@ -703,15 +721,21 @@ local function assemble(job, planned)
   }
 end
 
--- The job for this request, with every machine checked, or nil and the message for the player.
+-- The job for this request, with every machine checked, or nil and the message for the
+-- player. With a `force`, an item whose recipe the force has not unlocked is refused too.
 ---@param item_name string
 ---@param rate_per_minute number
+---@param force LuaForce|nil
 ---@return bpgen.Job|nil
 ---@return LocalisedString|nil error_message
-local function read_buildable_job(item_name, rate_per_minute)
+local function read_buildable_job(item_name, rate_per_minute, force)
   local job, problem = read_job(item_name, rate_per_minute)
   if not job then
     return nil, problem
+  end
+  local locked = force and locked_item(job, force)
+  if locked then
+    return nil, error_message("error-locked", item_label(locked))
   end
   problem = machine_problem(job)
   if problem then
@@ -720,12 +744,31 @@ local function read_buildable_job(item_name, rate_per_minute)
   return job, nil
 end
 
+-- The products the item picker offers a force: every product of the config except those
+-- whose recipe the force has not unlocked (see `locked_item`). A product that cannot be
+-- made for another reason stays in the list, so choosing it still shows the message that
+-- says why.
+---@param force LuaForce
+---@return string[] names  sorted
+function generator.unlocked_products(force)
+  local names = {}
+  for name in pairs(config.products) do
+    local job = read_job(name, 1) -- the rate is not used
+    if not (job and locked_item(job, force)) then
+      names[#names + 1] = name
+    end
+  end
+  table.sort(names)
+  return names
+end
+
 -- The line the window shows under the rate field: the most one blueprint of
 -- `item_name` can make per minute, or the message for why it cannot be made.
 ---@param item_name string
+---@param force LuaForce|nil  whose unlocked recipes count; nil counts them all
 ---@return LocalisedString
-function generator.max_rate_message(item_name)
-  local job, problem = read_buildable_job(item_name, 1) -- the rate is not used
+function generator.max_rate_message(item_name, force)
+  local job, problem = read_buildable_job(item_name, 1, force) -- the rate is not used
   if not job then
     ---@cast problem LocalisedString -- there is always a message when there is no job
     return problem
@@ -746,10 +789,11 @@ end
 -- On failure returns nil and a LocalisedString explaining why.
 ---@param item_name string
 ---@param rate_per_minute number
+---@param force LuaForce|nil  whose unlocked recipes count; nil counts them all
 ---@return bpgen.Generated|nil
 ---@return LocalisedString|nil error_message
-function generator.generate(item_name, rate_per_minute)
-  local job, problem = read_buildable_job(item_name, rate_per_minute)
+function generator.generate(item_name, rate_per_minute, force)
+  local job, problem = read_buildable_job(item_name, rate_per_minute, force)
   if not job then
     return nil, problem
   end

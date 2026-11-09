@@ -23,6 +23,7 @@ local validator = require("spec.support.blueprint_validator")
 local fake_prototypes = builders.fake_prototypes
 local a_recipe = builders.a_recipe
 local a_machine = builders.a_machine
+local fake_force = builders.fake_force
 local amount_of = builders.amount_of
 local fluid_of = builders.fluid_of
 
@@ -1349,6 +1350,164 @@ describe("generator", function()
         assert.are.same({defines.direction.south}, plate_belt_directions(result.entities))
       end)
     end
+  end)
+
+  describe("recipes the player has not unlocked", function()
+    -- The same stand-in game as for three made ingredients: plates and bricks from furnaces, gears and inserters
+    -- from assemblers, "inserter" taking three ingredients. Only the recipe of the product is looked at; the
+    -- ingredients, the machines and the buildings are not (the game unlocks them first, or a later feature does).
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local brick = a_recipe{energy = 3.2, ingredients = {amount_of(2, "stone")}, products = {amount_of(1, "stone-brick")}, category = "smelting"}
+    local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+    local inserter = a_recipe{
+      energy = 0.5, ingredients = {amount_of(1, "iron-gear-wheel"), amount_of(1, "stone-brick"), amount_of(1, "iron-plate")},
+      products = {amount_of(1, "inserter")},
+    }
+
+    local function game()
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-gear-wheel"] = gear, ["inserter"] = inserter},
+      }
+    end
+
+    local function locked_message(item)
+      return {"blueprint-generation.error-locked", {"item-name." .. item}}
+    end
+
+    it("builds the blueprint when the recipe of the item is unlocked", function()
+      _G.prototypes = game()
+
+      local result = generator.generate("inserter", 36, fake_force{})
+
+      assert.is_not_nil(result)
+    end)
+
+    it("refuses the item when its own recipe is locked, naming the item", function()
+      _G.prototypes = game()
+
+      local result, message = generator.generate("inserter", 36, fake_force{locked = {"inserter"}})
+
+      assert.is_nil(result)
+      assert.are.same(locked_message("inserter"), message)
+    end)
+
+    it("does not look at the recipes of the ingredients made on the way, which the game unlocks first", function()
+      _G.prototypes = game()
+
+      local result = generator.generate("inserter", 36, fake_force{locked = {"iron-gear-wheel", "stone-brick", "iron-plate"}})
+
+      assert.is_not_nil(result)
+    end)
+
+    it("does not look at the recipes of the crafting machines, which the game unlocks first", function()
+      _G.prototypes = game()
+
+      local result = generator.generate("inserter", 36, fake_force{locked = {"assembling-machine-1", "stone-furnace"}})
+
+      assert.is_not_nil(result)
+    end)
+
+    it("does not look at the long-handed inserter, even for an item with three ingredients", function()
+      _G.prototypes = game()
+
+      local result = generator.generate("inserter", 36, fake_force{locked = {"long-handed-inserter"}})
+
+      assert.is_not_nil(result)
+    end)
+
+    it("does not look at the belt, the inserter and the pole every blueprint places", function()
+      _G.prototypes = game()
+
+      local result = generator.generate("iron-plate", 10, fake_force{locked = {"transport-belt", "inserter", "small-electric-pole"}})
+
+      assert.is_not_nil(result)
+    end)
+
+    it("does not hold a recipe against the player that the force does not know at all", function()
+      _G.prototypes = game()
+
+      local result = generator.generate("inserter", 36, fake_force{absent = {"inserter"}})
+
+      assert.is_not_nil(result)
+    end)
+
+    it("shows the same message under the rate field for a locked item, and the rate for one that is not", function()
+      _G.prototypes = game()
+      local force = fake_force{locked = {"iron-gear-wheel"}}
+
+      assert.are.same(locked_message("iron-gear-wheel"), generator.max_rate_message("iron-gear-wheel", force))
+      assert.are.same({"blueprint-generation.max-rate", "450"}, generator.max_rate_message("iron-plate", force))
+    end)
+
+    it("leaves the recipes unchecked when no force is given", function()
+      _G.prototypes = game()
+
+      assert.is_not_nil(generator.generate("inserter", 36))
+      assert.are.same({"blueprint-generation.max-rate", "225"}, generator.max_rate_message("inserter"))
+    end)
+
+    describe("the products on offer", function()
+      local function contains(list, name)
+        for _, entry in ipairs(list) do
+          if entry == name then
+            return true
+          end
+        end
+        return false
+      end
+
+      it("lists the products whose recipes are unlocked", function()
+        _G.prototypes = game()
+
+        local offered = generator.unlocked_products(fake_force{})
+
+        assert.is_true(contains(offered, "inserter"))
+        assert.is_true(contains(offered, "iron-gear-wheel"))
+        assert.is_true(contains(offered, "iron-plate"))
+      end)
+
+      it("leaves out the product whose own recipe is locked, and not the products made from it", function()
+        _G.prototypes = game()
+
+        local offered = generator.unlocked_products(fake_force{locked = {"iron-gear-wheel"}})
+
+        assert.is_false(contains(offered, "iron-gear-wheel"))
+        assert.is_true(contains(offered, "inserter")) -- its gears are not looked at
+        assert.is_true(contains(offered, "iron-plate"))
+        assert.is_true(contains(offered, "stone-brick"))
+      end)
+
+      it("keeps a product that cannot be made for another reason, so choosing it says why", function()
+        _G.prototypes = game()
+
+        local offered = generator.unlocked_products(fake_force{})
+
+        assert.is_true(contains(offered, "pipe")) -- the game here has no recipe for it
+      end)
+
+      it("lists the names in order", function()
+        _G.prototypes = game()
+
+        local offered = generator.unlocked_products(fake_force{})
+
+        local sorted = {table.unpack(offered)}
+        table.sort(sorted)
+        assert.are.same(sorted, offered)
+      end)
+
+      it("counts the recipes of the force it is given", function()
+        _G.prototypes = game()
+
+        local with_everything = generator.unlocked_products(fake_force{})
+        local without_inserter = generator.unlocked_products(fake_force{locked = {"inserter"}})
+
+        assert.are.equal(#with_everything - 1, #without_inserter)
+        assert.is_false(contains(without_inserter, "inserter"))
+        assert.is_true(contains(without_inserter, "iron-plate"))
+      end)
+    end)
   end)
 
   describe("refusals", function()

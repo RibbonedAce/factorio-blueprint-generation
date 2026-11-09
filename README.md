@@ -7,7 +7,7 @@ Status: early development.
 ## Using it
 
 1. Click the "Generate blueprint" button in the shortcut bar.
-2. Choose the item to produce (iron plate is already selected) and enter a rate in items per minute.
+2. Choose the item to produce (iron plate is already selected, if you can build it) and enter a rate in items per minute. The picker only offers the items whose recipe you have unlocked. Nothing else is looked at: the game never unlocks a recipe before those of its ingredients or before the crafting machine it needs, and the buildings of the blueprint (the long-handed inserter, transport belt, inserter and small electric pole) will be checked by a later feature. Research something new and the list grows the next time you open the window.
 3. Click Generate. The blueprint appears on your cursor. It is temporary, like a blueprint taken from the library: it takes no inventory space, and it disappears if you put it away without placing it (generate it again if that happens). Place it, put the inputs on the input belt (the message says which item goes on which lane) and connect the poles to your power network.
 
 ## What can be generated
@@ -55,7 +55,7 @@ The blocks that make the ingredients stand one above the other. The ingredients 
 
 Two blocks are never stacked with a belt of one right under a belt of the other (the belt between two columns can run north up to the first row of a block, and would feed the belt above): there is an empty row between them then.
 
-The long-handed inserter is unlocked by the same research as the assembling machine. The mod does not check that you have it. It uses the speed of the game's long-handed inserter (the plain inserter's if the game has none), and the blueprint places long-handed inserters whatever the research.
+The long-handed inserter is unlocked by the same research as the assembling machine. The mod does not check that you have it. It uses the speed of the game's long-handed inserter (the plain inserter's if the game has none).
 
 | Item | Ingredients | Belts of raw items |
 |---|---|---|
@@ -113,6 +113,7 @@ When a 3 x 3 machine in the last column needs two output inserters, the output b
 - **Machines are 2 x 2 or 3 x 3.** Any other size, or a machine that is not square, is refused.
 - **You supply the inputs.** The blueprint contains no mining, no ore sources and no coal supply, only the machines and belts themselves. Two steps that need the same ore (a pipe and a gear for an offshore pump) each take a belt of their own.
 - **You supply the power.** The poles are connected to each other, not to your network.
+- **Only the items you have unlocked.** The picker leaves out an item when its own recipe is not unlocked yet for your force, and a request for one anyway (it cannot be made from the window, but the generator checks) is refused with the name of the recipe that is missing. A recipe the game does not have at all is not held against you.
 - **Only the items in the table above.** Other items are refused, and so is an item whose recipes the mod cannot chain (see "How the columns are found"). The first step has one product and either one ingredient (with or without fuel) or two ingredients (when the machine burns no fuel); every later step has one ingredient, the product of the step before, and burns no fuel.
 - **Machines are chosen per recipe category, not per item.** `scripts/config.lua` names one machine for each category (smelting and crafting for now), and an intermediate step uses the machine of its own recipe's category. Picking better machines from the player's research is a later feature.
 - **The limits follow the game.** The belt limit, the machine speed and the number of inserters are worked out from the current game data, so a mod that changes the transport belt, the machine or the inserter changes the blueprint.

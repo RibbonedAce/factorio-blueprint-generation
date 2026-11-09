@@ -332,4 +332,31 @@ function builders.fake_prototypes(options)
   return {entity = entities, item = items, get_item_filtered = get_item_filtered, get_recipe_filtered = get_recipe_filtered}
 end
 
+-- A stand-in for a force, which tells the generator which recipes the player can use:
+-- `force.recipes[name]` is a recipe with `enabled`, or nil for a recipe the game does not
+-- have. Every recipe is enabled unless the test lists it.
+--
+-- Options (all optional):
+--   locked   names of recipes that are not unlocked yet
+--   absent   names of recipes the force does not know at all
+---@param options? {locked?: string[], absent?: string[]}
+---@return table  a stand-in for a LuaForce
+function builders.fake_force(options)
+  options = options or {}
+  local locked, absent = {}, {}
+  for _, name in ipairs(options.locked or {}) do
+    locked[name] = true
+  end
+  for _, name in ipairs(options.absent or {}) do
+    absent[name] = true
+  end
+  local recipes = setmetatable({}, {__index = function(_, name)
+    if absent[name] then
+      return nil
+    end
+    return {enabled = not locked[name]}
+  end})
+  return {recipes = recipes}
+end
+
 return builders

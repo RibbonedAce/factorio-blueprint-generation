@@ -31,13 +31,12 @@ local function close_window(player)
   end
 end
 
--- The item picker only offers the products the generator supports. `elem_filters`
--- takes a list of filters; this one means "items whose name is one of these".
-local function supported_item_filters()
-  local names = {}
-  for name in pairs(config.products) do
-    names[#names + 1] = name
-  end
+-- The item picker only offers the products the generator supports and the player's
+-- force can build: every recipe the blueprint needs is unlocked (the list is read each
+-- time the window opens, so new research shows up the next time). `elem_filters` takes
+-- a list of filters; this one means "items whose name is one of these".
+---@param names string[]
+local function item_filters(names)
   return {{filter = "name", name = names}}
 end
 
@@ -45,11 +44,12 @@ end
 -- per minute (or why that item cannot be made). The text is read from the game's
 -- data each time, so it follows the belt, inserters and recipe in the current game.
 ---@param frame LuaGuiElement  our window
-local function update_max_rate(frame)
+---@param force LuaForce  the force of the player who has it open
+local function update_max_rate(frame, force)
   local item_name = frame[ITEM_BUTTON_NAME].elem_value --[[@as string|nil]] -- nil if nothing picked
   local label = frame[MAX_RATE_LABEL_NAME]
   if item_name then
-    label.caption = generator.max_rate_message(item_name)
+    label.caption = generator.max_rate_message(item_name, force)
   else
     label.caption = {"blueprint-generation.max-rate-no-item"}
   end
@@ -71,13 +71,19 @@ local function open_window(player)
   frame.auto_center = true
 
   frame.add{type = "label", caption = {"blueprint-generation.item-label"}}
+  local unlocked = generator.unlocked_products(player.force)
   local item_button = frame.add{
     type = "choose-elem-button",
     name = ITEM_BUTTON_NAME,
     elem_type = "item",
-    elem_filters = supported_item_filters(),
+    elem_filters = item_filters(unlocked),
   }
-  item_button.elem_value = config.default_product -- the player can still change or clear it
+  -- The player can still change or clear it. The default only shows when it is on offer.
+  for _, name in ipairs(unlocked) do
+    if name == config.default_product then
+      item_button.elem_value = name
+    end
+  end
 
   frame.add{type = "label", caption = {"blueprint-generation.rate-label"}}
   frame.add{type = "label", name = MAX_RATE_LABEL_NAME}
@@ -89,7 +95,7 @@ local function open_window(player)
     allow_decimal = true,
   }
 
-  update_max_rate(frame)
+  update_max_rate(frame, player.force)
 
   local buttons = frame.add{type = "flow", direction = "horizontal"}
   buttons.add{type = "button", name = CLOSE_BUTTON_NAME, caption = {"blueprint-generation.close"}}
@@ -120,7 +126,7 @@ local function generate_blueprint(player)
   end
 
   -- Generate first, so a failure leaves the player's cursor untouched.
-  local result, error_message = generator.generate(item_name, rate)
+  local result, error_message = generator.generate(item_name, rate, player.force)
   if not result then
     player.print(error_message)
     return
@@ -189,8 +195,9 @@ script.on_event(defines.events.on_gui_elem_changed, function(event)
     return -- some other mod's button
   end
   local frame = event.element.parent
-  if frame and frame.name == FRAME_NAME then
-    update_max_rate(frame)
+  local player = game.get_player(event.player_index)
+  if frame and frame.name == FRAME_NAME and player then
+    update_max_rate(frame, player.force)
   end
 end)
 
