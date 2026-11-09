@@ -369,7 +369,8 @@ end
 
 -- The input belt runs south from the first machine's top row and stops at the last
 -- input inserter: nothing below it would be picked up. (A column that eats what other
--- blocks make has its input belt drawn from the top of the blueprint by whoever uses it.)
+-- columns make gets the rest of its input belt, below it, from whoever uses it, and turns
+-- the belt to run north: the products reach it from below.)
 function Builder:add_input_belt()
   local geometry = self.geometry
   local first_row = geometry.first_row
@@ -606,8 +607,8 @@ local function tallest_end_row(builders)
   return height
 end
 
--- `stages` go from the one fed raw items (or, for a column that stands to the right of
--- other blocks, from the one whose input belt they draw above) to the last. Returns the
+-- `stages` go from the one fed raw items (or, for a column that eats what other columns
+-- make, that column alone, whose input belt whoever uses it extends) to the last. Returns the
 -- chain as a block: its entities, which are numbered from 1 in
 -- a frame whose x = 0 is the input belt of the first column and y = 0 its first row, and
 -- what whoever uses it needs to know about it (see `bpgen.Block`). The belt of the first

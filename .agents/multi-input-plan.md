@@ -1,5 +1,7 @@
 # Three and four ingredient recipes: a second input belt reached by long-handed inserters (first use: inserter)
 
+**The layout part was superseded on 2026-11-08 by the row layout ([row-layout-plan.md](row-layout-plan.md)): belt a and belt b still exist and the long-handed inserters still reach over belt a, but the columns stand side by side, both belts run north and `final_first_row` is gone. The split of ingredients between the belts (`choose_belts`) is unchanged.**
+
 Status: IMPLEMENTED 2026-11-07 in one local commit, not yet run in game, nothing pushed. The owner confirmed the five decisions below the same day. "What changed from the plan" at the end lists what building it taught.
 
 ## Requirements (owner, 2026-11-07)

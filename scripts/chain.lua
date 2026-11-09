@@ -8,7 +8,7 @@
 -- step whose ingredients are all raw has none (the first step of a chain). A step with one
 -- made ingredient is fed by a straight chain of steps. A step with two to four made
 -- ingredients is fed by that many blocks, one on each lane of its input belts (two lanes
--- a belt, and a second belt for the third and fourth, see scripts/blocks.lua). A step
+-- a belt, and a second belt for the third and fourth, see scripts/rows.lua). A step
 -- with made ingredients and one raw ingredient is fed by the blocks that make the first
 -- and by a belt of the second, which takes a lane too (`ChainStage.raw_item`). The
 -- following are refused:

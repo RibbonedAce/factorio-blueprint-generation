@@ -7,7 +7,7 @@ local config = require("scripts.config")
 local chain = require("scripts.chain")
 local planner = require("scripts.planner")
 local layout = require("scripts.layout")
-local blocks = require("scripts.blocks")
+local rows = require("scripts.rows")
 local messages = require("scripts.messages")
 
 local generator = {}
@@ -606,7 +606,7 @@ end
 ---@param planned bpgen.PlannedStage
 ---@return bpgen.Generated
 local function assemble(job, planned)
-  local entities = blocks.build(layout_stage(planned), job.names)
+  local entities = rows.build(layout_stage(planned), job.names)
   return {
     entities = entities,
     description = messages.description(job.item_name, planned.plan.output_per_minute, step_summaries(planned)),

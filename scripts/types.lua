@@ -136,10 +136,10 @@
 ---@field shape bpgen.Shape  the machine size must be one `supports_machine_size` accepts
 ---@field belt? "a"|"b"  for a stage that is a supplier: which input belt of the stage that eats it the product rides ("a" when nil): belt a is next to the machines, belt b one column further out, for the long-handed inserters
 ---@field recipe? string  the recipe to set on the machines; nil for a machine that picks its own recipe (a furnace)
----@field suppliers? (bpgen.StageLayout|bpgen.RawSupplier)[]  what it eats: the stages whose products it eats, in the order of the recipe's ingredients, then the raw item that goes with them, if any; none or one in a chain, two when a recipe has two made ingredients or one made ingredient and a raw one (`blocks.build` uses it; `layout.build_chain` ignores it)
+---@field suppliers? (bpgen.StageLayout|bpgen.RawSupplier)[]  what it eats: the stages whose products it eats, in the order of the recipe's ingredients, then the raw item that goes with them, if any; none or one in a chain, two when a recipe has two made ingredients or one made ingredient and a raw one (`rows.build` uses it; `layout.build_chain` ignores it)
 
 -- A raw item that a stage eats next to a made one: no machines, only a belt that brings the
--- item to the column that eats it (see scripts/blocks.lua).
+-- item to the column that eats it (see scripts/rows.lua).
 ---@class bpgen.RawSupplier
 ---@field raw_item string  the item
 
@@ -147,12 +147,12 @@
 ---@class bpgen.BlockOptions
 ---@field product_belt boolean  whether the chain draws its product belt, and may wind it (the last block of a blueprint), or whoever uses the block draws it
 
--- A part of a blueprint that makes one item: the columns of a chain, or two blocks and
--- the column that eats what they make. A block stands in a frame whose x = 0 is its
+-- A part of a blueprint that makes one item: the columns of a chain (or one column, which
+-- eats what other columns make). A block stands in a frame whose x = 0 is its
 -- left edge and y = 0 its top; whoever uses it moves it.
 ---@class bpgen.Block
 ---@field entities bpgen.Entity[]  numbered from 1
----@field poles bpgen.Entity[]  every pole of the block, for wiring it to its neighbours. A block that has neighbours also has a line of poles in the column beside its product belt, from within 2 rows of its top to within 2 rows of its bottom
+---@field poles bpgen.Entity[]  every pole of the block, for wiring it to its neighbours
 ---@field product_column integer  tile column of the product belt, the rightmost column. The block does not draw it unless it is the last block of the blueprint
 ---@field height integer  rows
 ---@field output_rows {first: integer, last: integer}  the rows where the output inserters of the last column drop onto the product belt

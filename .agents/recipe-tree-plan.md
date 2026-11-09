@@ -1,5 +1,7 @@
 # Recipe trees: a recursive block layout (first use: electronic circuit)
 
+**Superseded on 2026-11-08: the stacked layout this file describes (`scripts/blocks.lua`) was replaced by the row layout, see [row-layout-plan.md](row-layout-plan.md). What still holds: the requirements, the lane rules and the join/side-load reasoning; the stacking, the trails and the lines of poles are gone.**
+
 Status: IMPLEMENTED on 2026-11-07, not yet run in game. APPROVED by the owner on 2026-11-07 ("not 100% what I had in mind but it satisfies my requirements and works until we can get more sophisticated layouts with splitters and underground belts"). Implementation follows the order under "Work needed"; the progress is in `project-status.md`. This replaces the first design of the same day (the "fork", see the end), which the owner rejected. The layout was prototyped in a throwaway script (scratchpad, not in the repo, lost with the session) that builds the entities, runs `spec/support/blueprint_validator.lua` on them, and follows the items lane by lane with a small belt tracer.
 
 ## Requirements (owner, 2026-11-07)
