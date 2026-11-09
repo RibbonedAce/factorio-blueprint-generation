@@ -8,17 +8,9 @@ local chain = require("scripts.chain")
 local planner = require("scripts.planner")
 local layout = require("scripts.layout")
 local blocks = require("scripts.blocks")
+local messages = require("scripts.messages")
 
 local generator = {}
-
--- Turn a number into short text for messages: 56.25 -> "56.25", 60 -> "60".
--- (`string.format` rounds to 2 decimals; the gsub then trims trailing zeros.
--- The extra parentheses keep only gsub's first result, the text.)
----@param value number
----@return string
-local function format_number(value)
-  return (string.format("%.2f", value):gsub("%.?0+$", ""))
-end
 
 -- Copy a recipe prototype into a plain table for the planner. Returns nil for a
 -- recipe with a fluid among its ingredients: it would need pipes, which the layout
@@ -40,23 +32,6 @@ local function read_recipe(prototype)
     recipe.products[#recipe.products + 1] = {name = product.name, amount = prototype.get_product_amount(index)}
   end
   return recipe
-end
-
--- A LocalisedString for an error: the key is looked up in the locale file.
----@param key string  a key of the [blueprint-generation] section of the locale file
----@param ... LocalisedString|number|string  values for __1__, __2__ ... in the text
----@return LocalisedString
-local function error_message(key, ...)
-  return {"blueprint-generation." .. key, ...} --[[@as LocalisedString]]
-end
-
--- The localised name of an item, for messages. An item the game does not have (another
--- mod could have removed one the config names) is shown by its plain name.
----@param item_name string
----@return LocalisedString
-local function item_label(item_name)
-  local item = prototypes.item[item_name]
-  return item and item.localised_name or item_name
 end
 
 -- The building blocks every column of the blueprint shares.
@@ -272,23 +247,6 @@ end
 ---@field inserter_rotation_speed number
 ---@field long_inserter_rotation_speed number  the long-handed inserter's, or the plain inserter's when the game has none
 
--- Why the recipe tree could not be made, as a message for the player.
----@param reason bpgen.ChainReason
----@param item_name string  the item the reason is about
----@return LocalisedString
-local function chain_message(reason, item_name)
-  if reason == "no-recipe" then
-    return error_message("error-no-recipe", item_label(item_name))
-  end
-  if reason == "ambiguous" then
-    return error_message("error-ambiguous-recipe", item_label(item_name))
-  end
-  if reason == "several-crafted" or reason == "extra-ingredient" or reason == "fork-in-chain" then
-    return error_message("error-chain-too-complex", item_label(item_name))
-  end
-  return error_message("error-unsupported-recipe")
-end
-
 -- The steps for an item with the data of their machines, or nil and the message for
 -- the player when the item cannot be made from steps we can build or the game lacks
 -- a machine.
@@ -300,11 +258,11 @@ local function read_root(item_name)
   if not stage then
     ---@cast reason bpgen.ChainReason -- there is always a reason when there is no step
     ---@cast culprit string
-    return nil, chain_message(reason, culprit)
+    return nil, messages.chain_problem(reason, culprit)
   end
   local root = read_stage(stage)
   if not root then
-    return nil, error_message("error-missing-prototype")
+    return nil, messages.missing_prototype()
   end
   return root, nil
 end
@@ -335,12 +293,12 @@ end
 ---@return LocalisedString|nil error_message
 local function read_job(item_name, rate_per_minute)
   if not config.products[item_name] then
-    return nil, error_message("error-unsupported-item")
+    return nil, messages.unsupported_item()
   end
   local names = shared_names()
   local belt_speed, rotation_speed, long_rotation_speed = read_speeds(names)
   if not (belt_speed and rotation_speed and long_rotation_speed) then
-    return nil, error_message("error-missing-prototype")
+    return nil, messages.missing_prototype()
   end
   local root, problem = read_root(item_name)
   if not root then
@@ -406,17 +364,17 @@ end
 local function stage_problem(stage)
   local size = stage.machine_size
   if not size or not layout.supports_machine_size(size) then
-    return error_message("error-unsupported-machine")
+    return messages.unsupported_machine()
   end
   local energy_source = stage.energy_source
   if not energy_source then
-    return error_message("error-unsupported-energy")
+    return messages.unsupported_energy()
   end
   if #stage.suppliers > 0 and stage.fuel then
-    return error_message("error-chain-fuel", item_label(stage.item))
+    return messages.chain_fuel(stage.item)
   end
   if not suits_machine(stage.fuel, energy_source, stage.fuels) then
-    return error_message("error-fuel-mismatch", prototypes.entity[stage.machine].localised_name)
+    return messages.fuel_mismatch(prototypes.entity[stage.machine].localised_name)
   end
   return nil
 end
@@ -441,31 +399,15 @@ end
 ---@field plan bpgen.Plan
 ---@field suppliers bpgen.PlannedStage[]  in the order of `stage.suppliers`
 
--- Why the planner said no, as a message for the player.
----@param reason bpgen.PlanReason
----@param max_rate number|nil
----@return LocalisedString
-local function refusal_message(reason, max_rate)
-  if reason == "rate-too-high" then
-    ---@cast max_rate number -- the planner always gives it with this reason
-    return error_message("error-rate-too-high", format_number(max_rate))
-  end
-  return error_message("error-unsupported-recipe")
-end
-
--- The text for the blueprint's description field: the machines, step by step.
----@param job bpgen.Job
+-- The machines of every step, from the first to the last, for the blueprint's description.
 ---@param planned bpgen.PlannedStage
----@return string
-local function describe_blueprint(job, planned)
-  local machines = {}
-  ---@type number
-  local made_per_minute = 0
+---@return bpgen.StepSummary[]
+local function step_summaries(planned)
+  local steps = {}
   for _, step in ipairs(in_order(planned, {})) do
-    machines[#machines + 1] = string.format("%d x %s", step.plan.machines, step.stage.machine)
-    made_per_minute = step.plan.output_per_minute -- the last step's, the root's, is what counts
+    steps[#steps + 1] = {machines = step.plan.machines, machine = step.stage.machine}
   end
-  return string.format("%s: %s per minute from %s", job.item_name, format_number(made_per_minute), table.concat(machines, ", "))
+  return steps
 end
 
 -- The raw items (and the fuel) the blueprint uses, a minute at the rate it really makes: the
@@ -508,26 +450,20 @@ local function add_demand(step, makes, totals)
   end
 end
 
--- The LocalisedString shown to the player when a blueprint is ready: how much of the
--- product it makes a minute (what its machines really make, which can be more than was
--- asked) and how much of each raw item it uses a minute.
+-- How much of each raw item, then of each fuel, the blueprint uses a minute when its
+-- machines make what they really make (which can be more than was asked).
 ---@param planned bpgen.PlannedStage
----@return LocalisedString
-local function success_message(planned)
-  local made = planned.plan.output_per_minute
+---@return bpgen.RawAmount[]
+local function raw_amounts(planned)
   local totals = {order = {}, fuel_order = {}, amount = {}}
-  add_demand(planned, made, totals)
-  ---@type LocalisedString
-  local raw = {""}
+  add_demand(planned, planned.plan.output_per_minute, totals)
+  local raws = {}
   for _, names in ipairs({totals.order, totals.fuel_order}) do
     for _, name in ipairs(names) do
-      if #raw > 1 then
-        raw[#raw + 1] = ", "
-      end
-      raw[#raw + 1] = {"blueprint-generation.raw-amount", format_number(totals.amount[name]), item_label(name)}
+      raws[#raws + 1] = {name = name, amount = totals.amount[name]}
     end
   end
-  return {"blueprint-generation.generated", format_number(made), item_label(planned.stage.item), raw} --[[@as LocalisedString]]
+  return raws
 end
 
 -- The machine's size in tiles. `machine_problem` has already refused a machine
@@ -604,7 +540,7 @@ local function make_plans(job)
   local plans, reason, max_rate = planner.plan_tree(tree_request(job))
   if not plans then
     ---@cast reason bpgen.PlanReason -- the planner always gives a reason when it gives no plans
-    return nil, refusal_message(reason, max_rate)
+    return nil, messages.plan_problem(reason, max_rate)
   end
   return planned_tree(job.root, plans), nil
 end
@@ -673,8 +609,8 @@ local function assemble(job, planned)
   local entities = blocks.build(layout_stage(planned), job.names)
   return {
     entities = entities,
-    description = describe_blueprint(job, planned),
-    message = success_message(planned),
+    description = messages.description(job.item_name, planned.plan.output_per_minute, step_summaries(planned)),
+    message = messages.ready(planned.plan.output_per_minute, planned.stage.item, raw_amounts(planned)),
   }
 end
 
@@ -692,7 +628,7 @@ local function read_buildable_job(item_name, rate_per_minute, force)
   end
   local locked = force and locked_item(job, force)
   if locked then
-    return nil, error_message("error-locked", item_label(locked))
+    return nil, messages.locked(locked)
   end
   problem = machine_problem(job)
   if problem then
@@ -733,9 +669,9 @@ function generator.max_rate_message(item_name, force)
   local max_rate, reason = planner.max_tree_rate(tree_request(job))
   if not max_rate then
     ---@cast reason bpgen.PlanReason
-    return refusal_message(reason)
+    return messages.plan_problem(reason)
   end
-  return error_message("max-rate", format_number(max_rate))
+  return messages.max_rate(max_rate)
 end
 
 -- Make the blueprint for `rate_per_minute` of `item_name`.

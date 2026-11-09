@@ -136,3 +136,5 @@ The code carries type annotations (`---@param`, `---@class`, ...) so the editor 
 3. `.emmyrc.json` in this repository sets the Lua version. If the editor shows problems the code should not have, run `Factorio: Check Config` from the command palette.
 
 The shared types of this mod are in `scripts/types.lua`; their names start with `bpgen.`.
+
+Where things are: `control.lua` only registers the events; `scripts/gui.lua` is the window; `scripts/generator.lua` is the one place that reads the game's recipes and machines and connects them to the planner and the layout; `scripts/messages.lua` holds all the wording (with the texts themselves in `locale/en/blueprint-generation.cfg`), so a change to what the player reads can be reviewed apart from a change to what the mod builds.
