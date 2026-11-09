@@ -29,7 +29,7 @@ local MOST_INGREDIENTS = 2 * INPUT_LANES
 ---@param recipe bpgen.Recipe
 ---@param item_name string
 ---@return number
-local function amount_made(recipe, item_name)
+function planner.amount_made(recipe, item_name)
   ---@type number
   local total = 0
   for _, product in ipairs(recipe.products) do
@@ -75,7 +75,7 @@ end
 ---@param product_name string
 ---@return boolean
 local function is_supported(recipe, product_name)
-  return amount_made(recipe, product_name) > 0 and #recipe.products == 1 and recipe.energy > 0
+  return planner.amount_made(recipe, product_name) > 0 and #recipe.products == 1 and recipe.energy > 0
 end
 
 -- The two lanes of the input belt, one item on each, or nil when the items do not
@@ -166,7 +166,7 @@ local function full_speed(request)
   for _, ingredient in ipairs(recipe.ingredients) do
     inputs[#inputs + 1] = {name = ingredient.name, per_minute = crafts_per_minute * ingredient.amount}
   end
-  return inputs, crafts_per_minute * amount_made(recipe, request.product)
+  return inputs, crafts_per_minute * planner.amount_made(recipe, request.product)
 end
 
 -- How many items a minute the ingredients named in `names` add up to.

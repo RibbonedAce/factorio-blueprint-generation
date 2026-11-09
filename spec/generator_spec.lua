@@ -27,6 +27,19 @@ local fake_force = builders.fake_force
 local amount_of = builders.amount_of
 local fluid_of = builders.fluid_of
 
+-- The message for a blueprint that is ready: how much of the product it makes a minute, then the raw
+-- items and the fuel as {item, amount a minute} pairs, in the order the message lists them.
+local function ready_message(product, per_minute, raws)
+  local list = {""}
+  for index, raw in ipairs(raws) do
+    if index > 1 then
+      list[#list + 1] = ", "
+    end
+    list[#list + 1] = {"blueprint-generation.raw-amount", raw[2], {"item-name." .. raw[1]}}
+  end
+  return {"blueprint-generation.generated", per_minute, {"item-name." .. product}, list}
+end
+
 local function count_named(entities, name)
   local total = 0
   for _, entity in ipairs(entities) do
@@ -86,7 +99,7 @@ describe("generator", function()
         distinct_names_of(result.entities))
     end)
 
-    it("tells the player what was built, the rate achieved and what goes on the belt when a blueprint is ready", function()
+    it("tells the player how much it makes a minute, as much as its machines really make, and what it uses", function()
       _G.prototypes = fake_prototypes{
         furnace_speed = 1,
         recipes = {["iron-plate"] = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}},
@@ -94,24 +107,43 @@ describe("generator", function()
 
       local result = generator.generate("iron-plate", 50)
 
-      assert.are.same({
-        "blueprint-generation.generated",
-        {"",
-          {
-            "blueprint-generation.generated-first-stage",
-            "3",                           -- furnaces
-            {"entity-name.stone-furnace"},
-            "56.25",                       -- 3 x 18.75 achieved
-            {"item-name.iron-plate"},
-          },
-        },
-        "50",                          -- what was asked for
-        {"item-name.iron-ore"},
-        {"item-name.coal"},
-      }, result.message)
+      -- 3 furnaces x 18.75 = 56.25 plates (50 were asked for) eat 56.25 ore, and burn coal while they craft:
+      -- 56.25 crafts of 3.2 s are 3 furnaces working all the time, and a furnace (90 kW) burns 1.35 coal of 4 MJ a minute.
+      assert.are.same(ready_message("iron-plate", "56.25", {{"iron-ore", "56.25"}, {"coal", "4.05"}}), result.message)
     end)
 
-    it("prints whole numbers without decimals when the rate is whole", function()
+    it("burns the coal the game's numbers say: more for a machine that uses more energy, a weaker burner, or a fuel with less in it", function()
+      local recipes = {["iron-plate"] = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}}
+
+      -- 56.25 plates are 3 furnaces' worth of crafting; 3 x 1.35 = 4.05 coal with the defaults
+      local function coal_for(options)
+        options.furnace_speed = options.furnace_speed or 1
+        options.recipes = recipes
+        _G.prototypes = fake_prototypes(options)
+        return generator.generate("iron-plate", 50).message[4][4][2]
+      end
+
+      assert.are.equal("4.05", coal_for({}))
+      assert.are.equal("8.1", coal_for({furnace_energy_usage = 3000}))   -- twice the energy
+      assert.are.equal("8.1", coal_for({furnace_effectivity = 0.5}))     -- half of it is lost
+      assert.are.equal("8.1", coal_for({coal_fuel_value = 2000000}))     -- half the energy in a coal
+      -- a furnace twice as fast crafts the 75 plates that 2 furnaces make in 3.2 / 2 s each: 2 furnaces' worth, 2 x 1.35
+      assert.are.equal("2.7", coal_for({furnace_speed = 2}))
+    end)
+
+    it("leaves the fuel out of the message when the game does not say how much energy the machine uses", function()
+      _G.prototypes = fake_prototypes{
+        furnace_speed = 1,
+        furnace_energy_usage = false,
+        recipes = {["iron-plate"] = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}},
+      }
+
+      local result = generator.generate("iron-plate", 50)
+
+      assert.are.same(ready_message("iron-plate", "56.25", {{"iron-ore", "56.25"}}), result.message)
+    end)
+
+    it("prints whole numbers without decimals when the number is whole", function()
       _G.prototypes = fake_prototypes{
         furnace_speed = 1,
         recipes = {["iron-plate"] = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}},
@@ -119,9 +151,8 @@ describe("generator", function()
 
       local result = generator.generate("iron-plate", 60)
 
-      local first_step = result.message[2][2]
-      assert.are.equal("75", first_step[4]) -- 4 furnaces x 18.75, not "75.00"
-      assert.are.equal("60", result.message[3])
+      -- 4 furnaces x 18.75 = 75, not "75.00"; 75 crafts of 3.2 s are 4 furnaces working all the time: 4 x 1.35 coal, not "5.40"
+      assert.are.same(ready_message("iron-plate", "75", {{"iron-ore", "75"}, {"coal", "5.4"}}), result.message)
     end)
 
     it("describes the blueprint with the rate achieved and the machines used when generating", function()
@@ -283,7 +314,7 @@ describe("generator", function()
       assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- 120 / 60 gears a minute each
     end)
 
-    it("tells the player to use both lanes for the ingredient when the machine burns nothing", function()
+    it("names the one ingredient a machine that burns nothing eats, and no fuel", function()
       _G.prototypes = fake_prototypes{
         inserter_rotation_speed = 0.014,
         machines = {["assembling-machine-1"] = assembler},
@@ -292,20 +323,8 @@ describe("generator", function()
 
       local result = generator.generate("iron-gear-wheel", 100)
 
-      assert.are.same({
-        "blueprint-generation.generated-one-item",
-        {"",
-          {
-            "blueprint-generation.generated-first-stage",
-            "2",                                    -- machines
-            {"entity-name.assembling-machine-1"},
-            "100.8",                                -- 2 x 50.4 achieved
-            {"item-name.iron-gear-wheel"},
-          },
-        },
-        "100",                                  -- what was asked for
-        {"item-name.iron-plate"},
-      }, result.message)
+      -- 2 assemblers make 2 x 50.4 = 100.8 gears from 2 plates each
+      assert.are.same(ready_message("iron-gear-wheel", "100.8", {{"iron-plate", "201.6"}}), result.message)
     end)
 
     it("allows the rate when both input lanes are exactly full", function()
@@ -439,7 +458,7 @@ describe("generator", function()
     }
     local assembler = a_machine{crafting_speed = 0.5, size = 3}
 
-    it("tells the player which ingredient goes on which lane when the recipe has two", function()
+    it("names each ingredient of a recipe with two, whatever the lane it rides", function()
       _G.prototypes = fake_prototypes{
         inserter_rotation_speed = 0.014, -- 50.4 items a minute
         machines = {["assembling-machine-1"] = assembler},
@@ -448,21 +467,9 @@ describe("generator", function()
 
       local result = generator.generate("iron-gear-wheel", 50)
 
-      assert.are.same({
-        "blueprint-generation.generated",
-        {"",
-          {
-            "blueprint-generation.generated-first-stage",
-            "2",                                    -- machines
-            {"entity-name.assembling-machine-1"},
-            "50.4",                                 -- 2 x 25.2 achieved: 240 items a minute at full speed, but two inserters move 100.8, so 60 x 100.8 / 240
-            {"item-name.iron-gear-wheel"},
-          },
-        },
-        "50",                                   -- what was asked for
-        {"item-name.iron-plate"},
-        {"item-name.copper-cable"},
-      }, result.message)
+      -- 2 x 25.2 = 50.4 achieved: 240 items a minute at full speed, but two inserters move 100.8, so 60 x 100.8 / 240.
+      -- 1 plate and 3 cables for each.
+      assert.are.same(ready_message("iron-gear-wheel", "50.4", {{"iron-plate", "50.4"}, {"copper-cable", "151.2"}}), result.message)
     end)
 
     it("refuses the rate when one ingredient's lane fills before the other's", function()
@@ -678,33 +685,14 @@ describe("generator", function()
       assert.are.equal("iron-gear-wheel: 100.8 per minute from 11 x stone-furnace, 2 x assembling-machine-1", result.description)
     end)
 
-    it("tells the player what each step makes, and puts only the raw items and the fuel on the input belt", function()
+    it("counts what the gears need of the ore and not what the furnaces could use", function()
       _G.prototypes = gear_game()
 
       local result = generator.generate("iron-gear-wheel", 100)
 
-      assert.are.same({
-        "blueprint-generation.generated",
-        {"",
-          {
-            "blueprint-generation.generated-first-stage",
-            "11",                                    -- furnaces
-            {"entity-name.stone-furnace"},
-            "206.25",                                -- 11 x 18.75 plates
-            {"item-name.iron-plate"},
-          },
-          {
-            "blueprint-generation.generated-next-stage",
-            "2",                                     -- assemblers
-            {"entity-name.assembling-machine-1"},
-            "100.8",                                 -- 2 x 50.4 gears
-            {"item-name.iron-gear-wheel"},
-          },
-        },
-        "100",                                       -- what was asked for
-        {"item-name.iron-ore"},
-        {"item-name.coal"},
-      }, result.message)
+      -- 100.8 gears need 201.6 plates and so 201.6 ore, although the 11 furnaces could make 206.25 plates. They work
+      -- 201.6 x 3.2 / 60 = 10.752 furnaces' worth of the time, burning 1.35 coal a minute each: 14.5152.
+      assert.are.same(ready_message("iron-gear-wheel", "100.8", {{"iron-ore", "201.6"}, {"coal", "14.52"}}), result.message)
     end)
 
     it("limits the rate by the one lane that carries the plates to the assemblers", function()
@@ -872,26 +860,14 @@ describe("generator", function()
         result.description)
     end)
 
-    it("tells the player what each step makes and what goes on each belt of raw items, from the top down", function()
+    it("adds up what each branch needs, the ores in the order of the recipe and the fuel after them", function()
       _G.prototypes = circuit_game()
 
       local result = generator.generate("electronic-circuit", 50)
 
-      assert.are.same({
-        "blueprint-generation.generated-raw-belts",
-        {"",
-          {"blueprint-generation.generated-first-stage", "3", {"entity-name.stone-furnace"}, "56.25", {"item-name.iron-plate"}},
-          {"blueprint-generation.generated-other-stage", "4", {"entity-name.stone-furnace"}, "75", {"item-name.copper-plate"}},
-          {"blueprint-generation.generated-next-stage", "2", {"entity-name.assembling-machine-1"}, "201.6", {"item-name.copper-cable"}},
-          {"blueprint-generation.generated-next-stage", "2", {"entity-name.assembling-machine-1"}, "50", {"item-name.electronic-circuit"}},
-        },
-        "50", -- what was asked for
-        {"",
-          {"blueprint-generation.raw-belt", {"item-name.copper-ore"}, {"item-name.coal"}}, -- the taller block, the cables' furnaces, is on top
-          "; ",
-          {"blueprint-generation.raw-belt", {"item-name.iron-ore"}, {"item-name.coal"}},
-        },
-      }, result.message)
+      -- 50 circuits: 50 plates (50 iron ore, 2.667 furnaces' worth of crafting: 3.6 coal), and 150 cables from 75 copper
+      -- plates (75 copper ore, 4 furnaces' worth: 5.4 coal)
+      assert.are.same(ready_message("electronic-circuit", "50", {{"iron-ore", "50"}, {"copper-ore", "75"}, {"coal", "9"}}), result.message)
     end)
 
     it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
@@ -1012,25 +988,14 @@ describe("generator", function()
         result.description)
     end)
 
-    it("tells the player to bring the raw item on a belt of its own, below the belt of the made item's ore", function()
+    it("counts a raw item that goes with a made one like any other raw item", function()
       _G.prototypes = pole_game()
 
       local result = generator.generate("small-electric-pole", 60)
 
-      assert.are.same({
-        "blueprint-generation.generated-raw-belts",
-        {"",
-          {"blueprint-generation.generated-first-stage", "2", {"entity-name.stone-furnace"}, "37.5", {"item-name.copper-plate"}},
-          {"blueprint-generation.generated-next-stage", "1", {"entity-name.assembling-machine-1"}, "100.8", {"item-name.copper-cable"}},
-          {"blueprint-generation.generated-next-stage", "1", {"entity-name.assembling-machine-1"}, "67.2", {"item-name.small-electric-pole"}},
-        },
-        "60", -- what was asked for
-        {"",
-          {"blueprint-generation.raw-belt", {"item-name.copper-ore"}, {"item-name.coal"}},
-          "; ",
-          {"blueprint-generation.raw-belt-one-item", {"item-name.wood"}},
-        },
-      }, result.message)
+      -- 67.2 poles come from 33.6 crafts of 1 wood and 2 cables: 33.6 wood, 67.2 cables from 33.6 copper plates, so 33.6
+      -- ore, and 33.6 x 3.2 / 60 = 1.792 furnaces' worth of crafting: 2.4192 coal
+      assert.are.same(ready_message("small-electric-pole", "67.2", {{"copper-ore", "33.6"}, {"wood", "33.6"}, {"coal", "2.42"}}), result.message)
     end)
 
     it("sets the recipe of every assembling machine and leaves the furnaces to pick their own", function()
@@ -1146,29 +1111,14 @@ describe("generator", function()
         result.description)
     end)
 
-    it("tells the player what each step makes and what goes on each belt of raw items, from the top down", function()
+    it("adds up the same raw item used by two branches, and the fuel of every furnace", function()
       _G.prototypes = inserter_game()
 
       local result = generator.generate("inserter", 36)
 
-      assert.are.same({
-        "blueprint-generation.generated-raw-belts",
-        {"",
-          {"blueprint-generation.generated-first-stage", "4", {"entity-name.stone-furnace"}, "75", {"item-name.iron-plate"}},
-          {"blueprint-generation.generated-next-stage", "1", {"entity-name.assembling-machine-1"}, "50.4", {"item-name.iron-gear-wheel"}},
-          {"blueprint-generation.generated-other-stage", "2", {"entity-name.stone-furnace"}, "37.5", {"item-name.stone-brick"}},
-          {"blueprint-generation.generated-other-stage", "2", {"entity-name.stone-furnace"}, "37.5", {"item-name.iron-plate"}},
-          {"blueprint-generation.generated-next-stage", "1", {"entity-name.assembling-machine-1"}, "36", {"item-name.inserter"}},
-        },
-        "36", -- what was asked for
-        {"",
-          {"blueprint-generation.raw-belt", {"item-name.iron-ore"}, {"item-name.coal"}}, -- the gears' plates, on top
-          "; ",
-          {"blueprint-generation.raw-belt", {"item-name.stone"}, {"item-name.coal"}},
-          "; ",
-          {"blueprint-generation.raw-belt", {"item-name.iron-ore"}, {"item-name.coal"}},
-        },
-      }, result.message)
+      -- 36 inserters: 36 gears (72 plates), 36 bricks (72 stone) and 36 plates, so 72 + 36 iron ore and 72 stone.
+      -- The furnaces craft 3.2 s for each: 72 + 36 plates and 36 bricks are 3.84 + 1.92 + 1.92 furnaces' worth: 10.368 coal.
+      assert.are.same(ready_message("inserter", "36", {{"iron-ore", "108"}, {"stone", "72"}, {"coal", "10.37"}}), result.message)
     end)
 
     it("sets the recipe of every assembling machine and leaves the furnaces to pick their own", function()

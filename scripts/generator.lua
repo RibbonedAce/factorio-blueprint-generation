@@ -200,6 +200,23 @@ local function lookup_production(item_name)
   return nil, "ambiguous"
 end
 
+-- How many of `fuel` a machine burns in a minute of crafting: its energy use divided by what
+-- the fuel gives (the burner's effectivity counts too). nil for a machine that burns nothing or
+-- when the game does not say. The game gives the energy use in joules per tick (ASSUMED, not
+-- checked in game: a stone furnace, 90 kW, burns 1.35 coal a minute).
+---@param machine LuaEntityPrototype
+---@param fuel string|nil
+---@return number|nil
+local function read_fuel_use(machine, fuel)
+  local burner = machine.burner_prototype
+  local item = fuel and prototypes.item[fuel]
+  local usage = machine.get_max_energy_usage()
+  if not (burner and item and usage and item.fuel_value > 0 and burner.effectivity > 0) then
+    return nil
+  end
+  return 60 * 60 * usage / (item.fuel_value * burner.effectivity)
+end
+
 -- One step of the recipe tree with what the game says about its machine, copied into
 -- plain values, and the steps that make its ingredients. Returns nil if something is
 -- missing (another mod could have removed or renamed it): the machine, or its crafting
@@ -210,6 +227,7 @@ end
 ---@field machine string  machine prototype name
 ---@field machine_type string  the type of the machine prototype: "furnace" or "assembling-machine", say
 ---@field fuel string|nil  item the machine burns, set by the config
+---@field fuel_use number|nil  how many of `fuel` one machine burns a minute while it crafts; nil when the game does not say
 ---@field machine_speed number
 ---@field machine_size integer|nil  nil when the machine is not square
 ---@field energy_source bpgen.EnergySource|nil  nil when the machine runs on something unhandled
@@ -235,6 +253,7 @@ local function read_stage(stage)
   local energy_source = read_energy_source(machine)
   return {
     item = stage.item, recipe = stage.recipe, machine = stage.machine, machine_type = machine.type, fuel = stage.fuel,
+    fuel_use = read_fuel_use(machine, stage.fuel),
     machine_speed = machine_speed, machine_size = square_size(machine),
     energy_source = energy_source, fuels = burnable_by(energy_source), suppliers = suppliers,
     raw_item = stage.raw_item,
@@ -449,115 +468,66 @@ local function describe_blueprint(job, planned)
   return string.format("%s: %s per minute from %s", job.item_name, format_number(made_per_minute), table.concat(machines, ", "))
 end
 
--- How a step's sentence goes on from the step before it in the list: the first step
--- starts the sentence, and a step fed by other steps says so (the step listed just before
--- it is the last of the steps that feed it). A step fed raw items that is not the first
--- is simply added.
+-- The raw items (and the fuel) the blueprint uses, a minute at the rate it really makes: the
+-- step is asked to make `makes` items a minute, so it needs so many crafts, so many of each
+-- ingredient (the steps that make an ingredient are asked for that much in turn; an
+-- ingredient no step makes is raw) and, in a machine that burns fuel, the fuel the machines
+-- burn while crafting. `totals.order` lists the raw items in the order the steps need them,
+-- from the first step; `totals.fuel_order` the fuels, which go after them.
 ---@param step bpgen.PlannedStage
----@param previous bpgen.PlannedStage|nil  the step listed before it
----@return string
-local function stage_key(step, previous)
-  if not previous then
-    return "blueprint-generation.generated-first-stage"
-  end
-  if #step.suppliers > 0 then
-    return "blueprint-generation.generated-next-stage"
-  end
-  return "blueprint-generation.generated-other-stage"
-end
-
--- What one step of the tree makes and with what, as a LocalisedString.
----@param step bpgen.PlannedStage
----@param previous bpgen.PlannedStage|nil
----@return LocalisedString
-local function stage_message(step, previous)
-  return {
-    stage_key(step, previous),
-    string.format("%d", step.plan.machines),
-    prototypes.entity[step.stage.machine].localised_name,
-    format_number(step.plan.output_per_minute),
-    item_label(step.stage.item),
-  } --[[@as LocalisedString]]
-end
-
--- What each step makes, one sentence part after the other, from the raw items to the product.
----@param planned bpgen.PlannedStage
----@return LocalisedString
-local function steps_message(planned)
-  ---@type LocalisedString
-  local steps = {""}
-  ---@type bpgen.PlannedStage|nil
-  local previous
-  for _, step in ipairs(in_order(planned, {})) do
-    steps[#steps + 1] = stage_message(step, previous)
-    previous = step
-  end
-  return steps
-end
-
--- The message for a blueprint with one belt of raw items. The entry locale text fills
--- __1__ to __4__ from the values below, in this order: what each step makes (one
--- LocalisedString for all the steps, see `steps_message`), the rate asked, then what
--- goes on the input belt: the first lane's item is __3__ and the second lane's item,
--- when it is a different one (a fuel, or a second ingredient), is __4__. One item on
--- both lanes has an entry of its own, `generated-one-item`, which only has __3__.
----@param job bpgen.Job
----@param steps LocalisedString
----@param lanes string[]  the items on the two lanes of the belt of raw items
----@return LocalisedString
-local function one_belt_message(job, steps, lanes)
-  local first_lane, second_lane = lanes[1], lanes[2]
-  local message = {
-    first_lane == second_lane and "blueprint-generation.generated-one-item" or "blueprint-generation.generated",
-    steps,
-    format_number(job.rate_per_minute),
-    item_label(first_lane),
-  }
-  if second_lane ~= first_lane then
-    message[#message + 1] = item_label(second_lane)
-  end
-  return message --[[@as LocalisedString]]
-end
-
--- How one belt of raw items is loaded, for the player.
----@param lanes string[]  the items on its two lanes
----@return LocalisedString
-local function raw_belt_text(lanes)
-  if lanes[1] == lanes[2] then
-    return {"blueprint-generation.raw-belt-one-item", item_label(lanes[1])}
-  end
-  return {"blueprint-generation.raw-belt", item_label(lanes[1]), item_label(lanes[2])}
-end
-
--- The message for a blueprint with several belts of raw items, which come in on the
--- left, from the top down: __3__ lists them in that order.
----@param job bpgen.Job
----@param steps LocalisedString
----@param raw_belts string[][]  the items on the two lanes of each belt of raw items, from the top down
----@return LocalisedString
-local function several_belts_message(job, steps, raw_belts)
-  ---@type LocalisedString
-  local belts = {""}
-  for index, lanes in ipairs(raw_belts) do
-    if index > 1 then
-      belts[#belts + 1] = "; "
+---@param makes number  how many of the step's item it is asked for
+---@param totals {order: string[], fuel_order: string[], amount: table<string, number>}
+local function add_demand(step, makes, totals)
+  local stage = step.stage
+  local function add(name, amount, is_fuel)
+    if not totals.amount[name] then
+      totals.amount[name] = 0
+      local order = is_fuel and totals.fuel_order or totals.order
+      order[#order + 1] = name
     end
-    belts[#belts + 1] = raw_belt_text(lanes)
+    totals.amount[name] = totals.amount[name] + amount
   end
-  return {"blueprint-generation.generated-raw-belts", steps, format_number(job.rate_per_minute), belts} --[[@as LocalisedString]]
+  local crafts = makes / planner.amount_made(stage.recipe, stage.item)
+  local made_by = {}
+  for _, supplier in ipairs(step.suppliers) do
+    made_by[supplier.stage.item] = supplier
+  end
+  for _, ingredient in ipairs(stage.recipe.ingredients) do
+    if made_by[ingredient.name] then
+      add_demand(made_by[ingredient.name], crafts * ingredient.amount, totals)
+    end
+  end
+  for _, ingredient in ipairs(stage.recipe.ingredients) do
+    if not made_by[ingredient.name] then
+      add(ingredient.name, crafts * ingredient.amount)
+    end
+  end
+  if stage.fuel and stage.fuel_use then
+    local machines_working = crafts * stage.recipe.energy / (60 * stage.machine_speed)
+    add(stage.fuel, machines_working * stage.fuel_use, true)
+  end
 end
 
--- The LocalisedString shown to the player when a blueprint is ready.
----@param job bpgen.Job
+-- The LocalisedString shown to the player when a blueprint is ready: how much of the
+-- product it makes a minute (what its machines really make, which can be more than was
+-- asked) and how much of each raw item it uses a minute.
 ---@param planned bpgen.PlannedStage
----@param raw_belts string[][]  the items on the two lanes of each belt of raw items, from the top down
 ---@return LocalisedString
-local function success_message(job, planned, raw_belts)
-  local steps = steps_message(planned)
-  if #raw_belts == 1 then
-    return one_belt_message(job, steps, raw_belts[1])
+local function success_message(planned)
+  local made = planned.plan.output_per_minute
+  local totals = {order = {}, fuel_order = {}, amount = {}}
+  add_demand(planned, made, totals)
+  ---@type LocalisedString
+  local raw = {""}
+  for _, names in ipairs({totals.order, totals.fuel_order}) do
+    for _, name in ipairs(names) do
+      if #raw > 1 then
+        raw[#raw + 1] = ", "
+      end
+      raw[#raw + 1] = {"blueprint-generation.raw-amount", format_number(totals.amount[name]), item_label(name)}
+    end
   end
-  return several_belts_message(job, steps, raw_belts)
+  return {"blueprint-generation.generated", format_number(made), item_label(planned.stage.item), raw} --[[@as LocalisedString]]
 end
 
 -- The machine's size in tiles. `machine_problem` has already refused a machine
@@ -666,23 +636,18 @@ end
 
 -- What the layout is told about a step and what it eats: the steps that make its
 -- ingredients, each saying which belt of this step it rides, then the raw item that goes
--- with them, if any, which has no machines and only a belt (on belt a). A step fed raw
--- items, and the belt of a raw item, are noted in `raw_lanes`, with the items on the
--- lanes of the belt.
+-- with them, if any, which has no machines and only a belt (on belt a).
 ---@param step bpgen.PlannedStage
----@param raw_lanes table<bpgen.StageLayout, string[]>
 ---@return bpgen.StageLayout
-local function layout_stage(step, raw_lanes)
+local function layout_stage(step)
   local suppliers = {}
   for index, supplier in ipairs(step.suppliers) do
-    suppliers[index] = layout_stage(supplier, raw_lanes)
+    suppliers[index] = layout_stage(supplier)
     suppliers[index].belt = rides_belt_b(step.plan, supplier.stage.item) and "b" or "a"
   end
   local raw_item = step.stage.raw_item
   if raw_item then
-    local raw_supplier = {raw_item = raw_item}
-    suppliers[#suppliers + 1] = raw_supplier
-    raw_lanes[raw_supplier] = {raw_item, raw_item}
+    suppliers[#suppliers + 1] = {raw_item = raw_item}
   end
   local stage = {
     machine_count = step.plan.machines,
@@ -697,9 +662,6 @@ local function layout_stage(step, raw_lanes)
     },
     suppliers = suppliers,
   }
-  if #suppliers == 0 then
-    raw_lanes[stage] = step.plan.lanes
-  end
   return stage
 end
 
@@ -708,16 +670,11 @@ end
 ---@param planned bpgen.PlannedStage
 ---@return bpgen.Generated
 local function assemble(job, planned)
-  local raw_lanes = {}
-  local entities, raw_stages = blocks.build(layout_stage(planned, raw_lanes), job.names)
-  local raw_belts = {}
-  for index, stage in ipairs(raw_stages) do
-    raw_belts[index] = raw_lanes[stage]
-  end
+  local entities = blocks.build(layout_stage(planned), job.names)
   return {
     entities = entities,
     description = describe_blueprint(job, planned),
-    message = success_message(job, planned, raw_belts),
+    message = success_message(planned),
   }
 end
 

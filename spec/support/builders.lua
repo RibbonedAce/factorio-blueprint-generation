@@ -181,7 +181,8 @@ end
 -- with neither an electric nor a burner energy source (the game has others).
 --     a_machine{crafting_speed = 0.5, size = 3}
 --     a_machine{crafting_speed = 1, size = 2, burns = {"chemical"}}
----@param options {crafting_speed: number|false, size: integer, height?: integer, burns?: string[], heat?: boolean}  `height` defaults to `size`; give it for a machine that is not square
+-- `energy_usage` is what the machine uses while it crafts, in joules per tick; the default is 1500 (90 kW).
+---@param options {crafting_speed: number|false, size: integer, height?: integer, burns?: string[], heat?: boolean, energy_usage?: number}  `height` defaults to `size`; give it for a machine that is not square
 ---@return table
 function builders.a_machine(options)
   return {
@@ -190,6 +191,7 @@ function builders.a_machine(options)
     height = options.height or options.size,
     burns = options.burns,
     heat = options.heat,
+    energy_usage = options.energy_usage or 1500,
   }
 end
 
@@ -211,6 +213,10 @@ end
 --                           inserter, 50.4 items a minute); `false` makes it an
 --                           entity that is not an inserter
 --   missing_entities        names of buildings the game does not have, default none
+--   furnace_energy_usage    what the stone furnace uses while it crafts, in joules per tick; default 1500 (90 kW);
+--                           `false` makes the game not say
+--   furnace_effectivity     the share of the fuel's energy the stone furnace uses, default 1
+--   coal_fuel_value         the energy of one coal in joules, default 4000000 (4 MJ)
 -- The buildings the layout uses (furnace, belt, inserter, pole) exist unless
 -- listed as missing. Every item a recipe mentions exists, and so does coal, the
 -- fuel, in the fuel category "chemical". The stone furnace burns "chemical".
@@ -232,6 +238,9 @@ function builders.fake_prototypes(options)
   local belt_speed = option(options.belt_speed, 0.03125)
   local rotation_speed = option(options.inserter_rotation_speed, 0.014)
   local long_rotation_speed = option(options.long_inserter_rotation_speed, 0.02)
+  local furnace_energy_usage = option(options.furnace_energy_usage, 1500)
+  local furnace_effectivity = option(options.furnace_effectivity, 1)
+  local coal_fuel_value = option(options.coal_fuel_value, 4000000)
 
   local function as_set(names)
     local set = {}
@@ -250,19 +259,20 @@ function builders.fake_prototypes(options)
       type = fields.type or (fields.is_machine and "assembling-machine" or nil),
       get_crafting_speed = function() return fields.crafting_speed or nil end,
       get_inserter_rotation_speed = function() return fields.rotation_speed or nil end,
+      get_max_energy_usage = function() return fields.energy_usage or nil end,
       belt_speed = fields.belt_speed or nil,
       tile_width = fields.width or 1,
       tile_height = fields.height or 1,
-      burner_prototype = burner and {fuel_categories = as_set(burner)} or nil,
+      burner_prototype = burner and {fuel_categories = as_set(burner), effectivity = fields.effectivity or 1} or nil,
       electric_energy_source_prototype = electric and {} or nil,
     }
   end
-  local function item(name, fuel_categories)
-    return {localised_name = {"item-name." .. name}, fuel_categories = as_set(fuel_categories or {})}
+  local function item(name, fuel_categories, fuel_value)
+    return {localised_name = {"item-name." .. name}, fuel_categories = as_set(fuel_categories or {}), fuel_value = fuel_value or 0}
   end
 
   local entities = {
-    ["stone-furnace"] = entity("stone-furnace", {type = "furnace", crafting_speed = furnace_speed, width = 2, height = 2, burns = {"chemical"}, is_machine = true}),
+    ["stone-furnace"] = entity("stone-furnace", {type = "furnace", crafting_speed = furnace_speed, width = 2, height = 2, burns = {"chemical"}, is_machine = true, energy_usage = furnace_energy_usage or nil, effectivity = furnace_effectivity}),
     ["transport-belt"] = entity("transport-belt", {belt_speed = belt_speed}),
     ["inserter"] = entity("inserter", {rotation_speed = rotation_speed}),
     ["long-handed-inserter"] = entity("long-handed-inserter", {rotation_speed = long_rotation_speed}),
@@ -280,7 +290,7 @@ function builders.fake_prototypes(options)
   for name, recipe in pairs(recipes) do
     recipe.name = name -- a recipe prototype knows its own name
   end
-  local items = {["coal"] = item("coal", {"chemical"})}
+  local items = {["coal"] = item("coal", {"chemical"}, coal_fuel_value)}
   for _, name in ipairs(options.items or {}) do
     items[name] = items[name] or item(name)
   end
