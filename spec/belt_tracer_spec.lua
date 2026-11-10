@@ -431,6 +431,190 @@ describe("belt tracer", function()
     end)
   end)
 
+  describe("splitters", function()
+    -- Two makers put "a" and "b" on the two lanes of a belt running south down x = 4 (the west one on the east, left lane,
+    -- the east one on the west, right lane). Under it a splitter facing south covers (4, 2) and (5, 2); the belt feeds its
+    -- west half. Its outputs run on down x = 4 and x = 5, and an eater in x = 7 takes from the one in x = 5.
+    local function two_makers_a_splitter_and_an_eater()
+      local machines = {
+        west_maker = {size = 2, eats = {}, makes = "a"}, east_maker = {size = 2, eats = {}, makes = "b"},
+        eater = {size = 2, eats = {"a", "b"}, makes = "product"},
+      }
+      local entities = all_of(
+        machine("west_maker", 1, 0), builders.inserter(3, 0, west),
+        machine("east_maker", 6, 0), builders.inserter(5, 0, east),
+        belts_from(4, 0, south, 2), builders.splitter(4, 2, south),
+        builders.belt(4, 3, south), builders.belt(5, 3, south),
+        builders.inserter(6, 3, west), machine("eater", 7, 3))
+      return entities, machines
+    end
+
+    it("keeps the two lanes of its input apart in both of its outputs", function()
+      local entities, machines = two_makers_a_splitter_and_an_eater()
+
+      local problems = tracer.problems(entities, {machines = machines, raw = {}, product = "product"})
+
+      assert.are.same({}, problems)
+    end)
+
+    it("gives both outputs what both inputs bring, so two belts that share lanes are reported after it", function()
+      -- Two belts run east into the west side... into the two halves of a splitter facing east, one carrying "a" on both
+      -- its lanes and the other "b".
+      local entities = all_of(
+        builders.belt(0, 0, east), builders.belt(0, 1, east), builders.splitter(1, 0, east),
+        builders.belt(2, 0, east), builders.belt(2, 1, east))
+
+      local problems = tracer.problems(entities, {
+        machines = {}, raw = {}, product = "product", supplies = {{x = 0, y = 0, item = "a"}, {x = 0, y = 1, item = "b"}},
+      })
+
+      assert.has_item_containing("the left lane at 2,0 carries a and b", problems)
+      assert.has_item_containing("the right lane at 2,1 carries a and b", problems)
+    end)
+
+    it("reports a belt that feeds the side of a splitter", function()
+      local entities = all_of(builders.belt(3, 2, east), builders.splitter(4, 2, south))
+
+      local problems = tracer.problems(entities, {machines = {}, raw = {}, product = "product"})
+
+      assert.has_item_containing("a belt feeds the side of the splitter at 4,2", problems)
+    end)
+  end)
+
+  describe("underground belts", function()
+    -- A maker in x = 1..2 puts "a" on the belt running south down x = 4; the belt goes under another belt that runs east
+    -- along row 3 and comes up again, and an eater takes "a" from the belt after it. The other belt carries "b" (the
+    -- player supplies it) to a second eater.
+    local function underground_under_a_crossing(exit_row)
+      local machines = {
+        maker = {size = 2, eats = {}, makes = "a"},
+        eater = {size = 2, eats = {"a"}, makes = "product"}, other_eater = {size = 2, eats = {"b"}, makes = "other"},
+      }
+      local entities = all_of(
+        machine("maker", 1, 0), builders.inserter(3, 0, west), belts_from(4, 0, south, 2),
+        builders.underground(4, 2, south, "input"), builders.underground(4, exit_row, south, "output"),
+        builders.belt(3, 3, east), builders.belt(4, 3, east), builders.belt(5, 3, east),
+        builders.inserter(6, 3, west), machine("other_eater", 7, 3),
+        builders.belt(4, exit_row + 1, south), builders.inserter(5, exit_row + 1, west), machine("eater", 6, exit_row + 1))
+      return entities, machines
+    end
+
+    it("takes what is behind its entrance out of its exit, over a belt that crosses in between", function()
+      local entities, machines = underground_under_a_crossing(5)
+
+      local problems = tracer.problems(entities, {
+        machines = machines, raw = {}, product = "product", supplies = {{x = 3, y = 3, item = "b"}},
+      })
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports an entrance that meets no exit within the reach of the belt", function()
+      local entities, machines = underground_under_a_crossing(5)
+
+      local problems = tracer.problems(entities, {
+        machines = machines, raw = {}, product = "product", supplies = {{x = 3, y = 3, item = "b"}}, underground_reach = 2,
+      })
+
+      assert.has_item_containing("the underground belt entrance at 4,2 meets no exit within reach", problems)
+    end)
+
+    it("reports an exit that no entrance feeds", function()
+      local entities = all_of(builders.underground(4, 5, south, "output"))
+
+      local problems = tracer.problems(entities, {machines = {}, raw = {}, product = "product"})
+
+      assert.are.same({"the underground belt exit at 4,5 has no entrance"}, problems)
+    end)
+
+    it("reports an entrance that meets another piece of an underground belt before its exit", function()
+      local entities = all_of(
+        builders.underground(4, 2, south, "input"), builders.underground(4, 4, south, "input"), builders.underground(4, 6, south, "output"))
+
+      local problems = tracer.problems(entities, {machines = {}, raw = {}, product = "product"})
+
+      assert.has_item_containing("the underground belt entrance at 4,2 meets no exit within reach", problems)
+    end)
+
+    it("reports a belt that feeds the side of an entrance", function()
+      local entities = all_of(builders.belt(3, 2, east), builders.underground(4, 2, south, "input"), builders.underground(4, 4, south, "output"))
+
+      local problems = tracer.problems(entities, {machines = {}, raw = {}, product = "product"})
+
+      assert.are.same({"a belt feeds the side of the entrance at 4,2"}, problems)
+    end)
+  end)
+
+  describe("the lanes of the belt of a machine fed raw items", function()
+    -- A belt running south down x = 3, fed from its two sides in its first tile (nothing is behind it): from the west by a
+    -- belt of `west_item` and from the east by a belt of `east_item`. A furnace takes from it with an inserter in x = 4,
+    -- row 2. The west side of a belt running south is its right lane.
+    local function furnace_on_a_belt_fed_from_both_sides(west_item, east_item)
+      local entities = all_of(
+        builders.belt(2, 0, east), builders.belt(4, 0, west), builders.belt(3, 0, south), builders.belt(3, 1, south), builders.belt(3, 2, south),
+        builders.inserter(4, 2, west), machine("furnace", 5, 2))
+      local supplies = {{x = 2, y = 0, item = west_item}, {x = 4, y = 0, item = east_item}}
+      return entities, supplies
+    end
+
+    it("accepts the ore on one lane and the fuel on the other, whichever lane each is on", function()
+      local entities, supplies = furnace_on_a_belt_fed_from_both_sides("ore", "coal")
+
+      local problems = tracer.problems(entities, {
+        machines = MACHINES, raw = {furnace = true}, product = "plate", supplies = supplies, raw_lanes = {furnace = {"ore", "coal"}},
+      })
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports a belt that holds the ore on both lanes when the furnace needs the fuel on one", function()
+      local entities, supplies = furnace_on_a_belt_fed_from_both_sides("ore", "ore")
+
+      local problems = tracer.problems(entities, {
+        machines = MACHINES, raw = {furnace = true}, product = "plate", supplies = supplies, raw_lanes = {furnace = {"ore", "coal"}},
+      })
+
+      assert.are.same({"the belt next to the inserter at 4,2 carries [ore] on its left lane and [ore] on its right lane, not ore and coal"}, problems)
+    end)
+
+    it("reports a belt that holds something else on a lane", function()
+      local entities, supplies = furnace_on_a_belt_fed_from_both_sides("ore", "stone")
+
+      local problems = tracer.problems(entities, {
+        machines = MACHINES, raw = {furnace = true}, product = "plate", supplies = supplies, raw_lanes = {furnace = {"ore", "coal"}},
+      })
+
+      assert.has_item_containing("[stone] on its left lane and [ore] on its right lane, not ore and coal", problems)
+    end)
+
+    it("accepts a lone item on both lanes when the machine needs just that", function()
+      local entities = all_of(
+        builders.belt(3, 0, south), builders.belt(3, 1, south), builders.inserter(4, 1, west), machine("furnace", 5, 1))
+
+      local problems = tracer.problems(entities, {
+        machines = MACHINES, raw = {furnace = true}, product = "plate",
+        supplies = {{x = 3, y = 0, item = "wood"}}, raw_lanes = {furnace = {"wood"}},
+      })
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports a lone item that is only on one lane", function()
+      -- The belt from the west side-loads the belt down x = 3, which has an empty belt behind it, so it stays straight and
+      -- the wood lands on its right lane only.
+      local entities = all_of(
+        builders.belt(2, 0, east), builders.belt(3, -1, south), builders.belt(3, 0, south), builders.belt(3, 1, south),
+        builders.inserter(4, 1, west), machine("furnace", 5, 1))
+
+      local problems = tracer.problems(entities, {
+        machines = MACHINES, raw = {furnace = true}, product = "plate",
+        supplies = {{x = 2, y = 0, item = "wood"}}, raw_lanes = {furnace = {"wood"}},
+      })
+
+      assert.has_item_containing("[] on its left lane and [wood] on its right lane, not wood", problems)
+    end)
+  end)
+
   it("reports a belt of raw items that something we made is put on", function()
     local entities = all_of(
       machine("furnace", 0, 0), builders.inserter(2, 0, west), belts_from(3, 0, south, 3),

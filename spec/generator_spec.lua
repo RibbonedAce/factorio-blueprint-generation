@@ -40,6 +40,22 @@ local function ready_message(product, per_minute, raws)
   return {"blueprint-generation.generated", per_minute, {"item-name." .. product}, list}
 end
 
+-- The message for a blueprint that takes one belt of each material: the same, and the items of the belts that come in,
+-- from the top of the blueprint down.
+local function ready_message_with_belts(product, per_minute, raws, belts)
+  local message = ready_message(product, per_minute, raws)
+  message[1] = "blueprint-generation.generated-with-belts"
+  local list = {""}
+  for index, name in ipairs(belts) do
+    if index > 1 then
+      list[#list + 1] = ", "
+    end
+    list[#list + 1] = {"item-name." .. name}
+  end
+  message[5] = list
+  return message
+end
+
 local function count_named(entities, name)
   local total = 0
   for _, entity in ipairs(entities) do
@@ -1457,6 +1473,128 @@ describe("generator", function()
         assert.is_false(contains(without_inserter, "inserter"))
         assert.is_true(contains(without_inserter, "iron-plate"))
       end)
+    end)
+  end)
+
+  describe("the design that brings in one belt of each material", function()
+    -- Iron plates and copper cables to circuits, as above: two ores and the coal for the furnaces, so three belts come in
+    -- and the blueprint has one splitter (the coal feeds both trunks) and four underground belts (the two ore feeders
+    -- go under the coal). The design needs a force that has researched the splitter and the underground belt, and an
+    -- underground belt that spans at least 3 tiles; without them the blueprint takes the original design.
+    local iron_plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local copper_plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}, category = "smelting"}
+    local cable = a_recipe{energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(2, "copper-cable")}}
+    local circuit = a_recipe{
+      energy = 0.5, ingredients = {amount_of(1, "iron-plate"), amount_of(3, "copper-cable")},
+      products = {amount_of(1, "electronic-circuit")},
+    }
+
+    local function circuit_game(options)
+      options = options or {}
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {
+          ["iron-plate"] = iron_plate, ["copper-plate"] = copper_plate,
+          ["copper-cable"] = cable, ["electronic-circuit"] = circuit,
+        },
+        underground_distance = options.underground_distance,
+        missing_entities = options.missing_entities,
+      }
+    end
+
+    it("builds it for a force that has researched the splitter and the underground belt", function()
+      _G.prototypes = circuit_game()
+
+      local result = generator.generate("electronic-circuit", 50, fake_force{})
+
+      assert.are.equal(1, count_named(result.entities, "splitter"))
+      assert.are.equal(4, count_named(result.entities, "underground-belt"))
+    end)
+
+    it("tells the player the items of the belts that come in, from the top of the blueprint down", function()
+      _G.prototypes = circuit_game()
+
+      local result = generator.generate("electronic-circuit", 50, fake_force{})
+
+      assert.are.same(
+        ready_message_with_belts("electronic-circuit", "50", {{"iron-ore", "50"}, {"copper-ore", "75"}, {"coal", "9"}}, {"coal", "copper-ore", "iron-ore"}),
+        result.message)
+    end)
+
+    it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
+      _G.prototypes = circuit_game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("electronic-circuit", 100, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("builds it when the underground belt spans exactly the 3 tiles the hops need", function()
+      _G.prototypes = circuit_game{underground_distance = 3}
+
+      local result = generator.generate("electronic-circuit", 50, fake_force{})
+
+      assert.are.equal("blueprint-generation.generated-with-belts", result.message[1])
+    end)
+
+    local original_design = {
+      {label = "the force has not researched the splitter", force = fake_force{locked = {"splitter"}}},
+      {label = "the force has not researched the underground belt", force = fake_force{locked = {"underground-belt"}}},
+      {label = "the force does not know the recipe of the splitter", force = fake_force{absent = {"splitter"}}},
+      {label = "the force does not know the recipe of the underground belt", force = fake_force{absent = {"underground-belt"}}},
+      {label = "no force is given, so nothing is known to be researched", force = nil},
+      {label = "the game has no splitter", force = fake_force{}, game = {missing_entities = {"splitter"}}},
+      {label = "the game has no underground belt", force = fake_force{}, game = {missing_entities = {"underground-belt"}}},
+      {label = "the underground belt spans fewer than 3 tiles", force = fake_force{}, game = {underground_distance = 2}},
+      {label = "the game does not say how far the underground belt spans", force = fake_force{}, game = {underground_distance = false}},
+    }
+
+    for _, case in ipairs(original_design) do
+      it("takes the original design, with a belt of raw items for every chain, when " .. case.label, function()
+        _G.prototypes = circuit_game(case.game)
+
+        local result = generator.generate("electronic-circuit", 50, case.force)
+
+        assert.are.same(ready_message("electronic-circuit", "50", {{"iron-ore", "50"}, {"copper-ore", "75"}, {"coal", "9"}}), result.message)
+        assert.are.equal(0, count_named(result.entities, "splitter") + count_named(result.entities, "underground-belt"))
+      end)
+    end
+
+    it("takes the original design for the line under the rate field too, which does not depend on the layout", function()
+      _G.prototypes = circuit_game()
+
+      assert.are.same({"blueprint-generation.max-rate", "150"}, generator.max_rate_message("electronic-circuit", fake_force{}))
+    end)
+
+    it("brings in one belt for a machine that eats only one raw item, which rides both lanes", function()
+      local chest = a_recipe{energy = 0.5, ingredients = {amount_of(2, "wood")}, products = {amount_of(1, "wooden-chest")}}
+      _G.prototypes = fake_prototypes{
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["wooden-chest"] = chest},
+      }
+
+      local result = generator.generate("wooden-chest", 30, fake_force{})
+
+      assert.are.same({"blueprint-generation.generated-with-belts", {"", {"item-name.wood"}}}, {result.message[1], result.message[5]})
+    end)
+
+    it("brings in a raw item that goes with made ones on a belt of its own", function()
+      local pole = a_recipe{energy = 0.5, ingredients = {amount_of(1, "wood"), amount_of(2, "copper-cable")}, products = {amount_of(2, "small-electric-pole")}}
+      _G.prototypes = fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["copper-plate"] = copper_plate, ["copper-cable"] = cable, ["small-electric-pole"] = pole},
+      }
+
+      local result = generator.generate("small-electric-pole", 20, fake_force{})
+
+      assert.are.same({
+        "blueprint-generation.generated-with-belts",
+        {"", {"item-name.wood"}, ", ", {"item-name.copper-ore"}, ", ", {"item-name.coal"}},
+      }, {result.message[1], result.message[5]})
     end)
   end)
 

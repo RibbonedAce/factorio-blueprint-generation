@@ -102,6 +102,44 @@ describe("blueprint validator", function()
     end)
   end)
 
+  describe("a splitter, which is two tiles wide across the way it faces", function()
+    local splitter = builders.splitter
+    local south, east = defines.direction.south, defines.direction.east
+
+    it("reports no problems when it faces south and a belt stands beside its two tiles", function()
+      local entities = blueprint_of(splitter(2, 0, south), belt(1, 0), belt(4, 0)) -- it covers tiles (2, 0) and (3, 0)
+
+      local problems = validator.validate(entities, a_catalog{})
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports a belt when it stands on the second tile of a splitter that faces south", function()
+      local entities = blueprint_of(splitter(2, 0, south), belt(3, 0))
+
+      local problems = validator.validate(entities, a_catalog{})
+
+      assert.has_item_containing("overlaps", problems)
+    end)
+
+    it("covers the tile under it instead when it faces east", function()
+      local entities = blueprint_of(splitter(2, 0, east), belt(3, 0), belt(2, 1)) -- it covers tiles (2, 0) and (2, 1)
+
+      local problems = validator.validate(entities, a_catalog{})
+
+      assert.are.same({"transport-belt #3: overlaps splitter #1 on tile 2,1"}, problems) -- the belt at (2, 1); the one at (3, 0) is free
+    end)
+
+    it("reports a splitter when it sits off the grid for the way it faces", function()
+      local turned = splitter(2, 0, south)
+      turned.direction = east -- still positioned as the splitter that faces south
+
+      local problems = validator.validate(blueprint_of(turned), a_catalog{})
+
+      assert.has_item_containing("not aligned to the tile grid", problems)
+    end)
+  end)
+
   describe("inserters", function()
     it("reports an inserter when it has no direction", function()
       local entities = blueprint_of(inserter(1, 0, nil), pole(1, 1))

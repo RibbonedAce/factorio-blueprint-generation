@@ -18,6 +18,8 @@ builders.NAMES = {
   inserter = "inserter",
   long_inserter = "long-handed-inserter",
   pole = "small-electric-pole",
+  splitter = "splitter",
+  underground = "underground-belt",
 }
 
 -- `{name = "iron-ore", amount = 1}` written as `amount_of(1, "iron-ore")`.
@@ -69,6 +71,32 @@ end
 ---@return table  an entity without its number yet (see `blueprint_of`)
 function builders.long_inserter(tile_x, tile_y, direction)
   return {name = builders.NAMES.long_inserter, position = grid.position(tile_x, tile_y), direction = direction}
+end
+
+-- A splitter: two tiles side by side across the way it faces, so `splitter(2, 0, east)` covers tiles (2, 0) and (2, 1),
+-- and `splitter(2, 0, south)` covers (2, 0) and (3, 0). `tile_x`, `tile_y` is its top-left tile.
+---@param tile_x number
+---@param tile_y number
+---@param direction defines.direction  the way it moves items
+---@return table  an entity without its number yet (see `blueprint_of`)
+function builders.splitter(tile_x, tile_y, direction)
+  local across_east_west = direction == defines.direction.east or direction == defines.direction.west
+  local width, height = 2, 1
+  if across_east_west then
+    width, height = 1, 2
+  end
+  return {name = builders.NAMES.splitter, position = grid.position(tile_x, tile_y, width, height), direction = direction}
+end
+
+-- One end of an underground belt: `kind` is "input" for the entrance and "output" for the exit, `direction` the way
+-- the belt moves items at both ends.
+---@param tile_x number
+---@param tile_y number
+---@param direction defines.direction
+---@param kind "input"|"output"
+---@return table  an entity without its number yet (see `blueprint_of`)
+function builders.underground(tile_x, tile_y, direction, kind)
+  return {name = builders.NAMES.underground, position = grid.position(tile_x, tile_y), direction = direction, type = kind}
 end
 
 -- Poles can be given another prototype name, for tests that need a second kind of pole.
@@ -124,6 +152,8 @@ function builders.a_catalog(options)
       needs_power = options.machine_needs_power or false,
     },
     [names.belt] = {kind = "belt", width = 1, height = 1},
+    [names.splitter] = {kind = "belt", width = 2, height = 1, turns = true},
+    [names.underground] = {kind = "belt", width = 1, height = 1},
     [names.inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true},
     [names.long_inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true, reach = 2},
     [names.pole] = {
@@ -212,19 +242,22 @@ end
 --   inserter_rotation_speed the inserter's rotation speed, default 0.014 (the basic
 --                           inserter, 50.4 items a minute); `false` makes it an
 --                           entity that is not an inserter
+--   underground_distance    the most tiles the underground belt spans, default 5 (the basic one);
+--                           `false` makes it an entity without that field
 --   missing_entities        names of buildings the game does not have, default none
 --   furnace_energy_usage    what the stone furnace uses while it crafts, in joules per tick; default 1500 (90 kW);
 --                           `false` makes the game not say
 --   furnace_effectivity     the share of the fuel's energy the stone furnace uses, default 1
 --   coal_fuel_value         the energy of one coal in joules, default 4000000 (4 MJ)
--- The buildings the layout uses (furnace, belt, inserter, pole) exist unless
+-- The buildings the layout uses (furnace, belt, inserter, pole, and the splitter and the
+-- underground belt of the input design that brings in one belt of each material) exist unless
 -- listed as missing. Every item a recipe mentions exists, and so does coal, the
 -- fuel, in the fuel category "chemical". The stone furnace burns "chemical".
 -- `get_item_filtered` understands only what the generator needs, filters of the
 -- form {filter = "fuel-category", ["fuel-category"] = name} combined with "or"
 -- (anything else is an error), and an empty list of filters gives every item,
 -- as the worst case of what the game might do.
----@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, missing_entities?: string[]}
+---@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, underground_distance?: number|false, missing_entities?: string[]}
 ---@return table  a stand-in for the game's `prototypes`
 function builders.fake_prototypes(options)
   options = options or {}
@@ -238,6 +271,7 @@ function builders.fake_prototypes(options)
   local belt_speed = option(options.belt_speed, 0.03125)
   local rotation_speed = option(options.inserter_rotation_speed, 0.014)
   local long_rotation_speed = option(options.long_inserter_rotation_speed, 0.02)
+  local underground_distance = option(options.underground_distance, 5)
   local furnace_energy_usage = option(options.furnace_energy_usage, 1500)
   local furnace_effectivity = option(options.furnace_effectivity, 1)
   local coal_fuel_value = option(options.coal_fuel_value, 4000000)
@@ -261,6 +295,7 @@ function builders.fake_prototypes(options)
       get_inserter_rotation_speed = function() return fields.rotation_speed or nil end,
       get_max_energy_usage = function() return fields.energy_usage or nil end,
       belt_speed = fields.belt_speed or nil,
+      max_underground_distance = fields.underground_distance or nil,
       tile_width = fields.width or 1,
       tile_height = fields.height or 1,
       burner_prototype = burner and {fuel_categories = as_set(burner), effectivity = fields.effectivity or 1} or nil,
@@ -274,6 +309,8 @@ function builders.fake_prototypes(options)
   local entities = {
     ["stone-furnace"] = entity("stone-furnace", {type = "furnace", crafting_speed = furnace_speed, width = 2, height = 2, burns = {"chemical"}, is_machine = true, energy_usage = furnace_energy_usage or nil, effectivity = furnace_effectivity}),
     ["transport-belt"] = entity("transport-belt", {belt_speed = belt_speed}),
+    ["splitter"] = entity("splitter"),
+    ["underground-belt"] = entity("underground-belt", {underground_distance = underground_distance or nil}),
     ["inserter"] = entity("inserter", {rotation_speed = rotation_speed}),
     ["long-handed-inserter"] = entity("long-handed-inserter", {rotation_speed = long_rotation_speed}),
     ["small-electric-pole"] = entity("small-electric-pole"),

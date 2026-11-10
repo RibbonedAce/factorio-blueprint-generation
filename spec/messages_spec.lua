@@ -53,6 +53,7 @@ local function every_message()
     ambiguous = messages.chain_problem("ambiguous", "iron-plate"),
     too_complex = messages.chain_problem("several-crafted", "iron-plate"),
     ready = messages.ready(10, "iron-plate", {{name = "iron-ore", amount = 10}, {name = "coal", amount = 1}}),
+    ready_with_belts = messages.ready(10, "iron-plate", {{name = "iron-ore", amount = 10}, {name = "coal", amount = 1}}, {"coal", "iron-ore"}),
   }
 end
 
@@ -198,6 +199,24 @@ describe("messages", function()
       local message = messages.ready(10, "iron-plate", {})
 
       assert.are.same({""}, message[4])
+    end)
+
+    it("names the items of the belts that come in, from the top down, after the raw items", function()
+      local message = messages.ready(56.25, "iron-plate", {{name = "iron-ore", amount = 56.25}}, {"coal", "iron-ore", "iron-ore"})
+
+      assert.are.same({
+        PREFIX .. "generated-with-belts",
+        "56.25",
+        {"item-name.iron-plate"},
+        {"", {PREFIX .. "raw-amount", "56.25", {"item-name.iron-ore"}}},
+        {"", {"item-name.coal"}, ", ", {"item-name.iron-ore"}, ", ", {"item-name.iron-ore"}},
+      }, message)
+    end)
+
+    it("words the message the original way when it is given no belts", function()
+      local message = messages.ready(10, "iron-plate", {{name = "iron-ore", amount = 10}})
+
+      assert.are.equal(PREFIX .. "generated", message[1])
     end)
   end)
 

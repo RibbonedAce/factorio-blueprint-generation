@@ -7,7 +7,7 @@
 -- once and hands that value to whoever asked for it.
 
 ---@class bpgen.Config
----@field entities {belt: string, inserter: string, long_inserter: string, pole: string}
+---@field entities {belt: string, inserter: string, long_inserter: string, pole: string, splitter: string, underground_belt: string}
 ---@field products table<string, true>  the items a player may ask for, by name
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
 ---@field default_product string  the item the window starts with; must be a key of `products`
@@ -20,6 +20,10 @@ local config = {
     inserter = "inserter",
     long_inserter = "long-handed-inserter", -- for a second input belt (recipes with three or four ingredients)
     pole = "small-electric-pole",
+    -- For the input design that brings in one belt of each material: the blueprint divides and
+    -- merges the belts itself, so both have to be researched (see scripts/inputs.lua).
+    splitter = "splitter",
+    underground_belt = "underground-belt",
   },
 
   -- The items a player can ask for. How each is made comes from the game's recipes:

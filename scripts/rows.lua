@@ -44,9 +44,18 @@
 -- A raw item that goes with a made one (wood next to cables) has no machines: its column is two
 -- wide, the belt and a spare column for the gadget of the arc before it, and its belt is the arc.
 -- See .agents/row-layout-plan.md for the reasons and the measurements.
+--
+-- Two ways to bring in the raw items. `rows.build` is the original: a belt for every chain, with the
+-- ore on one lane and the fuel on the other, as described above. `rows.build_pure` is the design that
+-- takes one belt of each material, one item on both lanes (.agents/inputs-plan.md): the chains start
+-- lower, under a band along the top (scripts/inputs.lua) where scripts/feeds.lua's trunks are made from
+-- the belts that come in, with splitters and underground belts. It needs both of those researched.
 
+local feeds = require("scripts.feeds")
 local grid = require("scripts.grid")
+local inputs = require("scripts.inputs")
 local layout = require("scripts.layout")
+local poles = require("scripts.poles")
 
 local rows = {}
 
@@ -64,6 +73,9 @@ local north, east, south = defines.direction.north, defines.direction.east, defi
 ---@field kind "raw"|"chain"|"final"  a belt of a raw item, a chain fed raw items, or the column that eats other columns' products
 ---@field belt "a"|"b"  the input belt of the parent that its product rides
 ---@field fed bpgen.StageLayout|bpgen.RawSupplier  the stage a belt of raw items feeds (a chain: its first); the stage of a final column
+---@field stages? bpgen.StageLayout[]  the stages whose machines the column holds, nil for a raw item
+---@field feed? bpgen.Feed  of a chain or a raw column, what it takes from the belts that come in (`build_pure` only)
+---@field drop_x? integer  of a chain or a raw column, the tile column its belt of raw items comes down (`build_pure` only)
 ---@field children bpgen.Column[]  of a final column: the columns that make what it eats, belt a first
 ---@field parent? bpgen.Column
 ---@field block? bpgen.Block  not for a raw item
@@ -82,12 +94,6 @@ local north, east, south = defines.direction.north, defines.direction.east, defi
 ---@field column bpgen.Column
 ---@field x integer  tile column it comes down
 ---@field row integer
-
--- Two poles and how far apart they are.
----@class bpgen.PolePair
----@field from bpgen.Entity
----@field to bpgen.Entity
----@field distance number
 
 ---@param entities bpgen.Entity[]
 ---@param belt_name string
@@ -123,18 +129,6 @@ local function add_across(entities, belt_name, first_column, last_column, row)
   for column = first_column, last_column do
     add_belt(entities, belt_name, column, row, east)
   end
-end
-
--- Appends the items of `more` to `list`, and gives back `list`.
----@generic T
----@param list T[]
----@param more T[]
----@return T[]
-local function append(list, more)
-  for _, item in ipairs(more) do
-    list[#list + 1] = item
-  end
-  return list
 end
 
 -- The stages of a straight chain, from the one fed raw items to `stage`. A stage with
@@ -203,7 +197,7 @@ local function final_column(stage, belt, names, is_root)
     children[#children + 1] = column_of(supplier, names, false)
   end
   local final = {
-    kind = "final", belt = belt, fed = stage, children = belt_a_first(children),
+    kind = "final", belt = belt, fed = stage, children = belt_a_first(children), stages = {stage},
     block = layout.chain_block({stage}, names, {product_belt = is_root}),
   }
   mark_arcs(final)
@@ -225,7 +219,7 @@ function column_of(stage, names, is_root)
   end
   local stages = straight_chain(stage)
   return {
-    kind = "chain", belt = belt, fed = stages[1], children = {},
+    kind = "chain", belt = belt, fed = stages[1], children = {}, stages = stages,
     block = layout.chain_block(stages, names, {product_belt = is_root}),
   }
 end
@@ -241,11 +235,12 @@ local function flatten(column, columns)
   column.index = #columns
 end
 
--- Gives every column its tile columns, side by side from column 0. A final column with a belt b
--- has a column of its own for it, west of belt a.
+-- Gives every column its tile columns, side by side from column `start` (0 by default). A final column
+-- with a belt b has a column of its own for it, west of belt a.
 ---@param columns bpgen.Column[]
-local function place_across(columns)
-  local cursor = 0
+---@param start? integer
+local function place_across(columns, start)
+  local cursor = start or 0
   for _, column in ipairs(columns) do
     if column.kind == "raw" then
       column.x_source = cursor + 1
@@ -501,69 +496,17 @@ local function add_arcs(entities, belt_name, final)
   add_risers(entities, belt_name, final)
 end
 
----@param first bpgen.Entity
----@param second bpgen.Entity
----@return number
-local function distance(first, second)
-  local dx, dy = first.position.x - second.position.x, first.position.y - second.position.y
-  return math.sqrt(dx * dx + dy * dy)
-end
-
--- The closest pair of poles, one from each list, or nil when one list is empty.
----@param poles bpgen.Entity[]
----@param others bpgen.Entity[]
----@return bpgen.PolePair|nil
-local function closest_pair(poles, others)
-  local best
-  for _, pole in ipairs(poles) do
-    for _, other in ipairs(others) do
-      local apart = distance(pole, other)
-      if not best or apart < best.distance then
-        best = {from = pole, to = other, distance = apart}
-      end
-    end
-  end
-  return best
-end
-
--- The group among `waiting` that is closest to the poles in `joined`, with the pair of
--- poles that are closest, or nil when no group has a pole.
----@param joined bpgen.Entity[]
----@param waiting bpgen.Entity[][]
----@return bpgen.PolePair|nil
----@return integer|nil index  of the group in `waiting`
-local function closest_group(joined, waiting)
-  local best, best_index
-  for index, group in ipairs(waiting) do
-    local pair = closest_pair(joined, group)
-    if pair and (not best or pair.distance < best.distance) then
-      best, best_index = pair, index
-    end
-  end
-  return best, best_index
-end
-
--- Wires the poles of the columns into one network. Each column is already wired inside; the
--- nearest column is joined to the poles joined so far, by the nearest pair of poles. The layout
--- does not read the reach of a pole from the game: the specs check that these wires are short
--- enough for the shapes the generator makes.
+-- Wires the poles of the columns into one network (see scripts/poles.lua).
 ---@param columns bpgen.Column[]  at least one has a pole
-local function join_poles(columns)
-  local waiting = {}
+---@param bridge? bpgen.PoleBridge  to put poles between two that are further apart than a wire reaches
+local function join_poles(columns, bridge)
+  local groups = {}
   for _, column in ipairs(columns) do
-    if column.block and #column.block.poles > 0 then
-      waiting[#waiting + 1] = column.block.poles
+    if column.block then
+      groups[#groups + 1] = column.block.poles
     end
   end
-  local joined = append({}, table.remove(waiting, 1))
-  while #waiting > 0 do
-    local pair, index = closest_group(joined, waiting)
-    if not pair or not index then
-      return
-    end
-    layout.connect_poles(pair.from, pair.to)
-    append(joined, table.remove(waiting, index))
-  end
+  poles.join(groups, bridge)
 end
 
 -- The stages fed raw items by the belts of raw items, from the top row down.
@@ -604,6 +547,119 @@ function rows.build(root, names)
   add_arcs(entities, names.belt, top)
   join_poles(columns)
   return entities, raw_stages_of(runs)
+end
+
+-- The chains and the raw columns among the columns: the leaves, which take what they need from belts that come in.
+---@param columns bpgen.Column[]
+---@return bpgen.Column[]
+local function leaves_of(columns)
+  local leaves = {}
+  for _, column in ipairs(columns) do
+    if column.kind ~= "final" then
+      column.feed = assert(column.fed.feed, "rows: a stage fed raw items has no feed")
+      column.drop_x = nil
+      leaves[#leaves + 1] = column
+    end
+  end
+  return leaves
+end
+
+-- Tells every leaf the tile column its belt comes down, once the columns are placed.
+---@param leaves bpgen.Column[]
+local function set_drops(leaves)
+  for _, leaf in ipairs(leaves) do
+    leaf.drop_x = leaf.x0 or leaf.x_source
+  end
+end
+
+-- Gives every column its first row: a chain right under the last tile of the belt that comes down to it, a
+-- final column under the trunks that pass over it; a raw column learns the row its belt comes down to.
+---@param plan bpgen.FeedPlan
+---@param columns bpgen.Column[]
+---@param ends table<bpgen.Column, integer>  of every leaf, the row of the last tile of its belt
+local function set_pure_rows(plan, columns, ends)
+  for _, column in ipairs(columns) do
+    if column.kind == "final" then
+      column.top = inputs.first_row_under(plan, column.x_source)
+    elseif column.block then
+      column.top = ends[column] + 1 - column.block.raw_belts[1].row
+    else
+      column.raw_row = ends[column]
+    end
+    if column.block then
+      column.bottom = column.top + column.block.height
+    end
+  end
+end
+
+-- Adds the entities of the top band to the blueprint's, numbered after the ones there.
+---@param entities bpgen.Entity[]
+---@param band bpgen.NewEntity[]
+local function add_band(entities, band)
+  for _, entity in ipairs(band) do
+    local numbered = entity --[[@as bpgen.Entity]] -- it gets its number just below
+    entities[#entities + 1] = numbered
+    numbered.entity_number = #entities
+  end
+end
+
+-- The tiles a machine covers on a side, by the machine's name.
+---@param columns bpgen.Column[]
+---@return table<string, integer>
+local function machine_sizes(columns)
+  local sizes = {}
+  for _, column in ipairs(columns) do
+    for _, stage in ipairs(column.stages or {}) do
+      sizes[stage.machine] = stage.shape.machine_size
+    end
+  end
+  return sizes
+end
+
+-- What the bridge poles need to know of the blueprint: where they go (after its entities) and which tiles those cover.
+---@param entities bpgen.Entity[]
+---@param columns bpgen.Column[]
+---@param names bpgen.SharedNames
+---@return bpgen.PoleBridge
+local function pole_bridge(entities, columns, names)
+  local sizes = machine_sizes(columns)
+  local function size_of(entity)
+    return inputs.footprint(entity, names, sizes)
+  end
+  return {entities = entities, taken = poles.taken_tiles(entities, size_of), pole = names.pole}
+end
+
+-- The blueprint for `root` in the design that takes one belt of each material (see the top of the file and
+-- .agents/inputs-plan.md); `root` is as for `rows.build`, every stage fed raw items has its `feed`, and `names`
+-- has the splitter and the underground belt. Works for a single chain too.
+-- Returns the entities (numbered from 1) and the belts the player brings in, from the top down: where each
+-- starts, at the west edge, and its item on both lanes.
+---@param root bpgen.StageLayout
+---@param names bpgen.SharedNames
+---@param options bpgen.InputOptions
+---@return bpgen.Entity[] entities
+---@return bpgen.Input[] inputs
+function rows.build_pure(root, names, options)
+  local top = column_of(root, names, true)
+  local columns = {}
+  flatten(top, columns)
+  local leaves = leaves_of(columns)
+  local plan = feeds.plan(leaves, options.lane_items_per_minute)
+  place_across(columns, inputs.start_column(plan))
+  set_drops(leaves)
+  local band, supplies, ends = inputs.lay(plan, names, options.underground_reach)
+  set_pure_rows(plan, columns, ends)
+  if top.kind == "final" then
+    assign_arcs(top, columns)
+  end
+  local entities = {}
+  place_blocks(entities, columns, names.belt)
+  add_band(entities, band)
+  if top.kind == "final" then
+    add_arcs(entities, names.belt, top)
+  end
+  join_poles(columns, pole_bridge(entities, columns, names))
+  return entities, supplies
 end
 
 return rows

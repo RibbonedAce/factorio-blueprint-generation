@@ -7,6 +7,7 @@
 local builders = require("spec.support.builders")
 local grid = require("scripts.grid")
 local layout = require("scripts.layout")
+local picture = require("spec.support.picture")
 local rows = require("scripts.rows")
 local tracer = require("spec.support.belt_tracer")
 local validator = require("spec.support.blueprint_validator")
@@ -14,15 +15,44 @@ local validator = require("spec.support.blueprint_validator")
 local NAMES = builders.NAMES
 local north, east, south = defines.direction.north, defines.direction.east, defines.direction.south
 
+-- The most tiles the underground belt spans in the design that brings in one belt of each material (the basic one's).
+local UNDERGROUND_REACH = 5
+
+-- The blueprint for `root` in the design that brings in one belt of each material, with a basic belt (450 items a
+-- minute on a lane): its entities and the belts that come in, from the top down.
+local function build_pure(root)
+  return rows.build_pure(root, NAMES, {lane_items_per_minute = 450, underground_reach = UNDERGROUND_REACH})
+end
+
+-- The ore each furnace smelts, for the feed of the design that brings in one belt of each material.
+local ORES = {["iron-furnace"] = "iron-ore", ["copper-furnace"] = "copper-ore", ["brick-furnace"] = "stone"}
+
+-- What a column of `count` furnaces takes from the belts that come in: some ore on one lane and some coal on the other.
+-- (`rows.build`, the original design, ignores it.)
+local function furnace_feed(machine, count)
+  return {items = {{name = ORES[machine], amount = 20 * count}, {name = "coal", amount = 2 * count}}}
+end
+
 -- A column of 2 x 2 furnaces, one inserter on each side, or of 3 x 3 assemblers.
 local function furnaces(machine, count)
-  return {machine_count = count, machine = machine, shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}, suppliers = {}}
+  return {
+    machine_count = count, machine = machine, shape = {machine_size = 2, input_inserters = 1, output_inserters = 1},
+    suppliers = {}, feed = furnace_feed(machine, count),
+  }
 end
 
 -- Furnaces with an inserter on every tile of their input side, which leaves no tile for a pole there: the column
 -- gets a row of poles above its first furnace, and its belts start one row lower.
 local function crowded_furnaces(machine, count)
-  return {machine_count = count, machine = machine, shape = {machine_size = 2, input_inserters = 2, output_inserters = 1}, suppliers = {}}
+  return {
+    machine_count = count, machine = machine, shape = {machine_size = 2, input_inserters = 2, output_inserters = 1},
+    suppliers = {}, feed = furnace_feed(machine, count),
+  }
+end
+
+-- The belt of wood that goes with made ingredients: a raw item that no furnace smelts.
+local function wood_supplier(per_minute)
+  return {raw_item = "wood", feed = {items = {{name = "wood", amount = per_minute or 30}}}}
 end
 
 local function assemblers(machine, count, input_inserters, output_inserters, suppliers)
@@ -436,6 +466,220 @@ describe("rows", function()
     end)
   end)
 
+  describe("the design that brings in one belt of each material", function()
+    -- Every chain and every raw column is fed by a belt that comes down from a trunk along the top (see scripts/inputs.lua),
+    -- so the columns start under that band, from column 4 + 4 for each bus. The pictures draw the furnaces as i (iron)
+    -- and c (copper), the cable assemblers as O, the circuit assemblers as E and the pole assemblers as P.
+    local GLYPHS = {
+      ["iron-furnace"] = {size = 2, glyph = "i"}, ["copper-furnace"] = {size = 2, glyph = "c"},
+      ["cable-assembler"] = {size = 3, glyph = "O"}, ["circuit-assembler"] = {size = 3, glyph = "E"},
+      ["pole-assembler"] = {size = 3, glyph = "P"},
+    }
+
+    local function drawn(entities, first_column, first_row, last_column, last_row)
+      return picture.draw(entities, GLYPHS, first_column, first_row, last_column, last_row)
+    end
+
+    describe("a single chain", function()
+      -- Two iron furnaces. The ore and the coal come in along rows 0 and 2, meet in the mixer in column 1 and ride
+      -- the trunk in row 1 to column 4, where the belt of raw items of the chain starts (x from 0).
+      --
+      --      0123456789
+      --   0 |>v........|
+      --   1 |.>>>v.....|
+      --   2 |>^..v.....|
+      --   3 |....v}ii}v|
+      --   4 |....v+ii+v|
+      --   5 |....v}ii}v|
+      --   6 |......ii.v|
+      local entities, inputs = build_pure(furnaces("iron-furnace", 2))
+
+      it("brings the ore and the coal to the chain through a trunk, which a single chain gets too", function()
+        assert.are.same({
+          ">v........",
+          ".>>>v.....",
+          ">^..v.....",
+          "....v}ii}v",
+          "....v+ii+v",
+          "....v}ii}v",
+          "......ii.v",
+        }, drawn(entities, 0, 0, 9, 6))
+      end)
+
+      it("brings in the ore and the coal from the west edge, each along the row of its feeder", function()
+        assert.are.same({{x = 0, y = 0, item = "iron-ore"}, {x = 0, y = 2, item = "coal"}}, inputs)
+      end)
+
+      it("numbers every entity once", function()
+        for index, entity in ipairs(entities) do
+          assert.are.equal(index, entity.entity_number)
+        end
+      end)
+    end)
+
+    describe("a chain whose first column has a row of poles above its furnaces", function()
+      -- The belt of the chain starts one row lower than the column (its first furnace has an inserter on both of its input
+      -- tiles, so the poles stand above it), and the belt that comes down from the trunk ends in the row of the poles,
+      -- which is the first row of the column.
+      --
+      --      0123456789
+      --   0 |>v........|
+      --   1 |.>>>v.....|
+      --   2 |>^..v+..+.|
+      --   3 |....v}ii}v|
+      --   4 |....v}ii.v|
+      local entities = build_pure(crowded_furnaces("iron-furnace", 1))
+
+      it("starts the column in the row where the belt from the trunk ends, so that the belt of the chain follows it", function()
+        assert.are.same({
+          ">v........",
+          ".>>>v.....",
+          ">^..v+..+.",
+          "....v}ii}v",
+          "....v}ii.v",
+        }, drawn(entities, 0, 0, 9, 4))
+      end)
+    end)
+
+    describe("iron plates and cables to circuits", function()
+      -- The coal feeds both trunks, so it is a bus (column 2); the copper trunk, whose chain is further east, is on top.
+      -- Each chain starts right under the last tile of the belt that comes down to it, and the final column, which no
+      -- trunk passes over, in the top row. The iron plates reach belt a (column 26) through the lane gadget (rows 9, 10).
+      --
+      --      012345678901234567890123456789012
+      --   0 |>>v.......................^}EEE}v|
+      --   1 |..v.......................^}EEE+v|
+      --   2 |>(v.)v....................^+EEE.v|
+      --   3 |..SS.>>>>>>>>>v...........^......|
+      --   4 |..v>>^........v...........^......|
+      --   5 |>(v.)v........v}cc}v}OOO}v^......|
+      --   6 |..v..>>>v......+cc+.+OOO}v^......|
+      --   7 |..>>>^..v............OOO+>^......|
+      --   8 |........v}ii}v............^......|
+      --   9 |.........+ii+v>>>>>>>>>>>>^......|
+      --  10 |.............>>^.................|
+      local iron = furnaces("iron-furnace", 1)
+      local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)})
+      local entities, inputs = build_pure(assemblers("circuit-assembler", 1, 2, 1, {iron, cables}))
+
+      it("draws the band above the chains", function()
+        assert.are.same({
+          ">>v.............",
+          "..v.............",
+          ">(v.)v..........",
+          "..SS.>>>>>>>>>v.",
+          "..v>>^........v.",
+          ">(v.)v........v}",
+          "..v..>>>v......+",
+          "..>>>^..v.......",
+        }, drawn(entities, 0, 0, 15, 7))
+      end)
+
+      it("stands the columns side by side after the band, the iron furnace first", function()
+        assert.is_not_nil(entity_at(entities, "iron-furnace", 10, 8, 2))
+        assert.is_not_nil(entity_at(entities, "copper-furnace", 16, 5, 2))
+        assert.is_not_nil(entity_at(entities, "cable-assembler", 21, 5, 3))
+        assert.is_not_nil(entity_at(entities, "circuit-assembler", 28, 0, 3))
+      end)
+
+      it("brings in the coal, the copper ore and the iron ore from the top down", function()
+        assert.are.same({
+          {x = 0, y = 0, item = "coal"},
+          {x = 0, y = 2, item = "copper-ore"},
+          {x = 0, y = 5, item = "iron-ore"},
+        }, inputs)
+      end)
+
+      it("numbers every entity once", function()
+        for index, entity in ipairs(entities) do
+          assert.are.equal(index, entity.entity_number)
+        end
+      end)
+    end)
+
+    describe("wood next to cables, wood first", function()
+      -- Wood is a trunk of its own with one item (row 4, under the copper trunk in row 1): no mixer, the belt that
+      -- comes in at the west edge runs straight to column 5, where the raw column of the wood goes down.
+      --
+      --      0123456
+      --   0 |>v.....
+      --   1 |.>>>>>v
+      --   2 |>^....v
+      --   3 |......v
+      --   4 |>>>>>v.
+      local copper = furnaces("copper-furnace", 1)
+      local cables = assemblers("cable-assembler", 1, 1, 2, {copper})
+      local entities, inputs = build_pure(assemblers("pole-assembler", 1, 2, 1, {wood_supplier(), cables}))
+
+      it("runs the belt of wood straight to its column, with no mixer", function()
+        assert.are.same({
+          ">v.....",
+          ".>>>>>v",
+          ">^....v",
+          "......v",
+          ">>>>>v.",
+        }, drawn(entities, 0, 0, 6, 4))
+      end)
+
+      it("brings the wood in along the row of its trunk", function()
+        assert.are.same({
+          {x = 0, y = 0, item = "copper-ore"},
+          {x = 0, y = 2, item = "coal"},
+          {x = 0, y = 4, item = "wood"},
+        }, inputs)
+      end)
+    end)
+
+    describe("a final column shorter than the chains that hang under the band", function()
+      -- The pole assembler is 3 rows tall and the cables chain hangs from its trunk in row 4, so the nearest poles of the
+      -- two are 7.8 tiles apart, further than a wire reaches. A pole on the free tile (19, 4) between them wires them.
+      local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)})
+      local entities = build_pure(assemblers("pole-assembler", 1, 2, 1, {cables, wood_supplier()}))
+      local bridge = entities[#entities]
+
+      it("adds a pole after the other entities, on a free tile between the columns", function()
+        assert.are.same({NAMES.pole, 19, 4}, {bridge.name, tile_of(bridge, 1).x, tile_of(bridge, 1).y})
+      end)
+
+      it("powers every machine", function()
+        local catalog = builders.a_catalog{pole_supply_radius = 2.5, pole_wire_reach = 7.5}
+        catalog["cable-assembler"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+        catalog["pole-assembler"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+        catalog["copper-furnace"] = {kind = "machine", width = 2, height = 2, needs_power = false}
+
+        assert.are.same({}, validator.validate(entities, catalog))
+      end)
+    end)
+
+    describe("more iron ore than one belt carries", function()
+      -- Three columns of 22 furnaces take 440 ore a minute each. A trunk carries a lane of ore, 450 a minute, so each column
+      -- gets a trunk of its own; a belt that comes in carries two lanes, 900, so one belt of iron ore feeds two of the
+      -- trunks and the third has a belt of its own. The coal feeds all three.
+      local entities, inputs = build_pure(assemblers("underground-assembler", 1, 2, 1, {
+        furnaces("iron-furnace", 22),
+        assemblers("belt-assembler", 1, 2, 2, {furnaces("iron-furnace", 22), assemblers("gear-assembler", 1, 2, 1, {furnaces("iron-furnace", 22)})}),
+      }))
+
+      local function items_of(supplies)
+        local items = {}
+        for index, supply in ipairs(supplies) do
+          items[index] = supply.item
+        end
+        return items
+      end
+
+      it("brings in a second belt of iron ore", function()
+        assert.are.same({"coal", "iron-ore", "iron-ore"}, items_of(inputs))
+      end)
+
+      it("numbers every entity once", function()
+        for index, entity in ipairs(entities) do
+          assert.are.equal(index, entity.entity_number)
+        end
+      end)
+    end)
+  end)
+
   describe("the width of the blueprint", function()
     -- The point of the layout: the recipe fixes the width, and the rate only makes the columns taller.
     local function columns_spanned(entities)
@@ -501,6 +745,60 @@ describe("rows", function()
       return entries
     end
 
+    -- What the belt of raw items of each furnace holds in the design that brings in one belt of each material: the ore
+    -- on one lane and the fuel on the other.
+    local raw_lanes = {
+      ["iron-furnace"] = {"iron-ore", "coal"}, ["copper-furnace"] = {"copper-ore", "coal"}, ["brick-furnace"] = {"stone", "coal"},
+    }
+    -- The two ways to bring in the raw items, as every tree in this section is built and checked in each. `build` gives
+    -- the entities and what the tracer needs to know about the belts of raw items (the stages fed raw items for the
+    -- original design, the belts that come in for the other); `lanes` turns that into options of the tracer.
+    local designs = {
+      {
+        suffix = "",
+        build = function(root) return rows.build(root, NAMES) end,
+        lanes = function(entities, raw_stages) return {supplies = {supply_of(entities, raw_stages, "wood")}} end,
+      },
+      {
+        suffix = ", with one belt of each material",
+        build = build_pure,
+        lanes = function(_, supplies) return {supplies = supplies, raw_lanes = raw_lanes, underground_reach = UNDERGROUND_REACH} end,
+      },
+    }
+
+    -- The options of the tracer for a blueprint built in `design`: `base` and what the design adds to it.
+    local function options_for(design, entities, second, base)
+      for key, value in pairs(design.lanes(entities, second)) do
+        base[key] = value
+      end
+      return base
+    end
+
+    -- Adds the two specs every tree gets in each design: the validator finds nothing wrong, and the tracer finds
+    -- every item on a lane of its own where it is eaten.
+    ---@param subject string  what is built, as in "when building <subject>"
+    ---@param tree fun(): table  makes the tree
+    ---@param product string  what the final column makes
+    ---@param tracer_machines? table  what the tracer is told the machines eat and make; default `machines`
+    ---@param eaten? string  what the second spec says is on a lane of its own, if not "every item"
+    local function it_builds_soundly(subject, tree, product, tracer_machines, eaten)
+      for _, design in ipairs(designs) do
+        it("passes the validator when building " .. subject .. design.suffix, function()
+          local entities = design.build(tree())
+
+          assert.are.same({}, validator.validate(entities, catalog()))
+        end)
+
+        it("puts " .. (eaten or "every item on a lane of its own where it is eaten") .. " when building " .. subject .. design.suffix, function()
+          local entities, second = design.build(tree())
+
+          assert.are.same({}, tracer.problems(entities, options_for(design, entities, second, {
+            machines = tracer_machines or machines, raw = raw, product = product,
+          })))
+        end)
+      end
+    end
+
     -- Iron plates and copper cables to circuits, with the stages listed in either order.
     local function circuits(iron_count, copper_count, cable_count, circuit_count, iron_first)
       local cables = assemblers("cable-assembler", cable_count, 1, 2, {furnaces("copper-furnace", copper_count)})
@@ -516,19 +814,7 @@ describe("rows", function()
             for _, iron_first in ipairs({true, false}) do
               local label = string.format("%d iron and %d copper furnaces, %d cable and %d circuit assemblers, %s first", iron_count, copper_count, cable_count, circuit_count, iron_first and "iron" or "cables")
 
-              it("passes the validator when building " .. label, function()
-                local entities = rows.build(circuits(iron_count, copper_count, cable_count, circuit_count, iron_first), NAMES)
-
-                assert.are.same({}, validator.validate(entities, catalog()))
-              end)
-
-              it("puts every item on a lane of its own where it is eaten when building " .. label, function()
-                local entities = rows.build(circuits(iron_count, copper_count, cable_count, circuit_count, iron_first), NAMES)
-
-                local problems = tracer.problems(entities, {machines = machines, raw = raw, product = "electronic-circuit"})
-
-                assert.are.same({}, problems)
-              end)
+              it_builds_soundly(label, function() return circuits(iron_count, copper_count, cable_count, circuit_count, iron_first) end, "electronic-circuit")
             end
           end
         end
@@ -552,19 +838,7 @@ describe("rows", function()
             for _, belts_first in ipairs({true, false}) do
               local label = string.format("%d furnaces per plate column, %d gear, %d belt and %d underground assemblers, %s first", plate_count, gear_count, belt_count, underground_count, belts_first and "belts" or "plates")
 
-              it("passes the validator when building a column inside a column with " .. label, function()
-                local entities = rows.build(underground_belts(plate_count, gear_count, belt_count, underground_count, belts_first), NAMES)
-
-                assert.are.same({}, validator.validate(entities, catalog()))
-              end)
-
-              it("puts every item on a lane of its own where it is eaten when building a column inside a column with " .. label, function()
-                local entities = rows.build(underground_belts(plate_count, gear_count, belt_count, underground_count, belts_first), NAMES)
-
-                local problems = tracer.problems(entities, {machines = machines, raw = raw, product = "underground-belt"})
-
-                assert.are.same({}, problems)
-              end)
+              it_builds_soundly("a column inside a column with " .. label, function() return underground_belts(plate_count, gear_count, belt_count, underground_count, belts_first) end, "underground-belt")
             end
           end
         end
@@ -574,7 +848,7 @@ describe("rows", function()
     -- Wood and cables to poles, with the stages listed in either order.
     local function poles(copper_count, cable_count, pole_count, wood_first)
       local cables = assemblers("cable-assembler", cable_count, 1, 2, {furnaces("copper-furnace", copper_count)})
-      local wood = {raw_item = "wood"}
+      local wood = wood_supplier(30 * pole_count)
       return assemblers("pole-assembler", pole_count, 2, 1, wood_first and {wood, cables} or {cables, wood})
     end
 
@@ -584,22 +858,8 @@ describe("rows", function()
           for _, wood_first in ipairs({true, false}) do
             local label = string.format("%d copper furnaces, %d cable and %d pole assemblers, wood %s", copper_count, cable_count, pole_count, wood_first and "first" or "second")
 
-            it("passes the validator when building " .. label, function()
-              local entities = rows.build(poles(copper_count, cable_count, pole_count, wood_first), NAMES)
-
-              assert.are.same({}, validator.validate(entities, catalog()))
-            end)
-
-            it("puts the wood and the cables on a lane of their own where they are eaten when building " .. label, function()
-              local entities, raw_stages = rows.build(poles(copper_count, cable_count, pole_count, wood_first), NAMES)
-
-              local problems = tracer.problems(entities, {
-                machines = machines, raw = raw, product = "small-electric-pole",
-                supplies = {supply_of(entities, raw_stages, "wood")},
-              })
-
-              assert.are.same({}, problems)
-            end)
+            it_builds_soundly(label, function() return poles(copper_count, cable_count, pole_count, wood_first) end, "small-electric-pole", nil,
+              "the wood and the cables on a lane of their own where they are eaten")
           end
         end
       end
@@ -646,19 +906,7 @@ describe("rows", function()
             for _, forward in ipairs({true, false}) do
               local label = string.format("%d iron and %d brick furnaces and %d gadget assemblers, %s, %s", iron_count, brick_count, gadget_count, shape.label, forward and "listed in order" or "listed backwards")
 
-              it("passes the validator when building " .. label, function()
-                local entities = rows.build(gadgets(iron_count, brick_count, gadget_count, shape, forward), NAMES)
-
-                assert.are.same({}, validator.validate(entities, catalog()))
-              end)
-
-              it("puts every item on a lane of its own where it is eaten when building " .. label, function()
-                local entities = rows.build(gadgets(iron_count, brick_count, gadget_count, shape, forward), NAMES)
-
-                local problems = tracer.problems(entities, {machines = machines_eating(shape.eats), raw = raw, product = "gadget"})
-
-                assert.are.same({}, problems)
-              end)
+              it_builds_soundly(label, function() return gadgets(iron_count, brick_count, gadget_count, shape, forward) end, "gadget", machines_eating(shape.eats))
             end
           end
         end
@@ -685,46 +933,35 @@ describe("rows", function()
             return gadget_assembler(outer_count, outer_suppliers, "outer-assembler")
           end
 
-          it("passes the validator when building a gadget inside a gadget with " .. label, function()
-            local entities = rows.build(nested(), NAMES)
-
-            assert.are.same({}, validator.validate(entities, catalog()))
-          end)
-
-          it("puts every item on a lane of its own where it is eaten when building a gadget inside a gadget with " .. label, function()
-            local entities = rows.build(nested(), NAMES)
-
-            local problems = tracer.problems(entities, {machines = machines, raw = raw, product = "outer-gadget"})
-
-            assert.are.same({}, problems)
-          end)
+          it_builds_soundly("a gadget inside a gadget with " .. label, nested, "outer-gadget")
         end
       end
     end
 
-    it("puts a raw item alone on belt a, with the other two ingredients on belt b", function()
-      -- Wood rides both lanes of belt a and has the column furthest west.
-      local machines_with_wood = machines_eating({"wood", "copper-cable", "stone-brick"})
-      local suppliers = {
-        {raw_item = "wood"},
-        on_belt_b(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)})),
-        on_belt_b(furnaces("brick-furnace", 1)),
-      }
+    for _, design in ipairs(designs) do
+      it("puts a raw item alone on belt a, with the other two ingredients on belt b" .. design.suffix, function()
+        -- Wood rides both lanes of belt a and has the column furthest west.
+        local suppliers = {
+          wood_supplier(),
+          on_belt_b(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)})),
+          on_belt_b(furnaces("brick-furnace", 1)),
+        }
 
-      local entities, raw_stages = rows.build(gadget_assembler(2, suppliers), NAMES)
+        local entities, second = design.build(gadget_assembler(2, suppliers))
 
-      assert.are.same({}, validator.validate(entities, catalog()))
-      assert.are.same({}, tracer.problems(entities, {
-        machines = machines_with_wood, raw = raw, product = "gadget", supplies = {supply_of(entities, raw_stages, "wood")},
-      }))
-    end)
+        assert.are.same({}, validator.validate(entities, catalog()))
+        assert.are.same({}, tracer.problems(entities, options_for(design, entities, second, {
+          machines = machines_eating({"wood", "copper-cable", "stone-brick"}), raw = raw, product = "gadget",
+        })))
+      end)
 
-    it("wires a tall tree from the poles of its columns", function()
-      -- Six furnaces in each plate column make the columns of the transport belt tree 12 rows tall.
-      local entities = rows.build(underground_belts(6, 1, 1, 1, true), NAMES)
+      it("wires a tall tree from the poles of its columns" .. design.suffix, function()
+        -- Six furnaces in each plate column make the columns of the transport belt tree 12 rows tall.
+        local entities = design.build(underground_belts(6, 1, 1, 1, true))
 
-      assert.are.same({}, validator.validate(entities, catalog()))
-    end)
+        assert.are.same({}, validator.validate(entities, catalog()))
+      end)
+    end
 
     it("winds the output belt of the final column when each of its machines has two output inserters", function()
       local root = assemblers("circuit-assembler", 2, 2, 2, {furnaces("iron-furnace", 1), furnaces("copper-furnace", 1)})
@@ -746,21 +983,33 @@ describe("rows", function()
 
     for _, plate_count in ipairs({1, 3}) do
       for _, belt_count in ipairs({1, 3}) do
-        it("passes the validator when both columns are trees, with " .. plate_count .. " furnaces per plate column and " .. belt_count .. " belt assemblers", function()
-          local entities = rows.build(two_trees(plate_count, belt_count), NAMES)
-
-          assert.are.same({}, validator.validate(entities, catalog()))
-        end)
-
-        it("puts every item on a lane of its own where it is eaten when both columns are trees, with " .. plate_count .. " furnaces per plate column and " .. belt_count .. " belt assemblers", function()
-          local entities = rows.build(two_trees(plate_count, belt_count), NAMES)
-
-          local problems = tracer.problems(entities, {machines = machines, raw = raw, product = "double-belt"})
-
-          assert.are.same({}, problems)
-        end)
+        it_builds_soundly("two trees side by side, with " .. plate_count .. " furnaces per plate column and " .. belt_count .. " belt assemblers",
+          function() return two_trees(plate_count, belt_count) end, "double-belt")
       end
     end
+
+    -- The sweeps above would pass vacuously if the tracer were not told about the belts that come in and the lanes of the
+    -- furnaces. This builds the circuit of iron plates and cables, turns the ore feeder of the copper mixer straight on
+    -- instead of into it, and checks that the tracer, set up as in the sweeps, then reports a problem. (The rules of the
+    -- tracer themselves, such as an underground belt with no exit, are tested in spec/belt_tracer_spec.lua.)
+    it("is set up so that the tracer reports a band whose ore feeder does not turn into its mixer", function()
+      local root = assemblers("circuit-assembler", 1, 2, 1, {
+        furnaces("iron-furnace", 1),
+        assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)}),
+      })
+      local entities, inputs = build_pure(root)
+      local options = {
+        machines = machines, raw = raw, raw_lanes = raw_lanes, product = "electronic-circuit",
+        supplies = inputs, underground_reach = UNDERGROUND_REACH,
+      }
+      local sound = tracer.problems(entities, options)
+      entity_at(entities, NAMES.belt, 5, 2, 1).direction = east
+
+      local broken = tracer.problems(entities, options)
+
+      assert.are.same({}, sound)
+      assert.is_true(#broken > 0)
+    end)
 
     it("lists the raw stages of a tree three levels deep from the top down", function()
       local root = underground_belts(1, 1, 1, 1, true)

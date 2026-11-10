@@ -191,22 +191,43 @@ end
 ---@field name string
 ---@field amount number  a minute
 
--- The message after a blueprint is made: how much of the product it makes a minute and
--- how much of each raw item it uses a minute.
----@param made number  what the machines really make a minute of `product`
----@param product string
----@param raws bpgen.RawAmount[]  in the order they are listed
+-- The entries one after another with a comma between them, as one LocalisedString.
+---@param entries LocalisedString[]
 ---@return LocalisedString
-function messages.ready(made, product, raws)
+local function comma_list(entries)
   ---@type LocalisedString
   local list = {""}
-  for index, raw in ipairs(raws) do
+  for index, entry in ipairs(entries) do
     if index > 1 then
       list[#list + 1] = ", "
     end
-    list[#list + 1] = text("raw-amount", messages.number(raw.amount), messages.item(raw.name))
+    list[#list + 1] = entry
   end
-  return text("generated", messages.number(made), messages.item(product), list)
+  return list
+end
+
+-- The message after a blueprint is made: how much of the product it makes a minute and
+-- how much of each raw item it uses a minute. For the design that brings in one belt of each
+-- material it also names the items of those belts, from the top of the blueprint down, so the
+-- player knows which belt goes to which row.
+---@param made number  what the machines really make a minute of `product`
+---@param product string
+---@param raws bpgen.RawAmount[]  in the order they are listed
+---@param belts? string[]  items of the belts that come in, from the top down; nil for the original design
+---@return LocalisedString
+function messages.ready(made, product, raws, belts)
+  local amounts = {}
+  for index, raw in ipairs(raws) do
+    amounts[index] = text("raw-amount", messages.number(raw.amount), messages.item(raw.name))
+  end
+  if not belts then
+    return text("generated", messages.number(made), messages.item(product), comma_list(amounts))
+  end
+  local items = {}
+  for index, name in ipairs(belts) do
+    items[index] = messages.item(name)
+  end
+  return text("generated-with-belts", messages.number(made), messages.item(product), comma_list(amounts), comma_list(items))
 end
 
 ---@class bpgen.StepSummary  the machines of one step

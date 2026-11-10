@@ -22,6 +22,7 @@
 -- The catalog maps an entity name to its description:
 --   {kind = "belt" | "machine" | "inserter" | "pole",
 --    width = tiles, height = tiles,
+--    turns = true,                -- optional: covers height x width tiles facing east or west (a splitter)
 --    needs_power = true,          -- optional, for things a pole must reach
 --    reach = tiles,               -- inserters only: how far away it picks up and drops, default 1
 --    supply_radius = tiles,       -- poles only: how far from its centre it powers
@@ -62,12 +63,23 @@ local function tile_key(x, y)
   return string.format("%g,%g", x, y)
 end
 
+-- The width and the height an entity covers as it stands. An entity that `turns` (a splitter) is
+-- `width` x `height` facing north or south, and the other way round facing east or west.
+local function size_of(entity, description)
+  local directions = defines.direction
+  if description.turns and (entity.direction == directions.east or entity.direction == directions.west) then
+    return description.height, description.width
+  end
+  return description.width, description.height
+end
+
 local function tiles_of(entity, description)
   local keys = {}
-  local left = entity.position.x - description.width / 2
-  local top = entity.position.y - description.height / 2
-  for dx = 0, description.width - 1 do
-    for dy = 0, description.height - 1 do
+  local width, height = size_of(entity, description)
+  local left = entity.position.x - width / 2
+  local top = entity.position.y - height / 2
+  for dx = 0, width - 1 do
+    for dy = 0, height - 1 do
       keys[#keys + 1] = tile_key(left + dx, top + dy)
     end
   end
@@ -81,7 +93,8 @@ local function on_grid(value, size)
 end
 
 local function is_aligned(entity, description)
-  return on_grid(entity.position.x, description.width) and on_grid(entity.position.y, description.height)
+  local width, height = size_of(entity, description)
+  return on_grid(entity.position.x, width) and on_grid(entity.position.y, height)
 end
 
 -- Adds "<name> #<number>: <text>" to `problems`; with no entity, just the text.
@@ -217,10 +230,11 @@ end
 -- A pole's supply area is a square of `supply_radius` around its centre; an
 -- entity is powered if its footprint overlaps that square.
 local function is_powered(entity, description, index)
+  local width, height = size_of(entity, description)
   for _, pole in ipairs(index.poles) do
     local radius = index.catalog[pole.name].supply_radius
-    if math.abs(pole.position.x - entity.position.x) < radius + description.width / 2
-        and math.abs(pole.position.y - entity.position.y) < radius + description.height / 2 then
+    if math.abs(pole.position.x - entity.position.x) < radius + width / 2
+        and math.abs(pole.position.y - entity.position.y) < radius + height / 2 then
       return true
     end
   end
@@ -333,6 +347,7 @@ end
 ---@field kind "belt"|"machine"|"inserter"|"pole"
 ---@field width number  tiles
 ---@field height number  tiles
+---@field turns? boolean  the entity covers `height` x `width` tiles when it faces east or west (a splitter)
 ---@field needs_power? boolean
 ---@field reach? number  inserters only: tiles away that it picks up and drops, 1 by default (2 for a long-handed inserter)
 ---@field supply_radius? number  poles only

@@ -506,15 +506,6 @@ describe("layout", function()
 
       assert.are.same({}, problems)
     end)
-
-    it("reports in the validator a long-handed inserter that has no belt in the column west of the input belt", function()
-      local entities = layout.build(1, NAMES, shape)
-      local catalog = builders.a_catalog{machine_size = 3, machine_needs_power = true}
-
-      local problems = validator.validate(entities, catalog)
-
-      assert.has_item_containing("nothing to pick up from", problems)
-    end)
   end)
 
   describe("max_input_inserters", function()

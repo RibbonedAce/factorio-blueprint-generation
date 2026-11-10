@@ -14,18 +14,29 @@
 --   * a belt with a belt behind it, or with belts feeding it from both sides, stays
 --     straight, and a belt that feeds the side of it puts everything on the near lane
 --     (side-loading);
---   * a belt with one belt feeding it from the side and none behind it is a curve, and
+--   * a belt with one belt feeding it from a side and none behind it is a curve, and
 --     keeps each lane's identity;
---   * an inserter takes from both lanes of a belt.
+--   * an inserter takes from both lanes of a belt;
+--   * a splitter (two tiles side by side across its way) gives each of its two output tiles,
+--     lane for lane, what its two input tiles bring: it keeps the lanes (not yet seen in game);
+--   * an underground belt entrance gives its exit, which stands in line with it, facing the
+--     same way, within `options.underground_reach` tiles (5 by default), what comes into it
+--     from behind, lane for lane; between them anything may stand (not yet seen in game).
 -- The problems are text. They are: a lane that carries two items, an input inserter of a machine
 -- whose inserters, all of them together, never see something it eats, an item nobody eats, a belt that carries the product together with something else, and a belt
--- of raw items that something we made is put on.
+-- of raw items that something we made is put on; an underground belt entrance with no exit within
+-- reach and an exit with no entrance; a belt that feeds the side of a splitter or of an underground
+-- belt (the layout never does, and the game fills only one lane of an underground belt that way); and a
+-- belt of a machine of `options.raw_lanes` that does not hold what the machine needs on the lanes it needs.
 --
 -- `options.machines` says, by entity name, what each machine is: {size, eats = items,
 -- makes = item}. `options.raw` lists, by name, the machines fed by belts of raw items,
 -- which the player supplies (those belts hold nothing of ours). `options.product` is the
 -- item of the blueprint. The names of belts and inserters are "transport-belt" and
--- "inserter" unless `options.belt` and `options.inserter` say otherwise. A long-handed inserter
+-- "inserter" unless `options.belt` and `options.inserter` say otherwise; those of the splitter and
+-- the underground belt are "splitter" and "underground-belt" unless `options.splitter` and
+-- `options.underground` say otherwise (an underground belt entity has `type` "input" for its
+-- entrance and "output" for its exit). A long-handed inserter
 -- (`options.long_inserter`, "long-handed-inserter" by default) picks up from and drops onto the tile
 -- two away, over whatever stands between. The tracer follows it only when it takes from a belt into a
 -- machine; one that puts items on a belt is reported, since the lane rules above are for a belt next to
@@ -33,7 +44,11 @@
 -- `options.supplies` (optional) lists the belts of raw items that run to an input inserter
 -- or to the side of another belt without passing a machine, which the player fills: each is
 -- {x = tile column, y = tile row, item = name} for the first tile of the belt, and the item
--- rides both of its lanes.
+-- rides both of its lanes. What the player supplies is not reported as something we made when it
+-- is on a belt next to the inserter of a machine of `options.raw`.
+-- `options.raw_lanes` (optional) says, by name of a machine of `options.raw`, what the belt that
+-- its input inserters take from must hold: {item} is that item on both lanes, {first, second} is one
+-- item on each lane, either way round.
 --
 -- Lanes are "left" and "right" of the way a belt runs. Like the validator, this reads
 -- the table `defines`, so a test must define it first.
@@ -59,24 +74,36 @@ local OPPOSITE = {
   [direction.north] = direction.south, [direction.south] = direction.north,
   [direction.east] = direction.west, [direction.west] = direction.east,
 }
+local UNDERGROUND_REACH = 5
 
 -- The items on the two lanes of a belt.
 ---@class bpgen.Lanes
 ---@field left table<string, true>
 ---@field right table<string, true>
 
+-- One half of a splitter: a tile that moves items, with the way it faces. (A belt or a piece of an
+-- underground belt is its own entity and has these fields too.)
+---@class bpgen.SplitterHalf
+---@field direction defines.direction
+---@field splitter table  the entity
+
 -- What the tracer knows about a blueprint, found once.
 ---@class bpgen.TraceIndex
 ---@field options table
 ---@field problems string[]
----@field tile table<table, bpgen.Tile>  the top-left tile of each entity
+---@field tile table<table, bpgen.Tile>  the top-left tile of each entity (of a splitter half: its tile)
 ---@field by_tile table<string, table>  the entity that covers each tile
 ---@field belts table<string, table>  the belt on each tile
+---@field flow table<string, table>  what moves items on each tile: a belt, a piece of an underground belt, or a splitter half
+---@field kind table<table, "belt"|"entrance"|"exit"|"splitter">  of everything in `flow`
+---@field twin table<table, table>  of a splitter half, the other half
+---@field partner table<table, table>  of an underground belt exit, its entrance
 ---@field makers table[]  the inserters that take from a machine onto a belt: {inserter, machine, belt}
 ---@field takers table[]  the inserters that take from a belt into a machine: {inserter, machine, belt}
 ---@field drops table<table, bpgen.Lanes>  what inserters put on each belt
 ---@field supplied table<table, string>  the item the player puts on the first tile of a belt of raw items
----@field contents table<table, bpgen.Lanes>  the items on each belt, once worked out
+---@field raw_items table<string, true>  every item the player supplies
+---@field contents table<table, bpgen.Lanes>  the items on each tile that moves items, once worked out
 
 local function tile_key(x, y)
   return string.format("%g,%g", x, y)
@@ -95,25 +122,77 @@ local function add_items(into, from)
   end
 end
 
--- Remembers where every entity is, and which tiles hold belts.
+---@param index bpgen.TraceIndex
+---@param text string
+local function report(index, text)
+  index.problems[#index.problems + 1] = text
+end
+
+-- How many tiles an entity covers across and along the map: a machine is square, a splitter is two
+-- tiles wide across its way, so two wide facing north or south and two tall facing east or west.
+---@param options table
+---@param entity table
+---@return integer width
+---@return integer height
+local function dimensions(options, entity)
+  if entity.name == (options.splitter or "splitter") then
+    if entity.direction == direction.north or entity.direction == direction.south then
+      return 2, 1
+    end
+    return 1, 2
+  end
+  local machine = options.machines[entity.name]
+  local size = machine and machine.size or 1
+  return size, size
+end
+
+-- Puts the two halves of a splitter in `flow`.
+---@param index bpgen.TraceIndex
+---@param entity table
+---@param tile bpgen.Tile  its top-left tile
+---@param width integer
+---@param height integer
+local function index_splitter(index, entity, tile, width, height)
+  local halves = {}
+  for dx = 0, width - 1 do
+    for dy = 0, height - 1 do
+      local half = {direction = entity.direction, splitter = entity}
+      index.tile[half] = {x = tile.x + dx, y = tile.y + dy}
+      index.flow[tile_key(tile.x + dx, tile.y + dy)] = half
+      index.kind[half] = "splitter"
+      halves[#halves + 1] = half
+    end
+  end
+  index.twin[halves[1]], index.twin[halves[2]] = halves[2], halves[1]
+end
+
+-- Remembers where every entity is, and which tiles hold belts and the other pieces that move items.
 ---@param entities table[]
 ---@param options table
 ---@return bpgen.TraceIndex
 local function index_of(entities, options)
-  local index = {options = options, problems = {}, tile = {}, by_tile = {}, belts = {}, makers = {}, takers = {}, drops = {}, contents = {}, supplied = {}}
+  local index = {
+    options = options, problems = {}, tile = {}, by_tile = {}, belts = {}, flow = {}, kind = {}, twin = {}, partner = {},
+    makers = {}, takers = {}, drops = {}, contents = {}, supplied = {}, raw_items = {},
+  }
   local belt_name = options.belt or "transport-belt"
   for _, entity in ipairs(entities) do
-    local machine = options.machines[entity.name]
-    local size = machine and machine.size or 1
-    local tile = grid.top_left_tile(entity.position, size, size)
+    local width, height = dimensions(options, entity)
+    local tile = grid.top_left_tile(entity.position, width, height)
     index.tile[entity] = tile
-    for dx = 0, size - 1 do
-      for dy = 0, size - 1 do
+    for dx = 0, width - 1 do
+      for dy = 0, height - 1 do
         index.by_tile[tile_key(tile.x + dx, tile.y + dy)] = entity
       end
     end
+    local key = tile_key(tile.x, tile.y)
     if entity.name == belt_name then
-      index.belts[tile_key(tile.x, tile.y)] = entity
+      index.belts[key], index.flow[key], index.kind[entity] = entity, entity, "belt"
+    elseif entity.name == (options.underground or "underground-belt") then
+      index.flow[key] = entity
+      index.kind[entity] = entity.type == "input" and "entrance" or "exit"
+    elseif entity.name == (options.splitter or "splitter") then
+      index_splitter(index, entity, tile, width, height)
     end
   end
   return index
@@ -131,37 +210,48 @@ local function entity_beside(index, entity, way, distance)
   return index.by_tile[tile_key(tile.x + VECTOR[way].x * distance, tile.y + VECTOR[way].y * distance)]
 end
 
+-- What moves items on the tile next to `node` the way `way` points.
 ---@param index bpgen.TraceIndex
----@param belt table
+---@param node table
 ---@param way defines.direction
 ---@return table|nil
-local function belt_beside(index, belt, way)
-  local tile = index.tile[belt]
-  return index.belts[tile_key(tile.x + VECTOR[way].x, tile.y + VECTOR[way].y)]
+local function flow_beside(index, node, way)
+  local tile = index.tile[node]
+  return index.flow[tile_key(tile.x + VECTOR[way].x, tile.y + VECTOR[way].y)]
 end
 
--- The belt on the side `side` of a belt, if it points into it.
+-- Whether `source` puts what it carries on the tile of `target`. (The entrance of an underground
+-- belt takes its items underground: it feeds only its exit.)
 ---@param index bpgen.TraceIndex
----@param belt table
+---@param source table
+---@param target table
+---@return boolean
+local function outputs_into(index, source, target)
+  return index.kind[source] ~= "entrance" and flow_beside(index, source, source.direction) == target
+end
+
+-- What feeds a tile from the side `side`, if it points into it.
+---@param index bpgen.TraceIndex
+---@param node table
 ---@param side defines.direction
 ---@return table|nil
-local function feeder_from(index, belt, side)
-  local neighbour = belt_beside(index, belt, side)
-  if neighbour and belt_beside(index, neighbour, neighbour.direction) == belt then
+local function feeder_from(index, node, side)
+  local neighbour = flow_beside(index, node, side)
+  if neighbour and outputs_into(index, neighbour, node) then
     return neighbour
   end
   return nil
 end
 
--- The belts that feed a belt from behind, from its left and from its right.
+-- What feeds a tile from behind, from its left and from its right.
 ---@param index bpgen.TraceIndex
----@param belt table
+---@param node table
 ---@return table|nil rear
 ---@return table|nil left
 ---@return table|nil right
-local function feeders_of(index, belt)
-  local way = belt.direction
-  return feeder_from(index, belt, OPPOSITE[way]), feeder_from(index, belt, LEFT_OF[way]), feeder_from(index, belt, RIGHT_OF[way])
+local function feeders_of(index, node)
+  local way = node.direction
+  return feeder_from(index, node, OPPOSITE[way]), feeder_from(index, node, LEFT_OF[way]), feeder_from(index, node, RIGHT_OF[way])
 end
 
 -- A belt with exactly one belt feeding it from a side and none behind it is a curve.
@@ -222,7 +312,7 @@ local function classify(index, inserter, reach)
   local to = entity_beside(index, inserter, OPPOSITE[inserter.direction], reach)
   if is_machine(index, from) and is_belt(index, to) and reach > 1 then
     local tile = index.tile[inserter]
-    index.problems[#index.problems + 1] = string.format("the long-handed inserter at %g,%g puts items on a belt, which the tracer does not follow", tile.x, tile.y)
+    report(index, string.format("the long-handed inserter at %g,%g puts items on a belt, which the tracer does not follow", tile.x, tile.y))
   elseif is_machine(index, from) and is_belt(index, to) then
     index.makers[#index.makers + 1] = {inserter = inserter, machine = from, belt = to}
   elseif is_belt(index, from) and is_machine(index, to) then
@@ -280,21 +370,13 @@ local function bring_in(index, belt, lanes, visiting)
   end
 end
 
--- The items on each lane of a belt: what inserters drop on it, and what the belts that
--- feed it bring. `visiting` holds the belts being worked out, to stop at a loop.
+-- The items on each lane of a belt: what inserters drop on it, what the player supplies on it,
+-- and what the belts that feed it bring.
 ---@param index bpgen.TraceIndex
 ---@param belt table
+---@param lanes bpgen.Lanes
 ---@param visiting table<table, true>
----@return bpgen.Lanes
-function contents_of(index, belt, visiting)
-  if index.contents[belt] then
-    return index.contents[belt]
-  end
-  local lanes = new_lanes()
-  if visiting[belt] then
-    return lanes
-  end
-  visiting[belt] = true
+local function fill_belt(index, belt, lanes, visiting)
   if index.drops[belt] then
     add_along(lanes, index.drops[belt])
   end
@@ -303,8 +385,52 @@ function contents_of(index, belt, visiting)
     lanes.right[index.supplied[belt]] = true
   end
   bring_in(index, belt, lanes, visiting)
-  visiting[belt] = nil
-  index.contents[belt] = lanes
+end
+
+-- What comes through a tile that moves items. An underground belt entrance holds what is behind it,
+-- its exit holds what its entrance does, and a splitter half holds what both input tiles bring.
+---@param index bpgen.TraceIndex
+---@param node table
+---@param lanes bpgen.Lanes
+---@param visiting table<table, true>
+local function fill_node(index, node, lanes, visiting)
+  local kind = index.kind[node]
+  if kind == "belt" then
+    fill_belt(index, node, lanes, visiting)
+  elseif kind == "exit" then
+    local entrance = index.partner[node]
+    if entrance then
+      add_along(lanes, contents_of(index, entrance, visiting))
+    end
+  else
+    local tiles = kind == "splitter" and {node, index.twin[node]} or {node}
+    for _, tile in ipairs(tiles) do
+      local rear = feeder_from(index, tile, OPPOSITE[tile.direction])
+      if rear then
+        add_along(lanes, contents_of(index, rear, visiting))
+      end
+    end
+  end
+end
+
+-- The items on each lane of a tile that moves items. `visiting` holds the tiles being worked
+-- out, to stop at a loop.
+---@param index bpgen.TraceIndex
+---@param node table
+---@param visiting table<table, true>
+---@return bpgen.Lanes
+function contents_of(index, node, visiting)
+  if index.contents[node] then
+    return index.contents[node]
+  end
+  local lanes = new_lanes()
+  if visiting[node] then
+    return lanes
+  end
+  visiting[node] = true
+  fill_node(index, node, lanes, visiting)
+  visiting[node] = nil
+  index.contents[node] = lanes
   return lanes
 end
 
@@ -322,19 +448,19 @@ end
 -- No lane carries two kinds of item.
 ---@param index bpgen.TraceIndex
 local function check_lanes(index)
-  for _, belt in pairs(index.belts) do
-    local lanes = contents_of(index, belt, {})
+  for _, node in pairs(index.flow) do
+    local lanes = contents_of(index, node, {})
     for _, side in ipairs({"left", "right"}) do
       local items = sorted_items(lanes[side])
       if #items > 1 then
-        local tile = index.tile[belt]
-        index.problems[#index.problems + 1] = string.format("the %s lane at %g,%g carries %s", side, tile.x, tile.y, table.concat(items, " and "))
+        local tile = index.tile[node]
+        report(index, string.format("the %s lane at %g,%g carries %s", side, tile.x, tile.y, table.concat(items, " and ")))
       end
     end
   end
 end
 
--- The items on either lane of a belt.
+-- The items on either lane of a tile that moves items.
 ---@param index bpgen.TraceIndex
 ---@param belt table
 ---@return table<string, true>
@@ -347,13 +473,15 @@ local function items_on(index, belt)
 end
 
 -- The problem texts for an input inserter that takes from a belt of raw items: the
--- belt must hold nothing that we made.
+-- belt must hold nothing that we made (what the player supplies is fine).
 ---@param index bpgen.TraceIndex
 ---@param taker table
 local function check_raw_taker(index, taker)
   local tile = index.tile[taker.inserter]
   for item in pairs(items_on(index, taker.belt)) do
-    index.problems[#index.problems + 1] = string.format("the belt of raw items next to the inserter at %g,%g carries %s", tile.x, tile.y, item)
+    if not index.raw_items[item] then
+      report(index, string.format("the belt of raw items next to the inserter at %g,%g carries %s", tile.x, tile.y, item))
+    end
   end
 end
 
@@ -385,7 +513,7 @@ local function check_taker(index, taker, seen, eaten)
   for _, item in ipairs(index.options.machines[taker.machine.name].eats) do
     eaten[item] = true
     if not seen[item] then
-      index.problems[#index.problems + 1] = string.format("the input inserter at %g,%g never sees %s", tile.x, tile.y, item)
+      report(index, string.format("the input inserter at %g,%g never sees %s", tile.x, tile.y, item))
     end
   end
 end
@@ -415,7 +543,7 @@ local function check_outputs(index, eaten)
     local item = index.options.machines[maker.machine.name].makes
     if item ~= index.options.product and not eaten[item] and not reported[item] then
       reported[item] = true
-      index.problems[#index.problems + 1] = "nothing eats " .. item
+      report(index, "nothing eats " .. item)
     end
   end
 end
@@ -423,11 +551,11 @@ end
 -- A belt that carries the product carries nothing else.
 ---@param index bpgen.TraceIndex
 local function check_product(index)
-  for _, belt in pairs(index.belts) do
-    local items = items_on(index, belt)
+  for _, node in pairs(index.flow) do
+    local items = items_on(index, node)
     if items[index.options.product] and #sorted_items(items) > 1 then
-      local tile = index.tile[belt]
-      index.problems[#index.problems + 1] = string.format("the belt at %g,%g carries the product together with something else", tile.x, tile.y)
+      local tile = index.tile[node]
+      report(index, string.format("the belt at %g,%g carries the product together with something else", tile.x, tile.y))
     end
   end
 end
@@ -437,6 +565,89 @@ end
 local function note_supplies(index)
   for _, supply in ipairs(index.options.supplies or {}) do
     index.supplied[index.belts[tile_key(supply.x, supply.y)]] = supply.item -- a supply that is not on a belt is a mistake in the test: this fails
+    index.raw_items[supply.item] = true
+  end
+end
+
+-- The first piece of an underground belt in line with an entrance, within reach, or nil.
+---@param index bpgen.TraceIndex
+---@param entrance table
+---@return table|nil
+local function first_piece_ahead(index, entrance)
+  local reach = index.options.underground_reach or UNDERGROUND_REACH
+  for distance = 1, reach do
+    local piece = entity_beside(index, entrance, entrance.direction, distance)
+    if piece and piece.name == (index.options.underground or "underground-belt") then
+      return piece
+    end
+  end
+  return nil
+end
+
+-- Every entrance meets an exit that faces the same way, within reach, with no other piece of an
+-- underground belt between them; every exit is met by an entrance.
+---@param index bpgen.TraceIndex
+local function pair_undergrounds(index)
+  for node, kind in pairs(index.kind) do
+    if kind == "entrance" then
+      local piece = first_piece_ahead(index, node)
+      if piece and piece.type == "output" and piece.direction == node.direction then
+        index.partner[piece] = node
+      else
+        local tile = index.tile[node]
+        report(index, string.format("the underground belt entrance at %g,%g meets no exit within reach", tile.x, tile.y))
+      end
+    end
+  end
+  for node, kind in pairs(index.kind) do
+    if kind == "exit" and not index.partner[node] then
+      local tile = index.tile[node]
+      report(index, string.format("the underground belt exit at %g,%g has no entrance", tile.x, tile.y))
+    end
+  end
+end
+
+-- Nothing feeds the side of a splitter or of a piece of an underground belt.
+---@param index bpgen.TraceIndex
+local function check_sides(index)
+  for node, kind in pairs(index.kind) do
+    if kind ~= "belt" then
+      local _, left, right = feeders_of(index, node)
+      if left or right then
+        local tile = index.tile[node]
+        report(index, string.format("a belt feeds the side of the %s at %g,%g", kind, tile.x, tile.y))
+      end
+    end
+  end
+end
+
+-- Whether the lanes hold `expected`: one item on both lanes, or two items one on each lane.
+---@param lanes bpgen.Lanes
+---@param expected string[]
+---@return boolean
+local function lanes_match(lanes, expected)
+  local left, right = sorted_items(lanes.left), sorted_items(lanes.right)
+  local function only(list, item)
+    return #list == 1 and list[1] == item
+  end
+  if #expected == 1 then
+    return only(left, expected[1]) and only(right, expected[1])
+  end
+  return (only(left, expected[1]) and only(right, expected[2])) or (only(left, expected[2]) and only(right, expected[1]))
+end
+
+-- The belt that the input inserters of a machine of `raw_lanes` take from holds what the machine needs, on the lanes it needs.
+---@param index bpgen.TraceIndex
+local function check_raw_lanes(index)
+  local expectations = index.options.raw_lanes
+  for _, taker in ipairs(index.takers) do
+    local expected = expectations and expectations[taker.machine.name]
+    local lanes = expected and contents_of(index, taker.belt, {})
+    if lanes and not lanes_match(lanes, expected) then
+      local tile = index.tile[taker.inserter]
+      report(index, string.format("the belt next to the inserter at %g,%g carries [%s] on its left lane and [%s] on its right lane, not %s",
+        tile.x, tile.y, table.concat(sorted_items(lanes.left), ","), table.concat(sorted_items(lanes.right), ","), table.concat(expected, " and ")))
+    end
   end
 end
 
@@ -446,6 +657,7 @@ end
 function tracer.problems(entities, options)
   local index = index_of(entities, options)
   note_supplies(index)
+  pair_undergrounds(index)
   for _, entity in ipairs(entities) do
     if entity.name == (options.inserter or "inserter") then
       classify(index, entity, 1)
@@ -454,7 +666,9 @@ function tracer.problems(entities, options)
     end
   end
   note_drops(index)
+  check_sides(index)
   check_lanes(index)
+  check_raw_lanes(index)
   check_outputs(index, check_inputs(index))
   check_product(index)
   table.sort(index.problems)

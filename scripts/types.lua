@@ -12,6 +12,8 @@
 ---@field inserter string
 ---@field pole string
 ---@field long_inserter? string  the long-handed inserter, for a machine that takes from a second input belt
+---@field splitter? string  the splitter, for the input design that brings in one belt of each material
+---@field underground? string  the underground belt, for the same design
 
 ---@class bpgen.Names : bpgen.SharedNames  prototype names one column of the layout builds with
 ---@field machine string
@@ -137,11 +139,21 @@
 ---@field belt? "a"|"b"  for a stage that is a supplier: which input belt of the stage that eats it the product rides ("a" when nil): belt a is next to the machines, belt b one column further out, for the long-handed inserters
 ---@field recipe? string  the recipe to set on the machines; nil for a machine that picks its own recipe (a furnace)
 ---@field suppliers? (bpgen.StageLayout|bpgen.RawSupplier)[]  what it eats: the stages whose products it eats, in the order of the recipe's ingredients, then the raw item that goes with them, if any; none or one in a chain, two when a recipe has two made ingredients or one made ingredient and a raw one (`rows.build` uses it; `layout.build_chain` ignores it)
+---@field feed? bpgen.Feed  of a stage that eats only raw items: what it takes from the belts that come in a minute (`rows.build_pure` uses it; the original `rows.build` ignores it)
 
 -- A raw item that a stage eats next to a made one: no machines, only a belt that brings the
 -- item to the column that eats it (see scripts/rows.lua).
 ---@class bpgen.RawSupplier
 ---@field raw_item string  the item
+---@field feed? bpgen.Feed  what the stage takes of it, a minute
+
+-- What a stage fed raw items, or the column of a raw item, takes from the belts that come in, a minute.
+---@class bpgen.Feed
+---@field items bpgen.FeedItem[]  one item rides both lanes of its belt (wood for a chest); two ride one lane each, the second being the fuel
+
+---@class bpgen.FeedItem
+---@field name string
+---@field amount number  a minute
 
 -- What a block is told about the product belt of its chain.
 ---@class bpgen.BlockOptions
@@ -170,10 +182,69 @@
 ---@field position bpgen.Position
 ---@field direction? defines.direction
 ---@field recipe? string  the recipe of an assembling machine
+---@field type? "input"|"output"  of an underground belt: the entrance or the exit
 
 ---@class bpgen.Entity : bpgen.NewEntity  one entity of a blueprint, as Factorio's set_blueprint_entities wants it
 ---@field entity_number integer
 ---@field wires? bpgen.Wire[]  stored on the pole the wire starts from
+
+-- The input design that brings in one belt of each material (see .agents/inputs-plan.md) is asked for
+-- by passing these to `rows.build_pure`; the original design is `rows.build` without them.
+---@class bpgen.InputOptions
+---@field lane_items_per_minute number  what one lane of a belt carries
+---@field underground_reach integer  the most tiles an underground belt spans, from its entrance to its exit
+
+-- A belt of one material that the player brings in: the tile where it starts, at the west edge. The item rides both lanes.
+---@class bpgen.Input
+---@field x integer  tile column
+---@field y integer  tile row
+---@field item string
+
+-- What `scripts/poles.lua` needs to put poles between two that are further apart than a wire reaches: the blueprint's
+-- entities to add them to, which tiles are taken, and the pole's name.
+---@class bpgen.PoleBridge
+---@field entities bpgen.Entity[]  the poles are added after the ones there, numbered
+---@field taken table<string, true>  the tiles that hold something, by "x,y" (see `poles.taken_tiles`)
+---@field pole string  prototype name of the pole
+
+-- A chain or the column of a raw item, as `scripts/feeds.lua` sees it.
+---@class bpgen.FeedLeaf
+---@field index integer  place among the columns, from the west
+---@field feed bpgen.Feed
+---@field drop_x? integer  the tile column its belt comes down, once the columns are placed
+
+-- A belt along the top of the blueprint that feeds some leaves with what they take.
+---@class bpgen.Trunk
+---@field items string[]  one name (both lanes) or two (the ore on one lane, the fuel on the other)
+---@field mixed boolean  whether it carries two items
+---@field leaves bpgen.FeedLeaf[]  from the west
+---@field demand table<string, number>  of each item, a minute
+---@field first integer  the place of its first leaf
+---@field last integer  the place of its last leaf
+---@field number integer  from the top
+---@field row? integer  its row, once laid out
+---@field east? integer  the column of its last leaf, once the columns are placed
+
+-- What one trunk needs of one item.
+---@class bpgen.Feeder
+---@field trunk bpgen.Trunk
+---@field role "a"|"b"|"pure"  the ore of a mixed trunk, its fuel, or the whole of a trunk that carries one item
+---@field flow number  a minute
+---@field row? integer  the row of the belt that brings it, once laid out
+
+-- A belt of one item that comes in, and what it feeds. With two feeders or more it is a bus.
+---@class bpgen.PureBelt
+---@field item string
+---@field feeders bpgen.Feeder[]  in the order of the trunks
+---@field bus? integer  of a belt with two feeders or more: its place among the buses, 0 for the one furthest east
+---@field column? integer  of a bus, the tile column it comes down
+---@field entry? integer  of a bus, the row it comes in
+---@field last? integer  of a bus, the row of its last feeder
+
+---@class bpgen.FeedPlan
+---@field trunks bpgen.Trunk[]  the one whose last leaf is furthest east first
+---@field belts bpgen.PureBelt[]
+---@field buses bpgen.PureBelt[]  the belts with two feeders or more, the one with the most feeders first
 
 ---@class bpgen.Generated  a finished blueprint
 ---@field entities bpgen.Entity[]

@@ -16,6 +16,7 @@ Persistent notes for the AI assistant (Claude) working on this repo. They exist 
 9. [recipe-tree-plan.md](recipe-tree-plan.md): the proposed recursive block layout for recipes with two made ingredients, starting with the electronic circuit (a proposal until the owner approves it).
 10. [multi-input-plan.md](multi-input-plan.md): the plan for recipes with 3 or 4 ingredients, starting with the inserter: a second input belt reached by long-handed inserters. Decisions confirmed by the owner 2026-11-07; implemented (its layout part is superseded by item 11).
 11. [row-layout-plan.md](row-layout-plan.md): the layout of recipes with several made ingredients since 2026-11-08: one column per step, side by side, so the recipe fixes the width and the rate only the height. Replaces the stack of `blocks.lua`; has the reasons, the measurements and what was considered and not done (underground belts, stacking columns).
+12. [inputs-plan.md](inputs-plan.md): the design that brings in one pure single-material belt per raw material instead of a mixed belt per chain, and makes the ore-and-coal belts inside a band along the top with splitters and underground belts, only when both are researched (built 2026-11-09, `scripts/feeds.lua`, `scripts/inputs.lua`, `scripts/poles.lua`, `rows.build_pure`; the original input design stays). Has the rules, the measurements and what is unverified in game.
 
 ## Maintenance rules
 
