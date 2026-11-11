@@ -167,7 +167,7 @@ describe("layout", function()
       local belts = entities_named(entities, NAMES.belt)
 
       assert.are.same({
-        {x = 0, y = 0}, {x = 0, y = 1}, {x = 0, y = 2}, -- the second furnace's input inserter is in row 2
+        {x = 0, y = 0}, {x = 0, y = 1}, {x = 0, y = 2}, {x = 0, y = 3}, -- the second furnace's input inserter is in its bottom row, 3
         {x = 5, y = 0}, {x = 5, y = 1}, {x = 5, y = 2}, {x = 5, y = 3},
       }, tiles_of(belts))
     end)
@@ -231,9 +231,21 @@ describe("layout", function()
       local poles = entities_named(entities, NAMES.pole)
 
       assert.are.same({
-        {x = 1, y = 1}, {x = 4, y = 1}, -- below the first furnace's inserters
-        {x = 1, y = 5}, {x = 4, y = 5}, -- below the third furnace's inserters
+        {x = 1, y = 1}, {x = 4, y = 1}, -- under the first furnace's inserters (in row 0), which reach those of the second (in row 3)
+        {x = 1, y = 5}, {x = 4, y = 5}, -- under the third furnace's inserters (in row 4)
       }, tiles_of(poles))
+    end)
+
+    it("puts the inserters of a pair of machines apart, the first machine's in its top row and the second's in its bottom row", function()
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local entities = layout.build(3, NAMES, shape)
+
+      local inserters = entities_named(entities, NAMES.inserter)
+      assert.are.same({
+        {x = 1, y = 0}, {x = 4, y = 0}, -- first furnace: rows 0 and 1
+        {x = 1, y = 3}, {x = 4, y = 3}, -- second furnace: rows 2 and 3
+        {x = 1, y = 4}, {x = 4, y = 4}, -- third furnace, alone: like the first, beside the second's
+      }, tiles_of(inserters))
     end)
   end)
 
@@ -328,22 +340,24 @@ describe("layout", function()
 
       local poles = entities_named(entities, NAMES.pole)
       assert.are.same({
-        {x = 1, y = 2}, -- after the two input inserters in rows 0 and 1
-        {x = 5, y = 1}, -- after the one output inserter in row 0
-      }, tiles_of(poles)) -- one pair serves both machines
+        {x = 1, y = 2}, -- under the two input inserters of the first machine, in rows 0 and 1
+        {x = 5, y = 1}, -- under the one output inserter of the first machine, in row 0
+        {x = 1, y = 3}, -- above the two input inserters of the second machine, in rows 4 and 5, which the first pole does not reach
+        {x = 5, y = 4}, -- above the one output inserter of the second machine, in row 5
+      }, tiles_of(poles))
     end)
   end)
 
   describe("a 3x3 machine fed by two inserters and emptied by two, the most that leave a tile for a pole", function()
-    it("puts the poles below the inserters when each side leaves one free tile", function()
+    it("puts the poles in the free tile beside the inserters of each machine, under the first's and above the second's", function()
       local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
 
       local entities = layout.build(2, NAMES, shape)
 
       local poles = entities_named(entities, NAMES.pole)
       assert.are.same({
-        {x = 1, y = 2}, -- after the two input inserters in rows 0 and 1
-        {x = 5, y = 2}, -- after the two output inserters in rows 0 and 1
+        {x = 1, y = 2}, {x = 5, y = 2}, -- under the two inserters of the first machine, in rows 0 and 1
+        {x = 1, y = 3}, {x = 5, y = 3}, -- above the two inserters of the second machine, in rows 4 and 5
       }, tiles_of(poles))
     end)
 
@@ -359,59 +373,69 @@ describe("layout", function()
 
   describe("a 3x3 machine with two output inserters winds the output belt, so one inserter fills each lane", function()
     -- Columns: 5 output inserters, 6 inner belt (right beside them), 7 outer belt.
-    -- Machine 1 covers rows 0 to 2 and machine 2 rows 3 to 5.
+    -- Machine 1 covers rows 0 to 2 and machine 2 rows 3 to 5; the inserters of the first stand in its top rows (0 and 1)
+    -- and those of the second in its bottom rows (4 and 5). Each machine's two inserters are one seam of the belt.
     local east, south, west = defines.direction.east, defines.direction.south, defines.direction.west
 
-    it("runs the outer belt south, dipping west to pass the second inserter, when the output belt winds", function()
+    it("draws the seams of two machines with two inserters each, the belt starting a row above the first", function()
+      local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
+      local machines = {[NAMES.machine] = {size = 3, glyph = "M"}}
+
+      local entities = layout.build(2, NAMES, shape)
+
+      -- columns 5 (the inserters and their poles), 6 (the inner belt) and 7 (the outer belt), rows -1 to 5
+      assert.are.same({".v.", "}>v", "}>v", "+.v", "+.v", "}>v", "}v<"}, picture.draw(entities, machines, 5, -1, 7, 5))
+    end)
+
+    it("runs the outer belt south, dipping west in the row of the last inserter, when the output belt winds", function()
       local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
 
       local entities = layout.build(2, NAMES, shape)
 
-      assert.are.same({south, west, south, south, west, south}, directions_down(entities, 7, 0, 5))
+      assert.are.same({south, south, south, south, south, west}, directions_down(entities, 7, 0, 5))
     end)
 
-    it("runs the inner belt as a stub, a southbound belt and a stub again for each machine", function()
+    it("runs the inner belt as stubs beside the first machine's and the second machine's first inserter, and a southbound belt beside its last", function()
       local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
 
       local entities = layout.build(2, NAMES, shape)
 
-      assert.are.same({east, south, east, east, south, east}, directions_down(entities, 6, 0, 5))
+      assert.are.same({east, east, false, false, east, south}, directions_down(entities, 6, 0, 5))
     end)
 
-    it("places the two output inserters beside the stub and the southbound belt of the inner column", function()
+    it("places the two output inserters of a machine beside the curve and the stub of the inner column", function()
       local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
 
       local entities = layout.build(1, NAMES, shape)
 
-      assert.are.equal(NAMES.inserter, name_at(entities, 5, 0)) -- drops onto the east stub, which joins the outer belt from the side
-      assert.are.equal(NAMES.inserter, name_at(entities, 5, 1)) -- drops onto the south belt of the inner column
+      assert.are.equal(NAMES.inserter, name_at(entities, 5, 0)) -- drops on the curve, which turns east to the outer belt
+      assert.are.equal(NAMES.inserter, name_at(entities, 5, 1)) -- drops on the east stub, which joins the outer belt from the side
       assert.are.equal(NAMES.belt, name_at(entities, 6, 0))
       assert.are.equal(NAMES.belt, name_at(entities, 6, 1))
     end)
 
-    it("runs the outer belt from one row above the first machine's top row to the last machine's bottom row", function()
+    it("ends the belt in the machine's last row, where the player continues it", function()
       local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
 
       local entities = layout.build(2, NAMES, shape)
 
-      assert.are.equal(NAMES.belt, name_at(entities, 7, -1)) -- carries nothing; see the next test
-      assert.is_nil(name_at(entities, 7, -2))
-      assert.is_nil(name_at(entities, 7, 6)) -- the player continues the belt from here
+      assert.are.equal(NAMES.belt, name_at(entities, 6, 5))
       assert.is_nil(name_at(entities, 6, 6))
+      assert.is_nil(name_at(entities, 7, 6))
     end)
 
-    it("starts the outer belt with an empty tile running south behind the first stub, so the first lane does not bend", function()
+    it("starts the belt in the inner column with a tile behind the first curve, so that the first lane is a curve", function()
       local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
 
       local entities = layout.build(2, NAMES, shape)
 
-      assert.are.equal(defines.direction.south, direction_at(entities, 7, -1))
-      assert.are.equal(defines.direction.south, direction_at(entities, 7, 0)) -- straight on from the empty tile
-      assert.are.equal(defines.direction.east, direction_at(entities, 6, 0)) -- the stub side-loads it
-      assert.is_nil(name_at(entities, 6, -1))
+      assert.are.equal(defines.direction.south, direction_at(entities, 6, -1)) -- behind the curve: the inner belt carries nothing here
+      assert.are.equal(defines.direction.east, direction_at(entities, 6, 0)) -- the first inserter drops on this curve
+      assert.is_nil(name_at(entities, 7, -1))
+      assert.is_nil(name_at(entities, 6, -2))
     end)
 
-    it("uses the same number of belt tiles for every machine when the output belt winds, plus the empty tile", function()
+    it("builds a start, four tiles for each machine's two inserters and the belt between them", function()
       local shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
 
       local entities = layout.build(3, NAMES, shape)
@@ -422,7 +446,7 @@ describe("layout", function()
           output_belts[#output_belts + 1] = belt
         end
       end
-      assert.are.equal(19, #output_belts) -- 3 machines x 6, and the empty tile
+      assert.are.equal(16, #output_belts) -- the start in row -1, the three seams (rows 0-1, 4-5, 6-7) at 4 each, rows 2 and 3 and row 8 between and after them
     end)
 
     it("keeps a plain output belt when a machine has one output inserter", function()
@@ -440,14 +464,25 @@ describe("layout", function()
     -- inserters, takes from the belt one column further west (column -1), over the input belt.
     local shape = {machine_size = 3, input_inserters = 1, long_inserters = 1, output_inserters = 1}
 
-    it("puts the long-handed inserter in the row under the plain one, in the same column, for every machine", function()
+    it("puts the long-handed inserter under the plain one in the first machine and above it in the second, in the same column", function()
       local entities = layout.build(2, NAMES, shape)
 
-      assert.are.equal(NAMES.inserter, name_at(entities, 1, 0))
+      assert.are.equal(NAMES.inserter, name_at(entities, 1, 0)) -- the first machine's pair is in its top rows, 0 and 1: plain, long
       assert.are.equal(NAMES.long_inserter, name_at(entities, 1, 1))
-      assert.are.equal(NAMES.inserter, name_at(entities, 1, 3)) -- the second machine, rows 3 to 5
-      assert.are.equal(NAMES.long_inserter, name_at(entities, 1, 4))
+      assert.are.equal(NAMES.long_inserter, name_at(entities, 1, 4)) -- the second machine's, in its bottom rows, 4 and 5: long, plain
+      assert.are.equal(NAMES.inserter, name_at(entities, 1, 5))
       assert.are.equal(2, count_named(entities, NAMES.long_inserter))
+    end)
+
+    it("repeats the pattern for the next pair: plain, long | long, plain | plain, long | long, plain", function()
+      local entities = layout.build(4, NAMES, shape)
+
+      local rows = {}
+      for row = 0, 11 do
+        local name = name_at(entities, 1, row)
+        rows[#rows + 1] = name == NAMES.inserter and "P" or name == NAMES.long_inserter and "L" or "."
+      end
+      assert.are.same({"P", "L", ".", ".", "L", "P", "P", "L", ".", ".", "L", "P"}, rows) -- machines in rows 0-2, 3-5, 6-8 and 9-11
     end)
 
     it("points the long-handed inserters the same way as the plain ones, at the machine", function()
@@ -456,13 +491,15 @@ describe("layout", function()
       assert.are.equal(direction_at(entities, 1, 0), direction_at(entities, 1, 1))
     end)
 
-    it("puts the pole of the input side under the long-handed inserter", function()
+    it("puts the pole of the input side under the long-handed inserter of the first machine and above the second's", function()
       local entities = layout.build(2, NAMES, shape)
 
       local poles = entities_named(entities, NAMES.pole)
       assert.are.same({
-        {x = 1, y = 2}, -- after the plain inserter in row 0 and the long-handed one in row 1
-        {x = 5, y = 1}, -- after the one output inserter in row 0
+        {x = 1, y = 2}, -- under the first machine's plain inserter in row 0 and long-handed one in row 1
+        {x = 5, y = 1}, -- under the one output inserter in row 0
+        {x = 1, y = 3}, -- above the second machine's, in rows 4 and 5, which the first pole does not reach
+        {x = 5, y = 4}, -- above its output inserter, in row 5
       }, tiles_of(poles))
     end)
 
@@ -492,12 +529,12 @@ describe("layout", function()
         end
       end
       table.sort(rows)
-      assert.are.same({0, 1, 2, 3}, rows) -- the second machine's plain inserter is in row 3, its long-handed one in row 4
+      assert.are.same({0, 1, 2, 3, 4, 5}, rows) -- the second machine's plain inserter is in row 5, its long-handed one in row 4
     end)
 
     it("passes the validator when a belt runs in the column west of the input belt for the long-handed inserters", function()
       local entities = layout.build(2, NAMES, shape)
-      for row = 0, 4 do
+      for row = 0, 5 do
         local belt = builders.belt(-1, row)
         belt.entity_number = #entities + 1
         entities[#entities + 1] = belt
@@ -727,7 +764,7 @@ describe("layout", function()
     end)
 
     it("runs the plate belt between the columns without a gap, from the top to the last row either column needs", function()
-      local entities = gear_chain(7, 2) -- furnaces cover rows 0 to 13 and their last inserter is in row 12; the assemblers' inserters end at row 4
+      local entities = gear_chain(7, 2) -- furnaces cover rows 0 to 13 and their last inserter is in row 12 (the seventh is the first of a pair); the assemblers' inserters end at row 5
 
       local rows = belts_in_column(entities, 5)
 
@@ -749,7 +786,7 @@ describe("layout", function()
       local rows = belts_in_column(entities, 5)
 
       assert.are.equal(0, rows[1])
-      assert.are.equal(10, rows[#rows]) -- the last assembler's last input inserter is in row 10
+      assert.are.equal(11, rows[#rows]) -- the last assembler's last input inserter is in row 11, the bottom of its rows
     end)
 
     it("runs the plate belt north, so every furnace's plates pass the assemblers, when the furnaces reach further down", function()
@@ -761,14 +798,29 @@ describe("layout", function()
     it("draws only the belts the three belt columns need, so the assemblers get no input belt of their own", function()
       local entities = gear_chain(7, 2)
 
-      -- ore: down to the last furnace's inserter (row 12) = 13; plates: the same 13; gears: 2 machines * 3 rows * 2 columns = 12, and the empty tile
-      assert.are.equal(13 + 13 + 12 + 1, count_named(entities, NAMES.belt))
+      -- ore: down to the last furnace's inserter, in row 12 = 13; plates: the same 13; gears: the start, the two seams of
+      -- two inserters at four tiles each (rows 0-1 and 4-5) and the two rows between them = 11
+      assert.are.equal(13 + 13 + 11, count_named(entities, NAMES.belt))
+    end)
+
+    it("puts a pole beside the shared plate belt for the first furnace of a pair, which reaches the inserter of the second", function()
+      local entities = gear_chain(3, 2)
+
+      local poles = {}
+      for _, pole in ipairs(entities_named(entities, NAMES.pole)) do
+        local tile = grid.top_left_tile(pole.position)
+        if tile.x == 4 then
+          poles[#poles + 1] = tile
+        end
+      end
+
+      assert.are.same({{x = 4, y = 1}, {x = 4, y = 5}}, poles) -- under the inserters in rows 0 and 4; the second furnace's, in row 3, is reached
     end)
 
     it("winds only the last column's output belt", function()
       local entities = gear_chain(7, 2)
 
-      assert.are.equal(2 * 3 * 2 + 1, #belts_in_column(entities, 11) + #belts_in_column(entities, 12))
+      assert.are.equal(1 + 2 * 4 + 2, #belts_in_column(entities, 11) + #belts_in_column(entities, 12))
       assert.are.equal(13, #belts_in_column(entities, 5)) -- straight, down to the last furnace's inserter
     end)
 
@@ -818,8 +870,8 @@ describe("layout", function()
         {machine_count = 1, machine = NAMES.machine, shape = furnace_shape},
       }, NAMES)
 
-      -- the machines cover columns 2 to 4 and their output inserters are in 5, so the belt is in 6; their last output inserter is in row 4
-      assert.are.same({0, 1, 2, 3, 4}, belts_in_column(entities, 6))
+      -- the machines cover columns 2 to 4 and their output inserters are in 5, so the belt is in 6; their last output inserter is in row 5
+      assert.are.same({0, 1, 2, 3, 4, 5}, belts_in_column(entities, 6))
       assert.are.same({}, belts_in_column(entities, 7))
     end)
 
@@ -895,11 +947,20 @@ describe("layout", function()
 
     it("runs the plate belt north when the two columns are equally long for the work they do", function()
       local entities = layout.build_chain({
-        {machine_count = 3, load = 3, machine = NAMES.machine, shape = furnace_shape}, -- 3 x 2 rows
-        {machine_count = 2, load = 2, machine = ASSEMBLER, shape = assembler_shape}, -- 2 x 3 rows
+        {machine_count = 6, load = 6, machine = NAMES.machine, shape = furnace_shape}, -- 6 x 2 rows
+        {machine_count = 4, load = 4, machine = ASSEMBLER, shape = assembler_shape}, -- 4 x 3 rows
       }, NAMES)
 
       assert.are.same({defines.direction.north}, belt_directions_in_column(entities, 5))
+    end)
+
+    it("runs the plate belt south when the columns are equally long but the last furnace drops above the last inserter", function()
+      local entities = layout.build_chain({
+        {machine_count = 3, load = 3, machine = NAMES.machine, shape = furnace_shape}, -- 3 x 2 rows, the last drop in row 4
+        {machine_count = 2, load = 2, machine = ASSEMBLER, shape = assembler_shape}, -- 2 x 3 rows, the last inserter in row 5
+      }, NAMES) -- on a northbound belt the plates of row 4 would never reach the inserter in row 5
+
+      assert.are.same({defines.direction.south}, belt_directions_in_column(entities, 5))
     end)
 
     it("runs the plate belt by the work the columns do, not by the machines they have", function()
@@ -913,11 +974,13 @@ describe("layout", function()
 
     local north, south = defines.direction.north, defines.direction.south
     for _, case in ipairs({
-      {label = "gears (2 plates in, 1 gear out)", shape = assembler_shape, flow = 100.8, direction = north},
+      -- (from 20 a minute: below that one furnace feeds one assembler with two input inserters, which the planner does
+      -- not build for so small a rate, and the second inserter, a row lower, is out of the reach of a northbound belt)
+      {label = "gears (2 plates in, 1 gear out)", shape = assembler_shape, flow = 100.8, direction = north, rates = {20, 100, 225}},
       {label = "cables (1 plate in, 2 cables out)", shape = {machine_size = 3, input_inserters = 1, output_inserters = 2}, flow = 50.4, direction = north},
       {label = "a slow recipe that eats 6 plates a minute a machine", shape = {machine_size = 3, input_inserters = 1, output_inserters = 1}, flow = 6, direction = south},
     }) do
-      for _, rate in ipairs({0.5, 1, 5, 20, 100, 225}) do
+      for _, rate in ipairs(case.rates or {0.5, 1, 5, 20, 100, 225}) do
         it("runs the plate belt the same way for " .. case.label .. " at " .. rate .. " items a minute as at any other rate", function()
           assert.are.equal(case.direction, belt_direction_at(case.shape, case.flow, rate))
         end)
@@ -1010,36 +1073,40 @@ describe("layout", function()
       end)
     end)
 
-    describe("the paired winding belt: one fast output inserter on each 3x3 machine, the machines in twos", function()
-      -- Columns 5 (the output inserters), 6 (the inner belt) and 7 (the outer belt) for four machines, rows 0 to 11: the
-      -- belt starts in the inner column, and at each seam two inserters (the upper machine's in its last row, the lower
-      -- one's in its first) drop on a curve (outer lane) or on a stub that side-loads (inner lane); the seams alternate.
+    describe("the winding belt for one fast output inserter on each 3x3 machine, the machines in twos", function()
+      -- Columns 5 (the output inserters), 6 (the inner belt) and 7 (the outer belt) for four machines, rows -1 to 11: the
+      -- belt starts in the inner column, a tile behind the first curve; the first machine's inserter (row 0, the top row
+      -- of the machine) drops on that curve (outer lane); the belt goes on in the outer column; the second and third
+      -- machine's inserters stand together (rows 5 and 6, the bottom row of the second machine and the top row of the
+      -- third) and drop on a stub that side-loads (inner lane) and on the curve where the belt turns west (outer lane);
+      -- the belt hops back to the outer column (row 7) and the fourth machine's inserter drops on a stub (inner lane).
       --
       --      567
-      --   0 |.v.
-      --   1 |+v.      pole: in the middle row of the upper machine of a pair
-      --   2 |}>v      the upper machine's inserter drops on the curve
-      --   3 |}>v      the lower machine's inserter drops on the stub
-      --   4 |..v
-      --   5 |..v
-      --   6 |..v
-      --   7 |+.v
-      --   8 |}>v      the upper machine's inserter drops on the stub
-      --   9 |}v<      the belt turns west; the lower machine's inserter drops on the curve
-      --  10 |.v.
-      --  11 |.v.
+      --  -1 |.v.
+      --   0 |}>v      the first machine's inserter drops on the curve
+      --   1 |+.v      pole: under the first machine's inserter
+      --   2 |..v
+      --   3 |..v
+      --   4 |+.v      pole: above the second machine's inserter, which reaches the third's
+      --   5 |}>v      the second machine's inserter drops on the stub
+      --   6 |}v<      the belt turns west; the third machine's inserter drops on the curve
+      --   7 |.>v      the belt hops back to the outer column
+      --   8 |..v
+      --   9 |..v
+      --  10 |+.v      pole: above the fourth machine's inserter
+      --  11 |}>v      the fourth machine's inserter drops on the stub
       local shape = {machine_size = 3, input_inserters = 1, input_fast = true, output_inserters = 1, output_fast = true}
       local machines = {[NAMES.machine] = {size = 3, glyph = "M"}}
 
       local function drawn(count, last_row)
-        return picture.draw(layout.build(count, NAMES, shape), machines, 5, 0, 7, last_row)
+        return picture.draw(layout.build(count, NAMES, shape), machines, 5, -1, 7, last_row)
       end
 
-      it("weaves the belt between the inner and the outer column, a seam every two machines", function()
-        assert.are.same({".v.", "+v.", "}>v", "}>v", "..v", "..v", "..v", "+.v", "}>v", "}v<", ".v.", ".v."}, drawn(4, 11))
+      it("weaves the belt between the inner and the outer column, a seam for the first machine and one for every pair after it", function()
+        assert.are.same({".v.", "}>v", "+.v", "..v", "..v", "+.v", "}>v", "}v<", ".>v", "..v", "..v", "+.v", "}>v"}, drawn(4, 11))
       end)
 
-      it("puts the inserters of the upper and the lower machine of a pair side by side", function()
+      it("puts the inserters of the second and the third machine side by side, and the first one alone at the top", function()
         local entities = layout.build(4, NAMES, shape)
         local rows = {}
         for _, entity in ipairs(entities_named(entities, NAMES.fast_inserter)) do
@@ -1050,19 +1117,23 @@ describe("layout", function()
         end
         table.sort(rows)
 
-        assert.are.same({2, 3, 8, 9}, rows)
+        assert.are.same({0, 5, 6, 11}, rows)
       end)
 
-      it("ends two machines in the outer column, the belt running on to the bottom", function()
-        assert.are.same({".v.", "+v.", "}>v", "}>v", "..v", "..v"}, drawn(2, 5))
+      it("ends two machines with a stub for the second, which side-loads the belt coming down in the outer column", function()
+        assert.are.same({".v.", "}>v", "+.v", "..v", "..v", "+.v", "}>v"}, drawn(2, 5))
       end)
 
-      it("gives a machine left alone at the end a stub that side-loads the outer belt", function()
-        assert.are.same({"..v", "+.v", "}>v"}, {drawn(3, 8)[7], drawn(3, 8)[8], drawn(3, 8)[9]})
+      it("hops back to the outer column after a pair when there is room, and draws no belt below the column", function()
+        local rows = drawn(3, 9) -- rows -1 to 9, the column ends in row 8
+
+        assert.are.same({"}>v", "}v<", ".>v", "..v", "..."}, {rows[7], rows[8], rows[9], rows[10], rows[11]})
       end)
 
-      it("lets the belt come down in the inner column to a machine left alone after a turn west", function()
-        assert.are.same({".v.", ".v.", ".v.", "+v.", "}>v"}, {drawn(5, 14)[11], drawn(5, 14)[12], drawn(5, 14)[13], drawn(5, 14)[14], drawn(5, 14)[15]})
+      it("gives the fifth machine, the second of the pair after the fourth, the curve where the belt turns west", function()
+        local rows = drawn(5, 15) -- rows -1 to 15; the fourth and fifth machine's inserters are in rows 11 and 12
+
+        assert.are.same({"}>v", "}v<"}, {rows[13], rows[14]})
       end)
 
       -- The output inserter, the pole and the belt of a plain output belt, in columns 5 and 6, for the first machine.
@@ -1074,14 +1145,14 @@ describe("layout", function()
         assert.are.same(plain_belt, picture.draw(entities, machines, 5, 0, 6, 2))
       end)
 
-      it("does not pair machines with a plain output inserter, whose one lane the plain belt keeps", function()
+      it("does not wind for machines with a plain output inserter, whose one lane the plain belt keeps", function()
         local plain = {machine_size = 3, input_inserters = 1, output_inserters = 1}
         local entities = layout.build(4, NAMES, plain)
 
         assert.are.same(plain_belt, picture.draw(entities, machines, 5, 0, 6, 2))
       end)
 
-      it("does not pair a column that feeds another column, whose output belt is the next column's input belt", function()
+      it("does not wind a column that feeds another column, whose output belt is the next column's input belt", function()
         local stages = {
           {machine_count = 4, machine = NAMES.machine, shape = shape},
           {machine_count = 4, machine = NAMES.machine, shape = shape},
@@ -1121,16 +1192,20 @@ describe("layout", function()
           return problems
         end
 
-        it("fills the outer lane from the first and the fourth machine and the inner lane from the second and the third", function()
-          assert.are.same({}, lane_problems(4, {"outer", "inner", "inner", "outer"}))
+        it("fills the outer lane from the first and the third machine and the inner lane from the second and the fourth", function()
+          assert.are.same({}, lane_problems(4, {"outer", "inner", "outer", "inner"}))
         end)
 
-        it("fills the same lane from the first two machines, so two different things on them are reported", function()
-          assert.is_true(#lane_problems(4, {"one", "two", "two", "one"}) == 0 and #lane_problems(4, {"outer", "outer", "inner", "inner"}) > 0)
+        it("reports two different things on one lane, as when the first two machines are made to fill the same one", function()
+          assert.is_true(#lane_problems(4, {"outer", "outer", "inner", "inner"}) > 0)
         end)
 
-        it("goes on alternating, outer, inner, inner, outer, outer, inner, inner, outer, for eight machines", function()
-          assert.are.same({}, lane_problems(8, {"o", "i", "i", "o", "o", "i", "i", "o"}))
+        it("goes on alternating, outer, inner, outer, inner, ..., for eight machines", function()
+          assert.are.same({}, lane_problems(8, {"o", "i", "o", "i", "o", "i", "o", "i"}))
+        end)
+
+        it("alternates for five machines too, which end with a pair after the hop back to the outer column", function()
+          assert.are.same({}, lane_problems(5, {"o", "i", "o", "i", "o"}))
         end)
       end)
     end)
@@ -1257,7 +1332,7 @@ describe("layout", function()
     it("gives the rows of the tallest column as its height", function()
       local block = furnaces_and_assemblers{product_belt = false}
 
-      assert.are.equal(14, block.height) -- seven furnaces of two rows; the assemblers take six
+      assert.are.equal(14, block.height) -- seven furnaces of two rows; the input belt reaches row 12, so row 13 is free under it
     end)
 
     it("does not draw the product belt when whoever uses the block draws it", function()
@@ -1270,13 +1345,13 @@ describe("layout", function()
     it("draws the product belt, wound for two output inserters, when it is the last block", function()
       local block = furnaces_and_assemblers{product_belt = true}
 
-      assert.are.equal(2 * 6 + 1, #belt_rows(block.entities, 11) + #belt_rows(block.entities, 12))
+      assert.are.equal(1 + 2 * 4 + 2, #belt_rows(block.entities, 11) + #belt_rows(block.entities, 12)) -- the start, two seams of four tiles, the two rows between them
     end)
 
     it("gives the rows where the output inserters of the last column drop on the product belt", function()
       local block = furnaces_and_assemblers{product_belt = false}
 
-      assert.are.same({first = 0, last = 4}, block.output_rows) -- the assemblers' two output inserters, in rows 0 and 1 and 3 and 4
+      assert.are.same({first = 0, last = 5}, block.output_rows) -- the assemblers' two output inserters, in rows 0 and 1 and 4 and 5
     end)
 
     it("gives the rows of the first and the last long-handed inserter of the first column", function()
@@ -1284,7 +1359,7 @@ describe("layout", function()
 
       local block = layout.chain_block({stage}, NAMES, {product_belt = false})
 
-      assert.are.same({first = 1, last = 4}, block.long_rows) -- the long-handed inserters are in rows 1 and 4, under the plain ones in rows 0 and 3
+      assert.are.same({first = 1, last = 4}, block.long_rows) -- the long-handed inserters are in rows 1 and 4: under the plain one (row 0) in the first machine, above it (row 5) in the second
     end)
 
     it("gives no row of a long-handed inserter when the column has none", function()

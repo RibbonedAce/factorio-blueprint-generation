@@ -232,8 +232,8 @@ describe("rows", function()
     --      10123456
     --   1 |>v.....v
     --   2 |.v+..+..
-    --   3 |.v}II}v.
-    --   4 |.v}II.v>
+    --   3 |.v}II.v.
+    --   4 |.v}II}v>
     it("runs the belt of raw items down through the row of poles into the belt of the chain", function()
       local root = assemblers("circuit-assembler", 1, 2, 1, {crowded_furnaces("iron-furnace", 1), furnaces("copper-furnace", 1)})
 
@@ -254,8 +254,8 @@ describe("rows", function()
     --   1 |>v...........v}II}v^}AAA+v|
     --   2 |.v}KK}^}CCC}v.+II+v^+AAA.v|
     --   3 |.v+KK+^+CCC}v.....>^......|
-    --   4 |.v}KK}^.CCC+v>>>>>>^......|
-    --   5 |.v.KK.^.....>>^...........|
+    --   4 |.v.KK.^.CCC+v>>>>>>^......|
+    --   5 |.v}KK}^.....>>^...........|
     --   (the furnaces of the cables go down to row 9)
     local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 4)})
     local root = assemblers("circuit-assembler", 1, 2, 1, {cables, furnaces("iron-furnace", 1)})
@@ -365,9 +365,9 @@ describe("rows", function()
     --   0 |>>>>>>>>>>>>>>>>>>>v......^}GGG}v|
     --   1 |>>>>>>>v...........v}BB}v^^]GGG+v|
     --   2 |>v.....v}CC}v}CCC}v.+BB+v^^+GGG.v|
-    --   3 |.v}II}v.+CC+.+CCC}v.....v^^}GGG}v|
-    --   4 |..+II+v.......CCC+v.....v^^]GGG.v|
-    --   5 |......v...........v.....v^^.GGG.v|
+    --   3 |.v}II}v.+CC+.+CCC}v.....v^^+GGG.v|
+    --   4 |..+II+v.......CCC+v.....v^^]GGG+v|
+    --   5 |......v...........v.....v^^}GGG}v|
     --   6 |......v...........v.....>^^......|
     --   7 |......v...........v>>>>>>^^......|
     --   8 |......v...........>>^.....^......|
@@ -386,8 +386,8 @@ describe("rows", function()
       end)
 
       it("lets the long-handed inserters of the final column reach belt b over belt a", function()
-        assert.is_not_nil(entity_at(entities, NAMES.long_inserter, 26, 1, 1))
-        assert.is_not_nil(entity_at(entities, NAMES.long_inserter, 26, 4, 1))
+        assert.is_not_nil(entity_at(entities, NAMES.long_inserter, 26, 1, 1)) -- the first machine's plain inserter is in row 0, its long-handed one under it
+        assert.is_not_nil(entity_at(entities, NAMES.long_inserter, 26, 4, 1)) -- the second machine's, in its bottom rows 4 and 5, are long then plain
       end)
 
       it("turns the head of belt b through the gadget and the second product of belt b in from the west", function()
@@ -490,8 +490,8 @@ describe("rows", function()
       --   2 |>^..v.....|
       --   3 |....v}ii}v|
       --   4 |....v+ii+v|
-      --   5 |....v}ii}v|
-      --   6 |......ii.v|
+      --   5 |....v.ii.v|
+      --   6 |....v}ii}v|
       local entities, inputs = build_pure(furnaces("iron-furnace", 2))
 
       it("brings the ore and the coal to the chain through a trunk, which a single chain gets too", function()
@@ -501,8 +501,8 @@ describe("rows", function()
           ">^..v.....",
           "....v}ii}v",
           "....v+ii+v",
+          "....v.ii.v",
           "....v}ii}v",
-          "......ii.v",
         }, drawn(entities, 0, 0, 9, 6))
       end)
 
@@ -631,8 +631,8 @@ describe("rows", function()
     end)
 
     describe("a final column shorter than the chains that hang under the band", function()
-      -- The pole assembler is 3 rows tall and the cables chain hangs from its trunk in row 4, so the nearest poles of the
-      -- two are 7.8 tiles apart, further than a wire reaches. A pole on the free tile (19, 4) between them wires them.
+      -- The pole assembler is 3 rows tall and the cables chain hangs from its trunk, so the nearest poles of the
+      -- two are further apart than a wire reaches. A pole on a free tile between them, (19, 4), wires them.
       local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)})
       local entities = build_pure(assemblers("pole-assembler", 1, 2, 1, {cables, wood_supplier()}))
       local bridge = entities[#entities]
@@ -1043,7 +1043,7 @@ describe("rows", function()
       local entities = rows.build(root, NAMES)
 
       local product_belts = #belt_rows(entities, 18) + #belt_rows(entities, 19) -- the inner and the outer column
-      assert.are.equal(2 * 6 + 1, product_belts)
+      assert.are.equal(1 + 2 * 4 + 2, product_belts) -- the start, a seam of two inserters for each of the two machines, the two rows between them
     end)
 
     -- A column that is itself a tree on both sides: two transport belt makers, each of plates and gears.

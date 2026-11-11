@@ -422,7 +422,7 @@ describe("generator", function()
 
       local result = generator.generate("iron-gear-wheel", 200)
 
-      assert.are.equal(17, count_named(result.entities, "transport-belt")) -- 4 input tiles (rows 0 to 3) + 2 machines x 6 + the empty tile above the output belt
+      assert.are.equal(17, count_named(result.entities, "transport-belt")) -- 6 input tiles (rows 0 to 5, the second assembler's inserter being in its bottom row) + the winding belt: the start, two seams of two inserters (4 tiles each) and the two rows between them (11)
     end)
 
     it("gives a small machine only one output inserter when the layout has room for no more", function()

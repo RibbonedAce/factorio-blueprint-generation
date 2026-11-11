@@ -13,21 +13,29 @@
 --      input  input   machine  output  output
 --      belt  inserter (2x2)  inserter  belt
 --
---        v      >      [F F]      >       v      <- top row of machine 1
+--        v      >      [F F]      >       v      <- top row of machine 1: its inserters
 --        v      P      [F F]      P       v      <- bottom row of machine 1 (P = pole)
---        v      >      [F F]      >       v      <- top row of machine 2
---                      [F F]              v      <- bottom row of machine 2 (no poles: they serve every second machine)
+--        v             [F F]              v      <- top row of machine 2
+--        v      >      [F F]      >       v      <- bottom row of machine 2: its inserters
 --
 -- The input belt ends at the last input inserter; the output belt runs the full
 -- height, so the products can carry on downstream. Inserters move the input
 -- from the belt into the machine, and the product from the machine onto the
 -- output belt. A machine may need several inserters on a side, one under the
--- next in the machine's top rows. Small poles supply the inserters and the
--- machine and are wired together.
+-- next. Small poles supply the inserters and the machine and are wired together.
 --
--- While a side has a free tile beside the machine (fewer inserters than rows),
--- the poles go there, one per two machines on each side, in the first free tile
--- after that side's inserters. When a side is full, no tile is free, so the
+-- The machines go in twos: the inserters of the first machine of a pair (the first, third, ... machine) stand in its
+-- top rows, those of the second (the second, fourth, ...) in its bottom rows, as drawn above, so that the second
+-- machine of a pair and the first of the next have theirs together. A machine without a partner, the last of an odd
+-- number, is like the first (in a column of five, machines 1 and 5 look alike). The long-handed inserters follow the
+-- pattern too: under the plain ones in the first machine of a pair and above them in the second (`Builder:plain_input_top`).
+-- It is the same on every belt, the one
+-- between two columns too (see `Builder:inserter_top`), so that the inserters of two columns that share a belt agree.
+--
+-- While a side has a free tile beside the machine (fewer inserters than rows), the poles go there: under the
+-- inserters of a machine whose inserters are in its top rows, above those of one whose inserters are in its bottom
+-- rows. The machines go from the top down, each with a pole unless a pole above it reaches its inserters, which a
+-- small pole does for two rows each way (see `Builder:side_pole_plan`). When a side is full, no tile is free, so the
 -- machines are separated by a row of poles instead (a "pole row"), with one more
 -- row of poles above the first machine and below the last. A 3x3 machine with
 -- three inserters in, two out, drawn the same way:
@@ -41,25 +49,28 @@
 -- An inserter drops items on the far lane of a belt, so inserters on one side of a
 -- plain belt fill only one of its two lanes. A 3x3 machine with two output
 -- inserters (and no pole rows) gets a winding output belt instead, which lets
--- each inserter fill a different lane (v > < are belts running south, east, west):
+-- the inserters fill different lanes (v > < are belts running south, east, west). Two machines:
 --
 --   x:   0     1     2 3 4      5      6      7
 --      input input  machine  output inner  outer
 --      belt inserter (3x3)  inserter belt  belt
 --
---                                             v    <- row -1: an empty belt, so the outer belt is straight
---        v     >    [M M M]     >      >      v    <- row 0: this inserter drops on the stub (>), which
---        v     >    [M M M]     >      v      <       feeds the outer belt from the west: its west lane
---        v     P    [M M M]     P      >      v    <- row 2: the inner belt joins the outer one again
+--                                           v      .    <- row -1: the inner belt starts, a tile behind the first curve
+--        v     >    [M M M]     }      >      v    <- row 0: this inserter drops on the curve (>): the outer lane
+--        v     >    [M M M]     }      >      v    <- row 1: this one on the stub (>), which side-loads the outer belt: the inner lane
+--        v     P    [M M M]     P      .      v    <- row 2: poles; the belt goes on in the outer column
+--        v     P    [M M M]     P      .      v    <- row 3: the second machine, whose inserters are in its bottom rows
+--        v     >    [M M M]     }      >      v    <- row 4: this inserter drops on the stub: the inner lane
+--        v     >    [M M M]     }      v      <    <- row 5: the outer belt turns west into the inner column, so that
+--                                                      this inserter drops on the curve: the outer lane
 --
--- The outer belt dips west in row 1, to pass the second inserter, which drops on
--- the inner belt (v): the east lane of the belt. Every machine repeats these three
--- rows, so the belt winds down the column and carries the product on both lanes.
--- The first stub would have no belt behind the outer tile it feeds, and Factorio
--- would bend that tile into a curve, so the outer belt starts one row higher, with a
--- tile that carries nothing (row -1 above, drawn as `d`), and the stub side-loads it.
--- The belt needs three rows per machine, which is exactly
--- what a 3x3 machine takes, so it only works for size 3.
+-- The belt has a seam for every two inserters in adjacent rows, and one for an inserter alone (see
+-- `Builder:add_winding_output_belt`); each machine's two inserters are one seam, so each machine fills both lanes.
+-- A first stub with no belt behind the tile it feeds would bend into a curve, so the belt starts in the inner column a
+-- tile higher. With one fast inserter on each machine (which moves what two plain ones do) the seams are made of the
+-- inserters of the second machine of a pair and the first of the next, and the machines alternate lanes: the belt
+-- hops back to the outer column between seams so that each seam starts from it. The belt needs the rows a 3x3
+-- machine takes, so it only works for size 3.
 --
 -- A chain puts one such column after another, left to right, from the raw items to
 -- the final product. The output belt of a column is the input belt of the next, so
@@ -109,7 +120,7 @@ local INPUT_INSERTER_OFFSET = 1
 local MACHINE_OFFSET = 2
 
 local LENGTH_TOLERANCE = 1e-9  -- two lengths this close (relative) are equal
-local MACHINES_PER_POLE = 2  -- a small pole's supply area covers two machines' inserters
+local POLE_REACH = 2  -- a small pole powers the inserters up to two rows above and below it
 
 -- The output belt winds (see the diagram above) for machines of this size with this many output inserters.
 local WINDING_MACHINE_SIZE = 3
@@ -160,22 +171,10 @@ end
 ---@field output_fast boolean  whether those are fast inserters
 ---@field output_inserter_column integer
 ---@field output_belt_column integer  the belt the product leaves on: the outer one when the belt winds
----@field output_winds boolean  the output belt winds, so that the two output inserters of a machine fill a lane each and both lanes carry product
----@field output_paired boolean  the output belt winds so that machines side by side, each with one output inserter, fill a lane each (see `Builder:add_paired_winding_belt`)
+---@field output_winds boolean  the output belt winds, so that the output inserters fill a lane each and both lanes carry product (see `Builder:add_winding_output_belt`)
 ---@field has_pole_rows boolean  machines are separated by rows of poles
 ---@field first_row integer  tile row of the first machine's top edge, which is also where the belts start (1 or more with pole rows)
 ---@field spacing integer  rows from one machine's top edge to the next
-
--- Whether the output belt winds: only for a 3x3 machine with two output
--- inserters, and not when pole rows take the rows the belt needs.
----@param shape bpgen.Shape
----@param has_pole_rows boolean
----@return boolean
-local function winds_output(shape, has_pole_rows)
-  return not has_pole_rows
-    and shape.machine_size == WINDING_MACHINE_SIZE
-    and shape.output_inserters == WINDING_OUTPUT_INSERTERS
-end
 
 -- Whether the machines are separated by rows of poles: when an inserter takes every
 -- tile beside a machine on one side, no tile is free for a pole.
@@ -195,34 +194,22 @@ end
 ---@field load number  how many machines' worth of work the column does (see `bpgen.StageLayout`)
 ---@field takes_fuel boolean  the column burns fuel that rides the free lane of its input belt, which therefore runs south (see `bpgen.StageLayout.fuel_feed`)
 
--- Whether the output belt winds with one fast inserter per machine, the machines side by side filling a lane each (see
--- `Builder:add_paired_winding_belt`): the last column of the blueprint, 3x3 machines with one fast output inserter
--- and no pole rows, and at least two machines (one alone has nothing to pair with).
----@param shape bpgen.Shape
----@param has_pole_rows boolean
----@param machine_count integer
----@return boolean
-local function pairs_output(shape, has_pole_rows, machine_count)
-  return not has_pole_rows
-    and shape.machine_size == WINDING_MACHINE_SIZE
-    and shape.output_inserters == 1
-    and shape.output_fast == true
-    and machine_count >= 2
-end
-
--- Which way the output belt of a column winds, if it does: for the two output inserters of a machine, or for machines in
--- twos. Only the last column of the blueprint winds; the belt of a column that feeds another is the next one's input belt.
+-- Whether the output belt of a column winds, so that both its lanes carry product. Only the last column of the blueprint
+-- winds (the belt of a column that feeds another is the next one's input belt), and only for 3x3 machines with no pole
+-- rows, which would take the rows the belt needs. A machine with two output inserters fills a lane with each; one fast
+-- inserter fills one lane, so then the machines go in twos (see `Builder:add_winding_output_belt`), which needs at
+-- least two of them: one alone fills one lane.
 ---@param shape bpgen.Shape
 ---@param place bpgen.Place
 ---@param has_pole_rows boolean
 ---@param machine_count integer
----@return boolean winds
----@return boolean paired
-local function winding_of(shape, place, has_pole_rows, machine_count)
-  if place.feeds_next then
-    return false, false
+---@return boolean
+local function winds_output(shape, place, has_pole_rows, machine_count)
+  if place.feeds_next or has_pole_rows or shape.machine_size ~= WINDING_MACHINE_SIZE then
+    return false
   end
-  return winds_output(shape, has_pole_rows), pairs_output(shape, has_pole_rows, machine_count)
+  return shape.output_inserters == WINDING_OUTPUT_INSERTERS
+    or (shape.output_inserters == 1 and shape.output_fast == true and machine_count >= 2)
 end
 
 ---@param shape bpgen.Shape
@@ -232,7 +219,7 @@ end
 local function geometry_of(shape, place, machine_count)
   local size = shape.machine_size
   local has_pole_rows = needs_pole_rows(shape)
-  local output_winds, output_paired = winding_of(shape, place, has_pole_rows, machine_count)
+  local output_winds = winds_output(shape, place, has_pole_rows, machine_count)
   local machine_column = place.origin + MACHINE_OFFSET
   return {
     size = size,
@@ -245,9 +232,8 @@ local function geometry_of(shape, place, machine_count)
     input_inserter_column = place.origin + INPUT_INSERTER_OFFSET,
     machine_column = machine_column,
     output_inserter_column = machine_column + size,
-    output_belt_column = machine_column + size + ((output_winds or output_paired) and 2 or 1),
+    output_belt_column = machine_column + size + (output_winds and 2 or 1),
     output_winds = output_winds,
-    output_paired = output_paired,
     has_pole_rows = has_pole_rows,
     first_row = place.first_row,
     spacing = has_pole_rows and size + 1 or size,
@@ -281,6 +267,7 @@ end
 ---@field load number  how many machines' worth of work the column does, which decides which way the belt to the next column runs
 ---@field takes_fuel boolean  whether the column's input belt carries its fuel on the lane the product does not use
 ---@field shared_belt? bpgen.SharedBelt  how the output belt runs, when the next column shares it
+---@field pole_plan? {input: table<integer, integer>, output: table<integer, integer>}  the rows of the poles beside the machines, by machine number, once the machines are added (see `Builder:side_pole_plan`)
 local Builder = {}
 Builder.__index = Builder
 
@@ -339,35 +326,76 @@ function Builder:machine_top(index)
   return self.geometry.first_row + index * self.geometry.spacing
 end
 
--- The tile row of the last input inserter, where the input belt ends.
+-- The tile row of the first of `count` inserters in a column beside machine number `index` (from 0). The machines go in
+-- twos: the inserters of the first machine of a pair (the first, third, ... machine) stand in its top rows, those of
+-- the second (the second, fourth, ...) in its bottom rows, so that the second machine of a pair and the first of the
+-- next have theirs together. A machine without a partner, the last of an odd number, is like the first. The same on
+-- every belt, so that the inserters of two columns that share a belt agree.
+---@param index integer
+---@param count integer
+---@return integer
+function Builder:inserter_top(index, count)
+  local top = self:machine_top(index)
+  if index % 2 == 1 then
+    return top + self.geometry.size - count
+  end
+  return top
+end
+
+-- The tile row of the first input inserter of machine `index`, plain and long-handed together.
+---@param index integer
+---@return integer
+function Builder:input_top(index)
+  return self:inserter_top(index, self.geometry.input_count + self.geometry.long_count)
+end
+
+-- The tile row of the first plain input inserter of machine `index`. The input inserters follow the same pattern
+-- as the machines: the plain ones, then the long-handed ones under them, for a machine whose inserters are in its top
+-- rows, and the mirror image for one whose inserters are in its bottom rows (plain, long | long, plain for two
+-- machines), so that the plain inserters of two machines side by side stand together too.
+---@param index integer
+---@return integer
+function Builder:plain_input_top(index)
+  if index % 2 == 1 then
+    return self:input_top(index) + self.geometry.long_count
+  end
+  return self:input_top(index)
+end
+
+-- The tile row of the first long-handed input inserter of machine `index`.
+---@param index integer
+---@return integer
+function Builder:long_input_top(index)
+  if index % 2 == 1 then
+    return self:input_top(index)
+  end
+  return self:input_top(index) + self.geometry.input_count
+end
+
+-- The tile row of the last plain input inserter, where the input belt ends (the long-handed ones reach over it to
+-- another belt).
 ---@return integer
 function Builder:last_input_row()
-  return self:machine_top(self.machine_count - 1) + self.geometry.input_count - 1
+  return self:plain_input_top(self.machine_count - 1) + self.geometry.input_count - 1
 end
 
 -- The tile row of the first long-handed input inserter, in the first machine.
 ---@return integer
 function Builder:first_long_row()
-  return self:machine_top(0) + self.geometry.input_count
+  return self:long_input_top(0)
 end
 
--- The tile row of the last long-handed input inserter, which is also the last input
--- inserter of the machine, since the long-handed ones stand under the plain ones.
+-- The tile row of the last long-handed input inserter, in the last machine.
 ---@return integer
 function Builder:last_long_row()
-  return self:machine_top(self.machine_count - 1) + self.geometry.input_count + self.geometry.long_count - 1
+  return self:long_input_top(self.machine_count - 1) + self.geometry.long_count - 1
 end
 
--- The tile row of the first output inserter of machine number `index` (from 0). With the paired winding belt the
--- machines go in twos: the upper one's inserter is in its last row and the lower one's in its first, side by side.
+-- The tile row of the first output inserter of machine number `index` (from 0).
 ---@param index integer
 ---@return integer
 function Builder:output_inserter_row(index)
-  local geometry = self.geometry
-  if geometry.output_paired and index % 2 == 0 then
-    return self:machine_top(index) + geometry.size - 1
-  end
-  return self:machine_top(index)
+  return self:inserter_top(index, self.geometry.output_count)
 end
 
 -- The tile row of the last output inserter, where the last machine drops its product.
@@ -400,38 +428,16 @@ function Builder:add_belt_column(column, first_row, length, direction)
   end
 end
 
--- The winding output belt (see the diagram at the top): three rows per machine,
--- the inner column beside the output inserters and the outer column one further out.
--- One more belt runs south in the outer column, in the row above the first machine's
--- top, and carries nothing: without a belt behind it, Factorio bends the first outer
--- tile to meet the stub beside it, which does not work for the first inserter's lane.
--- With the belt behind it, the stub side-loads a straight belt instead.
-function Builder:add_winding_output_belt()
-  local direction = defines.direction
-  local inner = self.geometry.output_inserter_column + 1
-  local outer = self.geometry.output_belt_column
-  self:add_belt(outer, self:machine_top(0) - 1, direction.south)
-  for index = 0, self.machine_count - 1 do
-    local top = self:machine_top(index)
-    self:add_belt(inner, top, direction.east)
-    self:add_belt(inner, top + 1, direction.south)
-    self:add_belt(inner, top + 2, direction.east)
-    self:add_belt(outer, top, direction.south)
-    self:add_belt(outer, top + 1, direction.west)
-    self:add_belt(outer, top + 2, direction.south)
-  end
-end
-
--- The first tile of the next stretch of the paired winding belt, and the column it runs in, for a seam: two rows (`row`
--- and the one under it) beside the output inserters of two machines side by side. The belt comes down in the column
--- `column` (inner or outer). From the inner column it curves east in the first row, where the upper machine's inserter
--- drops on the curve (the outer lane), and runs on in the outer column, which the lower machine's stub side-loads
--- (the inner lane). From the outer column the upper machine's stub side-loads it (the inner lane), and in the second
--- row it turns west into the inner column, where the lower machine's inserter drops on the curve (the outer lane).
--- A machine alone at the end has only the first row.
----@param row integer  the row of the upper machine's output inserter
+-- The first tile of the next stretch of the winding belt, and the column it runs in, for a seam: two rows (`row` and the
+-- one under it) beside two output inserters. The belt comes down in the column `column` (inner, beside the inserters,
+-- or outer). From the inner column it curves east in the first row, where the first inserter drops on the curve (the
+-- outer lane), and runs on in the outer column, which the second inserter's stub side-loads (the inner lane). From the
+-- outer column the first inserter's stub side-loads it (the inner lane), and in the second row it turns west into the
+-- inner column, where the second inserter drops on the curve (the outer lane). An inserter alone at the end has only
+-- the first row.
+---@param row integer  the row of the first inserter
 ---@param column integer  the column the belt comes down in
----@param has_lower boolean  whether a machine stands under the upper one
+---@param has_lower boolean  whether a second inserter stands under the first
 ---@return integer next_row  the first row after the seam
 ---@return integer next_column  the column the belt runs on in
 function Builder:add_seam(row, column, has_lower)
@@ -453,38 +459,73 @@ function Builder:add_seam(row, column, has_lower)
   return row + 2, inner
 end
 
--- The paired winding belt, for the last column of a blueprint of 3x3 machines with one fast output inserter each, so
--- that the product rides both lanes of one belt, as it does with two inserters on each machine (see the winding belt
--- above) but with half the inserters. The machines go in twos (see `output_inserter_row`) and the belt weaves between
--- the inner and the outer column at every seam, as drawn here for four machines (rows 0 to 11, `}` the inserters):
---
---        v       row 0: the belt starts in the inner column, with a stub behind the first curve
---        v       row 1
---      } > v     row 2: the first machine's inserter drops on the curve (outer lane)
---      } > v     row 3: the second machine's inserter drops on a stub that side-loads (inner lane)
---          v     rows 4 to 7: the belt runs on in the outer column
---          v
---          v
---          v
---      } > v     row 8: the third machine's inserter drops on a stub (inner lane)
---      } v <     row 9: the belt turns west; the fourth machine's inserter drops on the curve (outer lane)
---        v       rows 10 and 11: it runs on in the inner column
---        v
---
--- So the lanes go outer, inner, inner, outer, outer, ... and a lane never has more than one machine more than the other.
-function Builder:add_paired_winding_belt()
+-- The tile rows of every output inserter of the column, top to bottom.
+---@return integer[]
+function Builder:output_inserter_rows()
+  local rows = {}
+  for index = 0, self.machine_count - 1 do
+    local first = self:output_inserter_row(index)
+    for row = first, first + self.geometry.output_count - 1 do
+      rows[#rows + 1] = row
+    end
+  end
+  return rows
+end
+
+-- Runs the winding belt on from `row` to `stop` in the column it came down in, hopping to the outer column in the
+-- first row if it is in the inner one and there is a row to spare, so that the next seam starts in the outer column.
+---@param row integer  the first row of the stretch
+---@param column integer  the column the belt comes down in
+---@param stop integer  the last row of the stretch (above `row` when there is none)
+---@return integer column  the column the belt comes down in after it
+function Builder:add_winding_run(row, column, stop)
   local inner = self.geometry.output_inserter_column + 1
+  local outer = self.geometry.output_belt_column
   local south = defines.direction.south
-  local last_row = self:end_row() - 1
-  self:add_belt_column(inner, self:machine_top(0), 2, south) -- the belt starts above the first curve
-  local column = inner
-  for upper = 0, self.machine_count - 1, 2 do
-    local row = self:output_inserter_row(upper)
-    local next_row, next_column = self:add_seam(row, column, upper + 1 < self.machine_count)
-    local next_seam = self:output_inserter_row(upper + 2)
-    local stop = math.min(next_seam - 1, last_row)
-    self:add_belt_column(next_column, next_row, stop - next_row + 1, south)
-    column = next_column
+  if column == inner and stop >= row then
+    self:add_belt(inner, row, defines.direction.east)
+    self:add_belt(outer, row, south)
+    self:add_belt_column(outer, row + 1, stop - row, south)
+    return outer
+  end
+  self:add_belt_column(column, row, stop - row + 1, south)
+  return column
+end
+
+-- The winding output belt, for the last column of a blueprint of 3x3 machines, so that the product rides both lanes of
+-- one belt. The inserters stand together at the seams (see `inserter_top`): the belt has a seam (see `add_seam`) for
+-- every two inserters in adjacent rows, and one for an inserter alone, from the top. Between two seams it hops from
+-- the inner to the outer column if it has a row to spare, so that every seam after the first starts in the outer
+-- column. Drawn for four machines with one fast inserter each (rows 0 to 14, `}` the inserters):
+--
+--        v       row -1: the belt starts in the inner column, a tile behind the first curve
+--      } > v     row 0: the first machine's inserter drops on the curve (outer lane)
+--          v     rows 1 to 4: the belt runs on in the outer column
+--          v
+--          v
+--          v
+--      } > v     row 5: the second machine's inserter drops on a stub that side-loads (inner lane)
+--      } v <     row 6: the belt turns west; the third machine's inserter drops on the curve (outer lane)
+--        v       rows 7 to 10: it runs on in the inner column and hops to the outer one in row 7
+--        v
+--        v
+--        v
+--      } > v     row 11: the fourth machine's inserter drops on a stub (inner lane)
+--
+-- So the lanes go outer, inner, outer, inner, ...: every machine takes the other lane than the one before it.
+-- With two inserters on each machine the two of a machine are one seam, so each machine fills both lanes.
+function Builder:add_winding_output_belt()
+  local inner = self.geometry.output_inserter_column + 1
+  local rows = self:output_inserter_rows()
+  local start = self:machine_top(0) - 1
+  self:add_belt_column(inner, start, rows[1] - start, defines.direction.south) -- a tile behind the first curve, which it needs
+  local column, k = inner, 1
+  while k <= #rows do
+    local width = rows[k + 1] == rows[k] + 1 and 2 or 1
+    local next_row, next_column = self:add_seam(rows[k], column, width == 2)
+    local following = rows[k + width] or self:end_row()
+    column = self:add_winding_run(next_row, next_column, following - 1)
+    k = k + width
   end
 end
 
@@ -507,10 +548,6 @@ function Builder:add_output_belt()
   local geometry = self.geometry
   if geometry.output_winds then
     self:add_winding_output_belt()
-    return
-  end
-  if geometry.output_paired then
-    self:add_paired_winding_belt()
     return
   end
   local shared = self.shared_belt
@@ -554,15 +591,44 @@ function Builder:add_inserters(name, column, top, count)
   end
 end
 
--- One pole on each side, at the given rows, added to the top-to-bottom lists.
----@param input_row integer
----@param output_row integer
-function Builder:add_pole_pair(input_row, output_row)
-  local pole = self.names.pole
-  local input_pole = self:add({name = pole, position = grid.position(self.geometry.input_inserter_column, input_row)})
-  local output_pole = self:add({name = pole, position = grid.position(self.geometry.output_inserter_column, output_row)})
-  self.poles.input[#self.poles.input + 1] = input_pole
-  self.poles.output[#self.poles.output + 1] = output_pole
+-- One pole on one side of the machines, at the given row, added to that side's top-to-bottom list.
+---@param side "input"|"output"
+---@param row integer
+function Builder:add_pole(side, row)
+  local geometry = self.geometry
+  local column = side == "input" and geometry.input_inserter_column or geometry.output_inserter_column
+  local pole = self:add({name = self.names.pole, position = grid.position(column, row)})
+  self.poles[side][#self.poles[side] + 1] = pole
+end
+
+-- Which machines get a pole on one side, and where, for `count` inserters on the side: the machines from the top down,
+-- each unless a pole above it reaches its inserters (a small pole powers two tiles each way). A machine whose inserters
+-- are in its top rows has its pole in the free tile under them, one whose inserters are in its bottom rows in the free
+-- tile above them.
+---@param count integer
+---@return table<integer, integer>  the tile row of the pole of each machine that has one, by machine number from 0
+function Builder:side_pole_plan(count)
+  local plan, reach = {}, -math.huge
+  for index = 0, self.machine_count - 1 do
+    local first = self:inserter_top(index, count)
+    if first + count - 1 > reach then
+      local row = index % 2 == 1 and first - 1 or first + count
+      plan[index] = row
+      reach = row + POLE_REACH
+    end
+  end
+  return plan
+end
+
+-- The poles beside the free tiles of one machine's two sides.
+---@param index integer
+function Builder:add_machine_poles(index)
+  for _, side in ipairs({"input", "output"}) do
+    local row = self.pole_plan[side][index]
+    if row then
+      self:add_pole(side, row)
+    end
+  end
 end
 
 -- One machine with its inserters, and its poles if it is one of those that get them.
@@ -570,18 +636,15 @@ end
 ---@param index integer
 function Builder:add_machine_row(index)
   local geometry = self.geometry
-  local top = self:machine_top(index)
   local size = geometry.size
 
-  self:add({name = self.names.machine, position = grid.position(geometry.machine_column, top, size, size), recipe = self.names.recipe})
-  self:add_inserters(self:inserter_name(geometry.input_fast), geometry.input_inserter_column, top, geometry.input_count)
-  self:add_inserters(self.names.long_inserter, geometry.input_inserter_column, top + geometry.input_count, geometry.long_count)
+  self:add({name = self.names.machine, position = grid.position(geometry.machine_column, self:machine_top(index), size, size), recipe = self.names.recipe})
+  self:add_inserters(self:inserter_name(geometry.input_fast), geometry.input_inserter_column, self:plain_input_top(index), geometry.input_count)
+  self:add_inserters(self.names.long_inserter, geometry.input_inserter_column, self:long_input_top(index), geometry.long_count)
   self:add_inserters(self:inserter_name(geometry.output_fast), geometry.output_inserter_column, self:output_inserter_row(index), geometry.output_count)
 
-  if not geometry.has_pole_rows and index % MACHINES_PER_POLE == 0 then
-    -- With the paired belt the output pole stands in the middle row, which reaches the inserters of both machines of the pair
-    local output_row = geometry.output_paired and top + 1 or top + geometry.output_count
-    self:add_pole_pair(top + geometry.input_count + geometry.long_count, output_row)
+  if not geometry.has_pole_rows then
+    self:add_machine_poles(index)
   end
 end
 
@@ -589,13 +652,19 @@ end
 function Builder:add_pole_rows()
   for index = 0, self.machine_count do
     local row = self:machine_top(index) - 1
-    self:add_pole_pair(row, row)
+    self:add_pole("input", row)
+    self:add_pole("output", row)
   end
 end
 
 -- The machines with their inserters, and the poles: in rows between them when the
 -- sides are full, otherwise in the free tiles beside them.
 function Builder:add_machines()
+  local geometry = self.geometry
+  self.pole_plan = {
+    input = self:side_pole_plan(geometry.input_count + geometry.long_count),
+    output = self:side_pole_plan(geometry.output_count),
+  }
   for index = 0, self.machine_count - 1 do
     self:add_machine_row(index)
   end
@@ -607,9 +676,10 @@ end
 -- Chain the poles down each side, then join the two sides at the top.
 function Builder:wire_poles()
   local poles = self.poles
-  for i = 2, #poles.input do
-    self:connect(poles.input[i - 1], poles.input[i])
-    self:connect(poles.output[i - 1], poles.output[i])
+  for _, side in ipairs({poles.input, poles.output}) do
+    for i = 2, #side do
+      self:connect(side[i - 1], side[i])
+    end
   end
   -- `layout.build` needs at least one machine, so there is a first pole on each side.
   self:connect(poles.input[1], poles.output[1])
@@ -651,6 +721,7 @@ local function share_belt(builder, next_builder)
   local last_pickup_row = next_builder:last_input_row()
   local runs_north = not next_builder.takes_fuel -- fuel is side-loaded at the head, which has to be the top
     and builder:length_for_load() >= next_builder:length_for_load() * (1 - LENGTH_TOLERANCE)
+    and builder:last_output_row() >= last_pickup_row -- else a plate dropped on it would have no inserter ahead of it
   builder.shared_belt = {
     end_row = math.max(builder:last_output_row(), last_pickup_row) + 1, -- no tail below the last inserter that uses the belt
     direction = runs_north and defines.direction.north or defines.direction.south,
@@ -751,13 +822,20 @@ local function poles_of(builders)
   return poles
 end
 
--- One past the last row of the tallest column.
+-- One past the last row of the tallest column. When the first column is fed raw items, also one past the free row that
+-- its belt needs under its last tile, which would otherwise flow into whatever runs under the column (the last
+-- machine of an odd number has its inserters in its bottom rows, so the belt reaches the bottom of the column). A column
+-- that eats what other columns make has the rest of its belt drawn by whoever uses it.
 ---@param builders bpgen.Builder[]
+---@param raw_fed boolean  whether the first column is fed raw items
 ---@return integer
-local function tallest_end_row(builders)
+local function tallest_end_row(builders, raw_fed)
   local height = 0
   for _, builder in ipairs(builders) do
     height = math.max(height, builder:end_row())
+  end
+  if raw_fed then
+    height = math.max(height, builders[1]:last_input_row() + 2)
   end
   return height
 end
@@ -789,7 +867,7 @@ function layout.chain_block(stages, names, options)
     product_column = last.geometry.output_belt_column,
     output_rows = {first = last.geometry.first_row, last = last:last_output_row()},
     long_rows = first.geometry.long_count > 0 and {first = first:first_long_row(), last = first:last_long_row()} or nil,
-    height = tallest_end_row(builders),
+    height = tallest_end_row(builders, stages[1].suppliers == nil or stages[1].feed ~= nil),
     raw_belts = {{
       stage = stages[1],
       column = builders[1].geometry.input_belt_column,

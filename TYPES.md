@@ -302,7 +302,6 @@ classDiagram
     machine_column
     output_belt_column
     output_winds
-    output_paired
     has_pole_rows
   }
   class Place {
