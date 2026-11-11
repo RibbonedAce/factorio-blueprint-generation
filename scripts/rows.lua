@@ -549,40 +549,75 @@ function rows.build(root, names)
   return entities, raw_stages_of(runs)
 end
 
--- The chains and the raw columns among the columns: the leaves, which take what they need from belts that come in.
+-- The fuel that the stages of a chain burn, which comes down to the belt before the stage: a leaf for each, standing
+-- in the list just after its chain (its place is a fraction past the chain's).
+---@param column bpgen.Column  a chain
+---@return bpgen.FeedLeaf[]
+local function fuel_leaves_of(column)
+  local feeds, leaves = column.block.fuel_feeds, {}
+  for position, fuel in ipairs(feeds) do
+    leaves[position] = {index = column.index + position / (#feeds + 1), feed = fuel.stage.fuel_feed, owner = column, fuel = fuel}
+  end
+  return leaves
+end
+
+-- The chains and the raw columns among the columns, and the fuel their stages burn: the leaves, which take what they
+-- need from belts that come in. A chain keeps its fuel leaves in `fuel_leaves`.
 ---@param columns bpgen.Column[]
----@return bpgen.Column[]
+---@return bpgen.FeedLeaf[]
 local function leaves_of(columns)
   local leaves = {}
   for _, column in ipairs(columns) do
     if column.kind ~= "final" then
       column.feed = assert(column.fed.feed, "rows: a stage fed raw items has no feed")
       column.drop_x = nil
+      column.fuel_leaves = column.block and fuel_leaves_of(column) or {}
       leaves[#leaves + 1] = column
+      for _, leaf in ipairs(column.fuel_leaves) do
+        leaves[#leaves + 1] = leaf
+      end
     end
   end
   return leaves
 end
 
--- Tells every leaf the tile column its belt comes down, once the columns are placed.
----@param leaves bpgen.Column[]
+-- Tells every leaf the tile column its belt comes down, once the columns are placed: the fuel of a stage comes
+-- down beside the output inserters of the stage before it, one column west of the belt between them.
+---@param leaves bpgen.FeedLeaf[]
 local function set_drops(leaves)
   for _, leaf in ipairs(leaves) do
-    leaf.drop_x = leaf.x0 or leaf.x_source
+    if leaf.owner then
+      leaf.drop_x = leaf.owner.x0 + leaf.fuel.belt_column - 1
+    else
+      leaf.drop_x = leaf.x0 or leaf.x_source
+    end
   end
 end
 
--- Gives every column its first row: a chain right under the last tile of the belt that comes down to it, a
--- final column under the trunks that pass over it; a raw column learns the row its belt comes down to.
+-- The first row of a chain: right under the last tile of the belt that comes down to it, and low enough for the
+-- fuel of its stages to turn into the heads of their belts (see `inputs.fuel_tail`).
+---@param column bpgen.Column  a chain
+---@param ends table<bpgen.FeedLeaf, integer>
+---@return integer
+local function chain_top(column, ends)
+  local first_belt_row = ends[column] + 1
+  for _, leaf in ipairs(column.fuel_leaves) do
+    first_belt_row = math.max(first_belt_row, ends[leaf] + 2)
+  end
+  return first_belt_row - column.block.raw_belts[1].row
+end
+
+-- Gives every column its first row: a chain right under the last tile of the belt that comes down to it (see
+-- `chain_top`), a final column under the trunks that pass over it; a raw column learns the row its belt comes down to.
 ---@param plan bpgen.FeedPlan
 ---@param columns bpgen.Column[]
----@param ends table<bpgen.Column, integer>  of every leaf, the row of the last tile of its belt
+---@param ends table<bpgen.FeedLeaf, integer>  of every leaf, the row of the last tile of its belt
 local function set_pure_rows(plan, columns, ends)
   for _, column in ipairs(columns) do
     if column.kind == "final" then
       column.top = inputs.first_row_under(plan, column.x_source)
     elseif column.block then
-      column.top = ends[column] + 1 - column.block.raw_belts[1].row
+      column.top = chain_top(column, ends)
     else
       column.raw_row = ends[column]
     end
@@ -601,6 +636,23 @@ local function add_band(entities, band)
     entities[#entities + 1] = numbered
     numbered.entity_number = #entities
   end
+end
+
+-- The belts that bring the fuel from the end of its descent to the head of the belt before its stage, for every chain.
+---@param columns bpgen.Column[]  with their rows
+---@param names bpgen.SharedNames
+---@param ends table<bpgen.FeedLeaf, integer>
+---@return bpgen.NewEntity[]
+local function fuel_tails(columns, names, ends)
+  local tails = {}
+  for _, column in ipairs(columns) do
+    for _, leaf in ipairs(column.fuel_leaves or {}) do
+      for _, entity in ipairs(inputs.fuel_tail(names, leaf.drop_x, ends[leaf], column.top + leaf.fuel.row)) do
+        tails[#tails + 1] = entity
+      end
+    end
+  end
+  return tails
 end
 
 -- The tiles a machine covers on a side, by the machine's name.
@@ -655,6 +707,7 @@ function rows.build_pure(root, names, options)
   local entities = {}
   place_blocks(entities, columns, names.belt)
   add_band(entities, band)
+  add_band(entities, fuel_tails(columns, names, ends))
   if top.kind == "final" then
     add_arcs(entities, names.belt, top)
   end

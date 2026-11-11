@@ -392,10 +392,30 @@ local function in_order(stage, list)
   return list
 end
 
+-- The reason a step that is fed by other steps cannot burn fuel, as a message for the player, or nil. Its fuel rides the
+-- lane the product of the step before it leaves free, so it can eat only that one product; and only the design that
+-- brings in one belt of each material brings the fuel.
+---@param stage bpgen.StageData
+---@param has_inputs boolean  whether that design is available
+---@return LocalisedString|nil
+local function fuel_problem(stage, has_inputs)
+  if #stage.suppliers == 0 or not stage.fuel then
+    return nil
+  end
+  if #stage.suppliers ~= 1 or #stage.recipe.ingredients ~= 1 then
+    return messages.chain_fuel(stage.item)
+  end
+  if not has_inputs then
+    return messages.fuel_needs_inputs(stage.item)
+  end
+  return nil
+end
+
 -- The reason this step's machine cannot be built with, as a message for the player, or nil.
 ---@param stage bpgen.StageData
+---@param has_inputs boolean  whether the design that brings in one belt of each material is available
 ---@return LocalisedString|nil
-local function stage_problem(stage)
+local function stage_problem(stage, has_inputs)
   local size = stage.machine_size
   if not size or not layout.supports_machine_size(size) then
     return messages.unsupported_machine()
@@ -404,8 +424,9 @@ local function stage_problem(stage)
   if not energy_source then
     return messages.unsupported_energy()
   end
-  if #stage.suppliers > 0 and stage.fuel then
-    return messages.chain_fuel(stage.item)
+  local problem = fuel_problem(stage, has_inputs)
+  if problem then
+    return problem
   end
   if not suits_machine(stage.fuel, energy_source, stage.fuels) then
     return messages.fuel_mismatch(prototypes.entity[stage.machine].localised_name)
@@ -418,7 +439,7 @@ end
 ---@return LocalisedString|nil
 local function machine_problem(job)
   for _, stage in ipairs(in_order(job.root, {})) do
-    local problem = stage_problem(stage)
+    local problem = stage_problem(stage, job.inputs ~= nil)
     if problem then
       return problem
     end
@@ -630,8 +651,8 @@ local function rides_belt_b(plan, item)
 end
 
 -- What a step takes from the belts that come in, for the design that brings in one belt of each
--- material: its raw ingredients, then the fuel. A step with made ingredients takes one raw item and
--- no fuel (`stage_problem` refuses the fuel), so the feed of its raw column is that one item.
+-- material: its raw ingredients, then the fuel. A step with made ingredients takes either one raw
+-- item and no fuel (the feed of its raw column), or only fuel (`fuel_problem` allows nothing else).
 ---@param step bpgen.PlannedStage  with its `demand`
 ---@return bpgen.Feed
 local function feed_of(step)
@@ -640,6 +661,19 @@ local function feed_of(step)
     items[#items + 1] = {name = entry.name, amount = entry.amount}
   end
   return {items = items}
+end
+
+-- What a step takes from the belts that come in, by where it rides: a step that eats only raw items takes it on the
+-- belt of raw items that ends in it (the first result), a step that eats what another step makes and burns fuel takes
+-- the fuel on the free lane of the belt between them (the second).
+---@param step bpgen.PlannedStage  with its `demand`
+---@return bpgen.Feed|nil feed
+---@return bpgen.Feed|nil fuel_feed
+local function feeds_of(step)
+  if #step.suppliers == 0 then
+    return feed_of(step), nil
+  end
+  return nil, step.stage.fuel and feed_of(step) or nil
 end
 
 -- The size of a step's machines and how many inserters each has, as the layout wants it.
@@ -670,6 +704,7 @@ local function layout_stage(step)
   if raw_item then
     suppliers[#suppliers + 1] = {raw_item = raw_item, feed = feed_of(step)}
   end
+  local feed, fuel_feed = feeds_of(step)
   return {
     machine_count = step.plan.machines,
     load = step.plan.load,
@@ -677,7 +712,8 @@ local function layout_stage(step)
     recipe = recipe_to_set(step.stage),
     shape = shape_of(step),
     suppliers = suppliers,
-    feed = #step.suppliers == 0 and feed_of(step) or nil,
+    feed = feed,
+    fuel_feed = fuel_feed,
   }
 end
 

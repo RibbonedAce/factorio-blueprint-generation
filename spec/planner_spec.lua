@@ -948,15 +948,36 @@ describe("planner", function()
       assert.near(18.75, plans[2].inputs[1].per_minute, 1e-6)
     end)
 
-    it("refuses a later stage that burns fuel", function()
+    it("puts the plates of a later stage that burns fuel on one lane and the fuel on the other", function()
       local stages = gear_chain(60).stages
       stages[2].fuel = "coal"
+
+      local plans = planner.plan_chain(gear_chain(60, {stages = stages}))
+
+      assert.are.same({"iron-plate", "coal"}, plans[2].lanes)
+    end)
+
+    it("refuses a later stage that burns fuel when the stage before it does not make its one ingredient", function()
+      local stages = gear_chain(60).stages
+      stages[2].fuel = "coal"
+      stages[2].recipe = {energy = 0.5, ingredients = {amount_of(2, "copper-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
 
       local _, reason = planner.plan_chain(gear_chain(60, {stages = stages}))
 
       assert.are.equal("unsupported-recipe", reason)
     end)
 
+    it("refuses a later stage that burns fuel and eats a second ingredient, which leaves no lane free", function()
+      local stages = gear_chain(60).stages
+      stages[2].fuel = "coal"
+      stages[2].recipe = {
+        energy = 0.5, ingredients = {amount_of(2, "iron-plate"), amount_of(1, "copper-plate")}, products = {amount_of(1, "iron-gear-wheel")},
+      }
+
+      local _, reason = planner.plan_chain(gear_chain(60, {stages = stages}))
+
+      assert.are.equal("unsupported-recipe", reason)
+    end)
     it("gives the same plan for one stage as plan does", function()
       local stage = gear_chain(60).stages[1]
       local plan = planner.plan{

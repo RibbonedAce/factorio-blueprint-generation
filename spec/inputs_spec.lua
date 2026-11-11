@@ -237,6 +237,27 @@ describe("inputs", function()
     end)
   end)
 
+  describe("a trunk that carries the coal alone, right under a trunk that carries ore and coal", function()
+    -- The fuel feeder of the trunk above (row 4) and the coal trunk (row 6) are two rows apart on one bus.
+    local band = lay({
+      furnace_leaf(1, 8, "copper-ore"), one_item_leaf(1.5, 12, "coal"), furnace_leaf(2, 16, "iron-ore"),
+    })
+
+    it("lets two feeders of a bus be two rows apart", function()
+      local rows = {}
+      for _, belt in ipairs(band.plan.belts) do
+        for _, feeder in ipairs(belt.feeders) do
+          if belt.item == "coal" then
+            rows[#rows + 1] = feeder.row
+          end
+        end
+      end
+      table.sort(rows)
+
+      assert.are.same({4, 6, 10}, rows)
+    end)
+  end)
+
   describe("every band", function()
     local function wood_trunks()
       return {one_item_leaf(1, 4, "wood"), one_item_leaf(2, 8, "stone"), one_item_leaf(3, 12, "iron-plate"), one_item_leaf(4, 16, "wood")}
@@ -267,6 +288,38 @@ describe("inputs", function()
         assert.are.same({{}, true, true}, {crowded, least_x >= 0, least_y >= 0})
       end)
     end
+  end)
+
+  describe("the belt that brings fuel to the head of the belt between two stages", function()
+    -- The fuel comes down column 3 (the descent ends in row 0, drawn by the band) and turns east in row 3 into the tile
+    -- above the head, in column 4, which has a stub behind it in row 2. The head of the belt between the two stages is
+    -- in row 4. Columns 3 and 4:
+    --
+    --      34
+    --   1 |v.
+    --   2 |vv
+    --   3 |>v
+    local function tail_picture(last, head, last_row)
+      return picture.draw(inputs.fuel_tail(NAMES, 3, last, head), {}, 3, last + 1, 4, last_row)
+    end
+
+    it("runs on down the column of the fuel, turns east into the tile above the head and puts a stub behind that tile", function()
+      assert.are.same({"v.", "vv", ">v"}, tail_picture(0, 4, 3))
+    end)
+
+    it("turns right under the descent when the head is two rows under its last tile", function()
+      assert.are.same({">v"}, tail_picture(0, 2, 1)) -- the stub is in the row of the last tile of the descent
+    end)
+
+    it("puts the stub in the row of the last tile of the descent then", function()
+      local stub = inputs.fuel_tail(NAMES, 3, 0, 2)[2]
+
+      assert.are.same({4.5, 0.5, south}, {stub.position.x, stub.position.y, stub.direction})
+    end)
+
+    it("is refused when the head is less than two rows under the descent, leaving no room to turn", function()
+      assert.has_error(function() inputs.fuel_tail(NAMES, 3, 0, 1) end)
+    end)
   end)
 
   describe("the tiles an entity covers", function()

@@ -187,6 +187,7 @@ end
 ---@field draws_input_belt boolean  false when the previous column's output belt is this one's input belt
 ---@field draws_output_belt boolean  false when whoever uses the block draws its product belt (see `bpgen.Block`)
 ---@field load number  how many machines' worth of work the column does (see `bpgen.StageLayout`)
+---@field takes_fuel boolean  the column burns fuel that rides the free lane of its input belt, which therefore runs south (see `bpgen.StageLayout.fuel_feed`)
 
 ---@param shape bpgen.Shape
 ---@param place bpgen.Place
@@ -238,6 +239,7 @@ end
 ---@field draws_input_belt boolean  false when the previous column's output belt is this one's input belt
 ---@field draws_output_belt boolean  false when whoever uses the block draws its product belt
 ---@field load number  how many machines' worth of work the column does, which decides which way the belt to the next column runs
+---@field takes_fuel boolean  whether the column's input belt carries its fuel on the lane the product does not use
 ---@field shared_belt? bpgen.SharedBelt  how the output belt runs, when the next column shares it
 local Builder = {}
 Builder.__index = Builder
@@ -260,6 +262,7 @@ function Builder.new(machine_count, names, shape, entities, place)
     draws_input_belt = place.draws_input_belt,
     draws_output_belt = place.draws_output_belt,
     load = place.load,
+    takes_fuel = place.takes_fuel,
   }, Builder)
 end
 
@@ -512,7 +515,8 @@ end
 ---@param next_builder bpgen.Builder
 local function share_belt(builder, next_builder)
   local last_pickup_row = next_builder:last_input_row()
-  local runs_north = builder:length_for_load() >= next_builder:length_for_load() * (1 - LENGTH_TOLERANCE)
+  local runs_north = not next_builder.takes_fuel -- fuel is side-loaded at the head, which has to be the top
+    and builder:length_for_load() >= next_builder:length_for_load() * (1 - LENGTH_TOLERANCE)
   builder.shared_belt = {
     end_row = math.max(builder:last_output_row(), last_pickup_row) + 1, -- no tail below the last inserter that uses the belt
     direction = runs_north and defines.direction.north or defines.direction.south,
@@ -551,6 +555,7 @@ local function place_of(stage, index, count, origin, first_row, options)
     draws_input_belt = index == 1,
     draws_output_belt = not is_last or options.product_belt,
     load = stage.load or stage.machine_count,
+    takes_fuel = stage.fuel_feed ~= nil,
   }
 end
 
@@ -577,8 +582,24 @@ local function columns_of(stages, names, entities, options)
     if index > 1 then
       share_belt(builders[index - 1], builder)
     end
+    assert(not builder.takes_fuel or (index > 1 and not builders[index - 1].geometry.has_pole_rows),
+      "layout: fuel comes down beside the output inserters of the column before, which needs a column with no pole row")
   end
   return builders
+end
+
+-- Where the fuel has to arrive for each column of the chain that takes it from the belt before it.
+---@param stages bpgen.StageLayout[]
+---@param builders bpgen.Builder[]
+---@return bpgen.FuelFeed[]
+local function fuel_feeds_of(stages, builders)
+  local feeds = {}
+  for index, builder in ipairs(builders) do
+    if builder.takes_fuel then
+      feeds[#feeds + 1] = {stage = stages[index], belt_column = builder.geometry.input_belt_column, row = builder.geometry.first_row}
+    end
+  end
+  return feeds
 end
 
 -- The poles of every column.
@@ -640,6 +661,7 @@ function layout.chain_block(stages, names, options)
       column = builders[1].geometry.input_belt_column,
       row = builders[1].geometry.first_row,
     }},
+    fuel_feeds = fuel_feeds_of(stages, builders),
   }
 end
 

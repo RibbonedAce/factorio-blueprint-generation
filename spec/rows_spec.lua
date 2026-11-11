@@ -473,7 +473,7 @@ describe("rows", function()
     local GLYPHS = {
       ["iron-furnace"] = {size = 2, glyph = "i"}, ["copper-furnace"] = {size = 2, glyph = "c"},
       ["cable-assembler"] = {size = 3, glyph = "O"}, ["circuit-assembler"] = {size = 3, glyph = "E"},
-      ["pole-assembler"] = {size = 3, glyph = "P"},
+      ["pole-assembler"] = {size = 3, glyph = "P"}, ["steel-furnace"] = {size = 2, glyph = "s"}, ["chest-assembler"] = {size = 3, glyph = "T"},
     }
 
     local function drawn(entities, first_column, first_row, last_column, last_row)
@@ -651,6 +651,35 @@ describe("rows", function()
       end)
     end)
 
+    describe("a furnace that eats the plates another makes and burns fuel", function()
+      -- Steel chests: iron furnaces (i) make plates, steel furnaces (s) smelt them, a chest assembler (T) eats the steel.
+      -- The coal feeds the iron furnaces through their trunk and the steel furnaces through a trunk of its own (row 3): it
+      -- comes down column 12, beside the output inserters of the iron furnaces, turns east in row 7 into the tile above the
+      -- head of the belt between the two columns (column 13) and side-loads it, with a stub behind that tile (row 6).
+      --
+      --      11 12 13 14   (columns)
+      --   6 |.  v  v  . |
+      --   7 |.  >  v  . |
+      --   8 |i  }  v  } |
+      local steel_furnace = {
+        machine_count = 1, machine = "steel-furnace", shape = {machine_size = 2, input_inserters = 1, output_inserters = 1},
+        suppliers = {furnaces("iron-furnace", 1)}, fuel_feed = {items = {{name = "coal", amount = 2}}},
+      }
+      local entities, inputs = build_pure(assemblers("chest-assembler", 1, 1, 1, {steel_furnace}))
+
+      it("brings the fuel down beside the iron furnaces and side-loads the head of the belt to the steel furnaces", function()
+        assert.are.same({".vv.", ".>v.", "i}v}"}, drawn(entities, 11, 6, 14, 8))
+      end)
+
+      it("runs the belt between the iron furnaces and the steel furnaces south from its head", function()
+        assert.are.equal(south, entity_at(entities, NAMES.belt, 13, 8, 1).direction)
+      end)
+
+      it("brings in the coal and the iron ore, the coal for both kinds of furnace on one belt", function()
+        assert.are.same({{x = 0, y = 0, item = "coal"}, {x = 0, y = 5, item = "iron-ore"}}, inputs)
+      end)
+    end)
+
     describe("more iron ore than one belt carries", function()
       -- Three columns of 22 furnaces take 440 ore a minute each. A trunk carries a lane of ore, 450 a minute, so each column
       -- gets a trunk of its own; a belt that comes in carries two lanes, 900, so one belt of iron ore feeds two of the
@@ -732,6 +761,9 @@ describe("rows", function()
       ["double-assembler"] = {size = 3, eats = {"transport-belt", "other-belt"}, makes = "double-belt"},
       ["pole-assembler"] = {size = 3, eats = {"wood", "copper-cable"}, makes = "small-electric-pole"},
       ["brick-furnace"] = {size = 2, eats = {"stone"}, makes = "stone-brick"},
+      ["steel-furnace"] = {size = 2, eats = {"iron-plate", "coal"}, makes = "steel-plate"},
+      ["chest-assembler"] = {size = 3, eats = {"steel-plate"}, makes = "steel-chest"},
+      ["armor-assembler"] = {size = 3, eats = {"copper-plate", "steel-plate"}, makes = "heavy-armor"},
       ["gadget-assembler"] = {size = 3, eats = {"iron-plate", "copper-cable", "stone-brick"}, makes = "gadget"},
       ["outer-assembler"] = {size = 3, eats = {"iron-plate", "gadget", "stone-brick"}, makes = "outer-gadget"},
     }
@@ -761,6 +793,7 @@ describe("rows", function()
       },
       {
         suffix = ", with one belt of each material",
+        pure = true,
         build = build_pure,
         lanes = function(_, supplies) return {supplies = supplies, raw_lanes = raw_lanes, underground_reach = UNDERGROUND_REACH} end,
       },
@@ -781,21 +814,24 @@ describe("rows", function()
     ---@param product string  what the final column makes
     ---@param tracer_machines? table  what the tracer is told the machines eat and make; default `machines`
     ---@param eaten? string  what the second spec says is on a lane of its own, if not "every item"
-    local function it_builds_soundly(subject, tree, product, tracer_machines, eaten)
+    ---@param only_pure? boolean  for a tree that only the design with one belt of each material can build
+    local function it_builds_soundly(subject, tree, product, tracer_machines, eaten, only_pure)
       for _, design in ipairs(designs) do
-        it("passes the validator when building " .. subject .. design.suffix, function()
-          local entities = design.build(tree())
+        if design.pure or not only_pure then
+          it("passes the validator when building " .. subject .. design.suffix, function()
+            local entities = design.build(tree())
 
-          assert.are.same({}, validator.validate(entities, catalog()))
-        end)
+            assert.are.same({}, validator.validate(entities, catalog()))
+          end)
 
-        it("puts " .. (eaten or "every item on a lane of its own where it is eaten") .. " when building " .. subject .. design.suffix, function()
-          local entities, second = design.build(tree())
+          it("puts " .. (eaten or "every item on a lane of its own where it is eaten") .. " when building " .. subject .. design.suffix, function()
+            local entities, second = design.build(tree())
 
-          assert.are.same({}, tracer.problems(entities, options_for(design, entities, second, {
-            machines = tracer_machines or machines, raw = raw, product = product,
-          })))
-        end)
+            assert.are.same({}, tracer.problems(entities, options_for(design, entities, second, {
+              machines = tracer_machines or machines, raw = raw, product = product,
+            })))
+          end)
+        end
       end
     end
 
@@ -860,6 +896,44 @@ describe("rows", function()
 
             it_builds_soundly(label, function() return poles(copper_count, cable_count, pole_count, wood_first) end, "small-electric-pole", nil,
               "the wood and the cables on a lane of their own where they are eaten")
+          end
+        end
+      end
+    end
+
+    -- Steel plate is smelted from iron plates in a furnace that burns fuel, which rides the free lane of the belt of
+    -- plates: only the design with one belt of each material builds it.
+    local function steel_furnaces(count, suppliers)
+      return {
+        machine_count = count, machine = "steel-furnace", shape = {machine_size = 2, input_inserters = 1, output_inserters = 1},
+        suppliers = suppliers, fuel_feed = {items = {{name = "coal", amount = 2 * count}}},
+      }
+    end
+
+    for _, iron_count in ipairs({1, 3}) do
+      for _, steel_count in ipairs({1, 3}) do
+        for _, chest_count in ipairs({1, 2}) do
+          local label = string.format("%d iron and %d steel furnaces and %d chest assemblers", iron_count, steel_count, chest_count)
+
+          it_builds_soundly(label, function()
+            return assemblers("chest-assembler", chest_count, 1, 1, {steel_furnaces(steel_count, {furnaces("iron-furnace", iron_count)})})
+          end, "steel-chest", nil, nil, true)
+        end
+      end
+    end
+
+    -- Heavy armor eats copper plates and steel plates: the steel chain is a column of its own beside the copper furnaces.
+    for _, iron_count in ipairs({1, 3}) do
+      for _, copper_count in ipairs({1, 3}) do
+        for _, armor_count in ipairs({1, 2}) do
+          for _, steel_first in ipairs({true, false}) do
+            local label = string.format("%d iron and %d copper furnaces and %d armor assemblers, %s first", iron_count, copper_count, armor_count, steel_first and "steel" or "copper")
+
+            it_builds_soundly(label, function()
+              local steel = steel_furnaces(2, {furnaces("iron-furnace", iron_count)})
+              local copper = furnaces("copper-furnace", copper_count)
+              return assemblers("armor-assembler", armor_count, 2, 1, steel_first and {steel, copper} or {copper, steel})
+            end, "heavy-armor", nil, nil, true)
           end
         end
       end

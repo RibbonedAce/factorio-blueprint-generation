@@ -150,6 +150,14 @@ function messages.locked(item_name)
   return text("error-locked", messages.item(item_name))
 end
 
+-- Why a step in the middle of a chain that burns fuel (steel plate) cannot be made: only the design that brings in one
+-- belt of each material can bring it the fuel.
+---@param item_name string  the item the step makes
+---@return LocalisedString
+function messages.fuel_needs_inputs(item_name)
+  return text("error-fuel-needs-inputs", messages.item(item_name))
+end
+
 ---@param max_rate number  the most one blueprint can make a minute
 ---@return LocalisedString
 function messages.rate_too_high(max_rate)

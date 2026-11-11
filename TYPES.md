@@ -222,7 +222,8 @@ classDiagram
   StageLayout *-- Shape
   StageLayout o-- StageLayout : suppliers
   StageLayout o-- RawSupplier : suppliers
-  StageLayout *-- Feed : only a stage fed raw items
+  StageLayout *-- Feed : feed, only a stage fed raw items
+  StageLayout *-- Feed : fuel_feed, only a stage that burns fuel from the belt before it
   RawSupplier *-- Feed
   Feed *-- FeedItem : items
 
@@ -243,6 +244,10 @@ classDiagram
   class Block {
     product_column
     height
+  }
+  class FuelFeed {
+    belt_column
+    row
   }
   class RawBelt {
     column
@@ -275,6 +280,8 @@ classDiagram
   Entity ..> Tile : grid.top_left_tile
   Block *-- Entity : entities and poles
   Block *-- RawBelt : raw_belts
+  Block *-- FuelFeed : fuel_feeds
+  FuelFeed --> StageLayout : stage
   RawBelt --> StageLayout : stage
   RawBelt --> RawSupplier : stage
   Generated *-- Entity : entities
@@ -344,6 +351,7 @@ classDiagram
   Column *-- Arc : arc
   Column --> Block : block
   Column o-- StageLayout : stages
+  Column o-- FeedLeaf : fuel_leaves
   Column --> Feed : feed, a chain or a raw column
   RawRun --> Column
 
@@ -377,6 +385,8 @@ classDiagram
 
   FeedLeaf <|.. Column : a leaf column plays this role
   FeedLeaf *-- Feed
+  FeedLeaf --> Column : owner, for the fuel of a stage in a chain
+  FeedLeaf --> FuelFeed : fuel
   Trunk o-- FeedLeaf : leaves
   Feeder --> Trunk
   PureBelt o-- Feeder : feeders
@@ -412,7 +422,7 @@ The order of the work in `rows.build_pure` is: columns are made (`Column`), the 
 
 | Where | Types |
 |---|---|
-| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, RawBelt, NewEntity, Entity, InputOptions, Input, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
+| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, NewEntity, Entity, InputOptions, Input, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
 | `scripts/generator.lua` | EnergySource, Candidate, StageData, Job, PlannedStage, Demand |
 | `scripts/planner.lua` | Belts, InputInserters, MachineRates, StageContext, Sizes |

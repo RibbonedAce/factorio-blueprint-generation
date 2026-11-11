@@ -108,6 +108,15 @@ describe("feeds", function()
       assert.are.same({2, 5}, {plan.trunks[1].first, plan.trunks[1].last})
     end)
 
+    it("puts a leaf whose place is a fraction, the fuel of a stage in the middle of a chain, between its neighbours", function()
+      local leaves = {furnace_leaf(1, "iron-ore", 50, 4), one_item_leaf(1.5, "coal", 10), furnace_leaf(2, "copper-ore", 50, 4)}
+
+      local plan = feeds.plan(leaves, LANE)
+
+      assert.are.same({2, 1.5, 1}, {plan.trunks[1].last, plan.trunks[2].last, plan.trunks[3].last}) -- the trunks, furthest east first
+      assert.are.same({true, false, true}, {plan.trunks[1].mixed, plan.trunks[2].mixed, plan.trunks[3].mixed}) -- only the coal alone is not mixed
+    end)
+
     it("tells a trunk with two items from one with a single item", function()
       local leaves = {furnace_leaf(1, "iron-ore", 50, 4), one_item_leaf(2, "wood", 50)}
 

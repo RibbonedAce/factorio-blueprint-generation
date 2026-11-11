@@ -1672,15 +1672,27 @@ describe("generator", function()
       assert.are.same({"blueprint-generation.error-missing-prototype"}, error_message)
     end)
 
-    it("refuses the request when the machine of a later step burns fuel, naming the item", function()
+    describe("a furnace that eats what another step makes and burns fuel", function()
       local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
       local gear_in_a_furnace = a_recipe{energy = 3.2, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}, category = "smelting"}
-      _G.prototypes = fake_prototypes{recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear_in_a_furnace}}
 
-      local result, error_message = generator.generate("iron-gear-wheel", 10)
+      it("is refused without the design that brings in one belt of each material, naming the item", function()
+        _G.prototypes = fake_prototypes{recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear_in_a_furnace}}
 
-      assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-chain-fuel", {"item-name.iron-gear-wheel"}}, error_message)
+        local result, error_message = generator.generate("iron-gear-wheel", 10)
+
+        assert.is_nil(result)
+        assert.are.same({"blueprint-generation.error-fuel-needs-inputs", {"item-name.iron-gear-wheel"}}, error_message)
+      end)
+
+      it("is built with it, the fuel brought to the furnace on the lane the plates leave free", function()
+        _G.prototypes = fake_prototypes{recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear_in_a_furnace}}
+
+        local result = generator.generate("iron-gear-wheel", 10, fake_force{})
+
+        assert.are.equal("blueprint-generation.generated-with-belts", result.message[1])
+        assert.are.same({"", {"item-name.coal"}, ", ", {"item-name.iron-ore"}}, result.message[5]) -- one coal belt feeds both furnaces
+      end)
     end)
 
     it("refuses the request when two recipes make an item on the way, naming the item", function()

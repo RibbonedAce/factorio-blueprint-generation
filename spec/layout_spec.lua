@@ -943,6 +943,71 @@ describe("layout", function()
     end
   end)
 
+  describe("a stage that burns fuel which rides the free lane of the belt before it", function()
+    -- Seven furnaces and seven more that eat their plates (a furnace eats the plates one furnace makes, so the two columns
+    -- are as long as each other). The belt between them is in column 5: without fuel it runs north, as for any two columns
+    -- of equal length; with fuel it runs south, so that its head, where the fuel is side-loaded, is at the top.
+    local furnace_shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+
+    local function two_columns(fuel_feed)
+      local first = {machine_count = 7, machine = NAMES.machine, shape = furnace_shape}
+      local second = {machine_count = 7, machine = NAMES.machine, shape = furnace_shape, fuel_feed = fuel_feed}
+      return layout.chain_block({first, second}, NAMES, {product_belt = false}), second
+    end
+
+    local function belt_directions(block, x)
+      local directions, seen = {}, {}
+      for _, entity in ipairs(entities_named(block.entities, NAMES.belt)) do
+        if grid.top_left_tile(entity.position).x == x and not seen[entity.direction] then
+          seen[entity.direction] = true
+          directions[#directions + 1] = entity.direction
+        end
+      end
+      return directions
+    end
+
+    local coal = {items = {{name = "coal", amount = 10}}}
+
+    it("runs the belt between two columns of equal length north when no fuel rides it", function()
+      local block = two_columns(nil)
+
+      assert.are.same({defines.direction.north}, belt_directions(block, 5))
+    end)
+
+    it("runs the belt between the two columns south when fuel rides it", function()
+      local block = two_columns(coal)
+
+      assert.are.same({defines.direction.south}, belt_directions(block, 5))
+    end)
+
+    it("says where the fuel has to arrive: the column of the belt between the columns and its first row", function()
+      local block, second = two_columns(coal)
+
+      assert.are.equal(second, block.fuel_feeds[1].stage)
+      assert.are.same({5, 0}, {block.fuel_feeds[1].belt_column, block.fuel_feeds[1].row})
+    end)
+
+    it("says nothing of fuel for a chain whose stages burn none from the belt", function()
+      local block = two_columns(nil)
+
+      assert.are.same({}, block.fuel_feeds)
+    end)
+
+    it("refuses fuel for the first column of a chain, which has no belt before it", function()
+      local only = {machine_count = 1, machine = NAMES.machine, shape = furnace_shape, fuel_feed = coal}
+
+      assert.has_error(function() layout.chain_block({only}, NAMES, {product_belt = false}) end)
+    end)
+
+    it("refuses fuel for a column after one that needs a row of poles, whose column the fuel comes down", function()
+      local crowded = {machine_size = 2, input_inserters = 2, output_inserters = 1}
+      local first = {machine_count = 2, machine = NAMES.machine, shape = crowded}
+      local second = {machine_count = 2, machine = NAMES.machine, shape = furnace_shape, fuel_feed = coal}
+
+      assert.has_error(function() layout.chain_block({first, second}, NAMES, {product_belt = false}) end)
+    end)
+  end)
+
   describe("chain_block, a chain of columns as a block", function()
     local furnace_shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
     local assembler_shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}

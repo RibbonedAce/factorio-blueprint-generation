@@ -73,6 +73,10 @@ local config = {
     ["underground-belt"] = true,
     ["repair-pack"] = true,
     ["shotgun-shell"] = true,
+    -- Made through steel plate, a furnace that eats iron plates and burns fuel: only with one belt of each material (see scripts/inputs.lua).
+    ["steel-plate"] = true,
+    ["steel-chest"] = true,
+    ["heavy-armor"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns

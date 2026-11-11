@@ -71,7 +71,7 @@
 ---@field product string  item name this stage makes
 ---@field recipe bpgen.Recipe
 ---@field machine_speed number  the machine's crafting speed
----@field fuel? string  item the machine burns; it takes one of the two input lanes (first stage only)
+---@field fuel? string  item the machine burns; it takes one of the two input lanes (a stage fed raw items, or one that eats one made ingredient)
 ---@field inserters? bpgen.InserterLimits  nil means no limit: one inserter a side, full speed
 
 ---@alias bpgen.PlanReason "unsupported-recipe"|"rate-too-high"  why the planner gave no plan
@@ -140,6 +140,7 @@
 ---@field recipe? string  the recipe to set on the machines; nil for a machine that picks its own recipe (a furnace)
 ---@field suppliers? (bpgen.StageLayout|bpgen.RawSupplier)[]  what it eats: the stages whose products it eats, in the order of the recipe's ingredients, then the raw item that goes with them, if any; none or one in a chain, two when a recipe has two made ingredients or one made ingredient and a raw one (`rows.build` uses it; `layout.build_chain` ignores it)
 ---@field feed? bpgen.Feed  of a stage that eats only raw items: what it takes from the belts that come in a minute (`rows.build_pure` uses it; the original `rows.build` ignores it)
+---@field fuel_feed? bpgen.Feed  of a stage that burns fuel and eats what the stage before it in its chain makes (steel plate from iron plates): the fuel it takes a minute. It rides the free lane of the belt between the two stages, which therefore runs south, and is side-loaded at the head of that belt (`rows.build_pure` only; the original `rows.build` cannot do it)
 
 -- A raw item that a stage eats next to a made one: no machines, only a belt that brings the
 -- item to the column that eats it (see scripts/rows.lua).
@@ -170,6 +171,14 @@
 ---@field output_rows {first: integer, last: integer}  the rows where the output inserters of the last column drop onto the product belt
 ---@field long_rows? {first: integer, last: integer}  the rows of the first and the last long-handed input inserter of the first column, nil when it has none
 ---@field raw_belts bpgen.RawBelt[]  where the belts of raw items start, from the top of the block down
+---@field fuel_feeds bpgen.FuelFeed[]  the stages of the block that take fuel from the belt before them, left to right
+
+-- Where fuel has to arrive for a stage that burns it and eats what the stage before it makes: the belt between the two
+-- stages runs south from `row`, and the fuel is side-loaded onto its free lane from the tile above it.
+---@class bpgen.FuelFeed
+---@field stage bpgen.StageLayout
+---@field belt_column integer  tile column of the belt between the two stages, in the frame of the block
+---@field row integer  tile row of the first tile of that belt, in the frame of the block
 
 -- The first tile of a belt of raw items, which runs south from there.
 ---@class bpgen.RawBelt
@@ -209,9 +218,11 @@
 
 -- A chain or the column of a raw item, as `scripts/feeds.lua` sees it.
 ---@class bpgen.FeedLeaf
----@field index integer  place among the columns, from the west
+---@field index number  place among the columns, from the west (a fraction for the fuel of a stage in the middle of a chain: just after its chain)
 ---@field feed bpgen.Feed
 ---@field drop_x? integer  the tile column its belt comes down, once the columns are placed
+---@field owner? bpgen.Column  for a fuel feed: the chain column whose stage burns the fuel
+---@field fuel? bpgen.FuelFeed  for a fuel feed: where the fuel has to arrive in the block of `owner`
 
 -- A belt along the top of the blueprint that feeds some leaves with what they take.
 ---@class bpgen.Trunk

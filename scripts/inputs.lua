@@ -48,6 +48,8 @@ local north, east, south = defines.direction.north, defines.direction.east, defi
 local BUS_SPACING = 4
 -- A trunk takes this many rows: the ore feeder above it, the trunk, the fuel feeder below.
 local TRUNK_ROWS = 3
+-- The fewest rows between two feeders of one bus (see `feeder_rows`).
+local MIN_FEEDER_GAP = 2
 -- The fewest tiles an underground belt has to span: a feeder goes under a bus from the tile before it to the tile two after it.
 inputs.MIN_REACH = 3
 local MIN_REACH = inputs.MIN_REACH
@@ -209,7 +211,9 @@ local function give_feeder_rows(plan)
   end
 end
 
--- The rows of the feeders of a belt, from the top. Two feeders of a bus are at least a trunk apart, so that its splitters do not meet.
+-- The rows of the feeders of a belt, from the top. Two feeders of a bus are at least 2 rows apart: the splitter above a feeder
+-- takes the row after the belt that leaves the splitter before it, so the splitters do not meet. (The coal of a trunk that
+-- carries it alone, row f + 2, can be that close to the fuel feeder of the trunk above it, row f.)
 ---@param belt bpgen.PureBelt
 ---@return integer[]
 local function feeder_rows(belt)
@@ -219,7 +223,7 @@ local function feeder_rows(belt)
   end
   table.sort(found)
   for index = 2, #found do
-    assert(found[index] - found[index - 1] >= TRUNK_ROWS, "inputs: two feeders of a bus are too close")
+    assert(found[index] - found[index - 1] >= MIN_FEEDER_GAP, "inputs: two feeders of a bus are too close")
   end
   return found
 end
@@ -358,6 +362,34 @@ function Band:draw_trunk(plan, trunk, mixer, ends)
     end
     ends[leaf] = self:descend(plan, trunk, leaf)
   end
+end
+
+-- The belt that brings fuel to the head of the belt between two stages of a chain, from the last tile of its descent
+-- (the band draws the descent itself): down the column of the output inserters of the stage before, then east into
+-- the tile above the head. That tile runs south with a stub behind it, so it stays straight and the side-load puts
+-- the fuel on its near (west) lane, which the plates, dropped on the far lane, leave free; it runs on into the head.
+--
+--      c c+1
+--    v .         <- last row of the descent, drawn by the band
+--    v .         <- rows between, as many as it takes
+--    v v         <- the stub, on the row above the side-load
+--    > v         <- the fuel turns east into the tile above the head
+--    . .         <- the first tile of the belt between the two stages (drawn by its stage)
+---@param names bpgen.SharedNames
+---@param column integer  the tile column the fuel comes down
+---@param last integer  the row of the last tile of the descent
+---@param head integer  the row of the first tile of the belt between the two stages, at least two rows below `last`
+---@return bpgen.NewEntity[]
+function inputs.fuel_tail(names, column, last, head)
+  assert(head >= last + 2, "inputs: no room for the fuel to turn into the head of the belt")
+  local band = new_band(names, {})
+  for row = last + 1, head - 2 do
+    band:belt(column, row, south)
+  end
+  band:belt(column, head - 1, east)
+  band:belt(column + 1, head - 2, south)
+  band:belt(column + 1, head - 1, south)
+  return band.entities
 end
 
 -- The top band for this plan, once the columns are placed (every leaf has its `drop_x`): the entities (without

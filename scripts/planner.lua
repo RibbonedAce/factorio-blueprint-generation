@@ -369,12 +369,28 @@ end
 ---@field per_machine bpgen.MachineRates
 ---@field machines_worth number  how many machines' worth of work the belts of a column carry before a lane is full (not a whole number)
 
+-- The lanes of a stage that burns fuel and is fed by another stage: the one ingredient that
+-- stage makes on one lane (its products travel on one lane), the fuel on the other. Nil for
+-- anything else: with a second ingredient, or a second stage feeding it, no lane is free.
+---@param stage bpgen.StageRequest
+---@param suppliers bpgen.StageContext[]
+---@return string[]|nil lanes
+---@return table<string, true>|nil raw  nothing: every ingredient is made
+local function fuel_lanes(stage, suppliers)
+  local ingredients = stage.recipe.ingredients
+  if #ingredients ~= 1 or #suppliers ~= 1 or suppliers[1].request.product ~= ingredients[1].name then
+    return nil
+  end
+  return {ingredients[1].name, stage.fuel}, {}
+end
+
 -- The items on the lanes of the belts that feed a stage, or nil when they do not
 -- fit. A stage fed raw items shares the two lanes of its belt among them and its fuel
 -- (see `assign_lanes`). Every other stage eats the products of the stages that feed it,
 -- each on the one lane its product travels on, and at most one raw item, which has no
 -- stage (nothing could put a fuel on those belts), so it has at most four ingredients.
--- The stages that feed it make ingredients of its recipe, in any order.
+-- The stages that feed it make ingredients of its recipe, in any order. The one exception
+-- is a stage that burns fuel and eats one made ingredient (see `fuel_lanes`).
 ---@param stage bpgen.StageRequest
 ---@param suppliers bpgen.StageContext[]  the stages that feed it
 ---@return string[]|nil lanes  the ingredients, in the recipe's order
@@ -384,7 +400,10 @@ local function stage_lanes(stage, suppliers)
     return assign_lanes(stage.recipe.ingredients, stage.fuel)
   end
   local ingredients = stage.recipe.ingredients
-  if #ingredients > MOST_INGREDIENTS or stage.fuel then
+  if stage.fuel then
+    return fuel_lanes(stage, suppliers)
+  end
+  if #ingredients > MOST_INGREDIENTS then
     return nil
   end
   local lanes, unmade = {}, {}
@@ -660,8 +679,8 @@ end
 --                                   ingredients = {{name = ..., amount = ...}},
 --                                   products = {{name = ..., amount = ...}}},
 --    machine_speed = the machine's crafting speed,
---    fuel = optional item the machine burns (a stage fed raw items only; it takes one
---           lane of the input belt),
+--    fuel = optional item the machine burns (a stage fed raw items, or one that eats
+--           one made ingredient; it takes one lane of the input belt),
 --    inserters = optional {items_per_minute, long_items_per_minute, max_input,
 --           max_output}: how much one inserter (and one long-handed inserter, a plain
 --           one's figure when left out) moves, and how many inserters the input side
@@ -671,7 +690,9 @@ end
 --           belt, but only for the root stage}
 --
 -- A stage fed raw items shares the two lanes of its input belt among them and its
--- fuel: one item fills both lanes, two items get a lane each, and more are refused.
+-- fuel: one item fills both lanes, two items get a lane each, and more are refused. A
+-- stage that burns fuel and eats the one product of the stage before it (steel plate from
+-- iron plates) has that product on one lane and the fuel on the other.
 -- Any other stage eats the products of the stages that feed it, and at most one raw
 -- item more, each on the one lane it travels on. With one or two ingredients they all
 -- ride the belt next to the machines (belt a). With three or four there is a second
