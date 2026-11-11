@@ -9,6 +9,8 @@
 local builders = require("spec.support.builders")
 local layout = require("scripts.layout")
 local grid = require("scripts.grid")
+local picture = require("spec.support.picture")
+local tracer = require("spec.support.belt_tracer")
 local validator = require("spec.support.blueprint_validator")
 
 local NAMES = builders.NAMES
@@ -941,6 +943,213 @@ describe("layout", function()
         end
       end
     end
+  end)
+
+  describe("fast inserters", function()
+    local function names_without_fast_inserter()
+      return {machine = NAMES.machine, belt = NAMES.belt, inserter = NAMES.inserter, long_inserter = NAMES.long_inserter, pole = NAMES.pole}
+    end
+
+    it("draws the input side with fast inserters when the shape says so, and the output side with plain ones", function()
+      local shape = {machine_size = 2, input_inserters = 1, input_fast = true, output_inserters = 1}
+
+      local entities = layout.build(1, NAMES, shape)
+
+      assert.are.same({NAMES.fast_inserter, NAMES.inserter}, {name_at(entities, 1, 0), name_at(entities, 4, 0)})
+    end)
+
+    it("draws the output side with fast inserters when the shape says so, and the input side with plain ones", function()
+      local shape = {machine_size = 2, input_inserters = 1, output_inserters = 1, output_fast = true}
+
+      local entities = layout.build(1, NAMES, shape)
+
+      assert.are.same({NAMES.inserter, NAMES.fast_inserter}, {name_at(entities, 1, 0), name_at(entities, 4, 0)})
+    end)
+
+    it("draws every inserter of a side with the same prototype, one under the next", function()
+      local shape = {machine_size = 3, input_inserters = 2, input_fast = true, output_inserters = 1}
+
+      local entities = layout.build(1, NAMES, shape)
+
+      assert.are.same({NAMES.fast_inserter, NAMES.fast_inserter}, {name_at(entities, 1, 0), name_at(entities, 1, 1)})
+    end)
+
+    it("keeps a long-handed inserter long-handed under a fast one", function()
+      local shape = {machine_size = 3, input_inserters = 1, input_fast = true, long_inserters = 1, output_inserters = 1}
+
+      local entities = layout.build(1, NAMES, shape)
+
+      assert.are.same({NAMES.fast_inserter, NAMES.long_inserter}, {name_at(entities, 1, 0), name_at(entities, 1, 1)})
+    end)
+
+    it("draws plain inserters when the shape says nothing, as it always did", function()
+      local entities = layout.build(1, NAMES, {machine_size = 2, input_inserters = 1, output_inserters = 1})
+
+      assert.are.equal(0, count_named(entities, NAMES.fast_inserter))
+    end)
+
+    describe("three fast inserters on a 3x3 machine, which take every tile beside it", function()
+      -- No tile is free for a pole, so the machines stand 4 rows apart with a row of poles above each (rows 0, 4 and 8).
+      local shape = {machine_size = 3, input_inserters = 3, input_fast = true, output_inserters = 1}
+      local entities = layout.build(2, NAMES, shape)
+
+      it("stands the machines apart, the first in row 1 and the second in row 5", function()
+        assert.is_not_nil(entity_at(entities, 2, 1, 3))
+        assert.is_not_nil(entity_at(entities, 2, 5, 3))
+      end)
+
+      it("puts the three inserters of each machine under each other, and a pole in the row above", function()
+        assert.are.same({NAMES.pole, NAMES.fast_inserter, NAMES.fast_inserter, NAMES.fast_inserter},
+          {name_at(entities, 1, 0), name_at(entities, 1, 1), name_at(entities, 1, 2), name_at(entities, 1, 3)})
+      end)
+
+      it("passes the validator, every inserter fed, emptied and powered", function()
+        local catalog = builders.a_catalog{machine_size = 3, machine_needs_power = true}
+
+        assert.are.same({}, validator.validate(entities, catalog))
+      end)
+    end)
+
+    describe("the paired winding belt: one fast output inserter on each 3x3 machine, the machines in twos", function()
+      -- Columns 5 (the output inserters), 6 (the inner belt) and 7 (the outer belt) for four machines, rows 0 to 11: the
+      -- belt starts in the inner column, and at each seam two inserters (the upper machine's in its last row, the lower
+      -- one's in its first) drop on a curve (outer lane) or on a stub that side-loads (inner lane); the seams alternate.
+      --
+      --      567
+      --   0 |.v.
+      --   1 |+v.      pole: in the middle row of the upper machine of a pair
+      --   2 |}>v      the upper machine's inserter drops on the curve
+      --   3 |}>v      the lower machine's inserter drops on the stub
+      --   4 |..v
+      --   5 |..v
+      --   6 |..v
+      --   7 |+.v
+      --   8 |}>v      the upper machine's inserter drops on the stub
+      --   9 |}v<      the belt turns west; the lower machine's inserter drops on the curve
+      --  10 |.v.
+      --  11 |.v.
+      local shape = {machine_size = 3, input_inserters = 1, input_fast = true, output_inserters = 1, output_fast = true}
+      local machines = {[NAMES.machine] = {size = 3, glyph = "M"}}
+
+      local function drawn(count, last_row)
+        return picture.draw(layout.build(count, NAMES, shape), machines, 5, 0, 7, last_row)
+      end
+
+      it("weaves the belt between the inner and the outer column, a seam every two machines", function()
+        assert.are.same({".v.", "+v.", "}>v", "}>v", "..v", "..v", "..v", "+.v", "}>v", "}v<", ".v.", ".v."}, drawn(4, 11))
+      end)
+
+      it("puts the inserters of the upper and the lower machine of a pair side by side", function()
+        local entities = layout.build(4, NAMES, shape)
+        local rows = {}
+        for _, entity in ipairs(entities_named(entities, NAMES.fast_inserter)) do
+          local tile = grid.top_left_tile(entity.position)
+          if tile.x == 5 then
+            rows[#rows + 1] = tile.y
+          end
+        end
+        table.sort(rows)
+
+        assert.are.same({2, 3, 8, 9}, rows)
+      end)
+
+      it("ends two machines in the outer column, the belt running on to the bottom", function()
+        assert.are.same({".v.", "+v.", "}>v", "}>v", "..v", "..v"}, drawn(2, 5))
+      end)
+
+      it("gives a machine left alone at the end a stub that side-loads the outer belt", function()
+        assert.are.same({"..v", "+.v", "}>v"}, {drawn(3, 8)[7], drawn(3, 8)[8], drawn(3, 8)[9]})
+      end)
+
+      it("lets the belt come down in the inner column to a machine left alone after a turn west", function()
+        assert.are.same({".v.", ".v.", ".v.", "+v.", "}>v"}, {drawn(5, 14)[11], drawn(5, 14)[12], drawn(5, 14)[13], drawn(5, 14)[14], drawn(5, 14)[15]})
+      end)
+
+      -- The output inserter, the pole and the belt of a plain output belt, in columns 5 and 6, for the first machine.
+      local plain_belt = {"}v", "+v", ".v"}
+
+      it("does not pair one machine alone, which has a plain output belt", function()
+        local entities = layout.build(1, NAMES, shape)
+
+        assert.are.same(plain_belt, picture.draw(entities, machines, 5, 0, 6, 2))
+      end)
+
+      it("does not pair machines with a plain output inserter, whose one lane the plain belt keeps", function()
+        local plain = {machine_size = 3, input_inserters = 1, output_inserters = 1}
+        local entities = layout.build(4, NAMES, plain)
+
+        assert.are.same(plain_belt, picture.draw(entities, machines, 5, 0, 6, 2))
+      end)
+
+      it("does not pair a column that feeds another column, whose output belt is the next column's input belt", function()
+        local stages = {
+          {machine_count = 4, machine = NAMES.machine, shape = shape},
+          {machine_count = 4, machine = NAMES.machine, shape = shape},
+        }
+
+        local block = layout.chain_block(stages, NAMES, {product_belt = false})
+
+        assert.are.same({"}^", "+^", ".^"}, picture.draw(block.entities, machines, 5, 0, 6, 2)) -- two columns of equal length: the belt runs north
+      end)
+
+      it("passes the validator for an even and an odd number of machines, every inserter fed, emptied and powered", function()
+        local catalog = builders.a_catalog{machine_size = 3, machine_needs_power = true}
+
+        assert.are.same({}, validator.validate(layout.build(4, NAMES, shape), catalog))
+        assert.are.same({}, validator.validate(layout.build(5, NAMES, shape), catalog))
+      end)
+
+      describe("which lane each inserter fills, found by making a different thing in every machine", function()
+        -- The machines of the column are renamed one by one so that each makes its own product. When two machines whose
+        -- inserters share a lane make different things, the tracer reports a lane that carries both.
+        local function lane_problems(count, makes)
+          local entities = layout.build(count, NAMES, shape)
+          local machine_options, index = {}, 0
+          for _, entity in ipairs(entities) do
+            if entity.name == NAMES.machine then
+              index = index + 1
+              entity.name = "machine-" .. index
+              machine_options[entity.name] = {size = 3, eats = {}, makes = makes[index]}
+            end
+          end
+          local problems = {}
+          for _, problem in ipairs(tracer.problems(entities, {machines = machine_options, raw = {}, product = "nothing"})) do
+            if problem:find("lane", 1, true) then
+              problems[#problems + 1] = problem
+            end
+          end
+          return problems
+        end
+
+        it("fills the outer lane from the first and the fourth machine and the inner lane from the second and the third", function()
+          assert.are.same({}, lane_problems(4, {"outer", "inner", "inner", "outer"}))
+        end)
+
+        it("fills the same lane from the first two machines, so two different things on them are reported", function()
+          assert.is_true(#lane_problems(4, {"one", "two", "two", "one"}) == 0 and #lane_problems(4, {"outer", "outer", "inner", "inner"}) > 0)
+        end)
+
+        it("goes on alternating, outer, inner, inner, outer, outer, inner, inner, outer, for eight machines", function()
+          assert.are.same({}, lane_problems(8, {"o", "i", "i", "o", "o", "i", "i", "o"}))
+        end)
+      end)
+    end)
+
+    it("is refused for a shape that wants fast inserters when the layout is not given their name", function()
+      local shape = {machine_size = 2, input_inserters = 1, input_fast = true, output_inserters = 1}
+
+      assert.has_error(function() layout.build(1, names_without_fast_inserter(), shape) end)
+    end)
+
+    describe("how many inserters a side may have", function()
+      it("is one fewer than the machine is tall for the input side, plain or fast, which leaves a tile for a pole", function()
+        assert.are.same({1, 2}, {layout.max_input_inserters(2), layout.max_input_inserters(3)})
+      end)
+
+      it("is at most the two that the winding belt serves for the output side, plain or fast", function()
+        assert.are.same({1, 2}, {layout.max_output_inserters(2), layout.max_output_inserters(3)})
+      end)
+    end)
   end)
 
   describe("a stage that burns fuel which rides the free lane of the belt before it", function()

@@ -123,8 +123,10 @@ classDiagram
   }
   class InserterLimits {
     items_per_minute
+    fast_items_per_minute
     max_input
     max_output
+    machine_size
   }
   class StageTree
   class TreeRequest {
@@ -149,8 +151,10 @@ classDiagram
     output_per_minute
     lanes
     input_inserters
+    input_fast
     long_inserters
     output_inserters
+    output_fast
   }
   class PlanInput {
     name
@@ -171,6 +175,7 @@ classDiagram
     item_name
     rate_per_minute
     belt_speed
+    fast_inserter_rotation_speed
   }
   class InputOptions {
     lane_items_per_minute
@@ -207,8 +212,10 @@ classDiagram
   class Shape {
     machine_size
     input_inserters
+    input_fast
     long_inserters
     output_inserters
+    output_fast
   }
   class RawSupplier {
     raw_item
@@ -232,6 +239,7 @@ classDiagram
     inserter
     pole
     long_inserter
+    fast_inserter
     splitter
     underground
   }
@@ -294,6 +302,7 @@ classDiagram
     machine_column
     output_belt_column
     output_winds
+    output_paired
     has_pole_rows
   }
   class Place {

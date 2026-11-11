@@ -1598,6 +1598,142 @@ describe("generator", function()
     end)
   end)
 
+  describe("fast inserters, used for a side that one plain inserter cannot serve once the force has researched them", function()
+    -- An assembler (speed 0.5, 3x3) makes 60 gears a minute and eats 120 plates: two plain inserters (100.8) would hold it
+    -- back to about 50 gears, one fast inserter (144) does not. A furnace eats 18.75 ore a minute and keeps plain inserters.
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+    local function gear_game(options)
+      options = options or {}
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
+        missing_entities = options.missing_entities,
+        fast_inserter_rotation_speed = options.fast_inserter_rotation_speed,
+      }
+    end
+
+    it("puts a fast inserter on each side of an assembler that moves more than a plain inserter does", function()
+      _G.prototypes = gear_game()
+
+      local result = generator.generate("iron-gear-wheel", 60, fake_force{})
+
+      assert.are.equal(2, count_named(result.entities, "fast-inserter")) -- one on each side of the one assembler
+    end)
+
+    it("keeps plain inserters for the furnaces, whose flow one plain inserter moves", function()
+      _G.prototypes = gear_game()
+
+      local result = generator.generate("iron-gear-wheel", 60, fake_force{})
+
+      assert.are.equal(14, count_named(result.entities, "inserter")) -- 7 furnaces, an inserter on each side
+    end)
+
+    it("gives a side at most two inserters, even when a machine eats more than two fast inserters move", function()
+      local heavy_gear = a_recipe{energy = 0.5, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}} -- 300 plates a minute
+      _G.prototypes = fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = heavy_gear},
+      }
+
+      local result = generator.generate("iron-gear-wheel", 57, fake_force{}) -- one assembler at nearly full speed: 57.6 gears a minute
+
+      -- two fast inserters on the input side (288 of the 300 a minute) and one on the output side
+      assert.are.same({1, 3}, {count_named(result.entities, "assembling-machine-1"), count_named(result.entities, "fast-inserter")})
+    end)
+
+    it("needs fewer assemblers, since each runs at full speed", function()
+      _G.prototypes = gear_game()
+
+      local fast = generator.generate("iron-gear-wheel", 60, fake_force{})
+      local plain = generator.generate("iron-gear-wheel", 60)
+
+      assert.are.same({1, 2}, {count_named(fast.entities, "assembling-machine-1"), count_named(plain.entities, "assembling-machine-1")})
+    end)
+
+    it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
+      _G.prototypes = gear_game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("iron-gear-wheel", 60, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    local plain_only = {
+      {label = "no force is given, so nothing is known to be researched", force = nil},
+      {label = "the force has not researched the fast inserter", force = fake_force{locked = {"fast-inserter"}}},
+      {label = "the force does not know the recipe of the fast inserter", force = fake_force{absent = {"fast-inserter"}}},
+      {label = "the game has no fast inserter", force = fake_force{}, game = {missing_entities = {"fast-inserter"}}},
+      {label = "the game does not say how fast the fast inserter swings", force = fake_force{}, game = {fast_inserter_rotation_speed = false}},
+    }
+
+    for _, case in ipairs(plain_only) do
+      it("uses plain inserters only when " .. case.label, function()
+        _G.prototypes = gear_game(case.game)
+
+        local result = generator.generate("iron-gear-wheel", 60, case.force)
+
+        assert.are.equal(0, count_named(result.entities, "fast-inserter"))
+      end)
+    end
+
+    describe("copper cables, which an assembler makes at 120 a minute from 60 plates", function()
+      -- One fast inserter moves the 120 cables of a machine. The last column's belt winds so that machines side by side fill a
+      -- lane each, so the product keeps both lanes and one more machine's worth than a lane carries is lost.
+      local copper_plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}, category = "smelting"}
+      local cable = a_recipe{energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(2, "copper-cable")}}
+
+      local function cable_game()
+        return fake_prototypes{
+          furnace_speed = 1,
+          machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+          recipes = {["copper-plate"] = copper_plate, ["copper-cable"] = cable},
+        }
+      end
+
+      it("allows 780 a minute, 6.5 machines' worth of 120, with the paired winding belt", function()
+        _G.prototypes = cable_game()
+
+        assert.are.same({"blueprint-generation.max-rate", "780"}, generator.max_rate_message("copper-cable", fake_force{}))
+      end)
+
+      it("allows 900 a minute, as it always did, with plain inserters, which wind the belt with two inserters on a machine", function()
+        _G.prototypes = cable_game()
+
+        assert.are.same({"blueprint-generation.max-rate", "900"}, generator.max_rate_message("copper-cable"))
+      end)
+
+      it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
+        _G.prototypes = cable_game()
+        local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+        catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+        local result = generator.generate("copper-cable", 500, fake_force{})
+
+        assert.are.same({}, validator.validate(result.entities, catalog))
+      end)
+
+      it("gives every assembler one fast inserter on each side", function()
+        _G.prototypes = cable_game()
+
+        local result = generator.generate("copper-cable", 500, fake_force{})
+
+        assert.are.equal(2 * count_named(result.entities, "assembling-machine-1"), count_named(result.entities, "fast-inserter"))
+      end)
+    end)
+
+    it("shows the maximum the same way when the fast inserter is not researched", function()
+      _G.prototypes = gear_game()
+
+      assert.are.same(generator.max_rate_message("iron-gear-wheel"), generator.max_rate_message("iron-gear-wheel", fake_force{locked = {"fast-inserter"}}))
+    end)
+  end)
+
   describe("refusals", function()
     it("refuses the request when the item is not supported", function()
       _G.prototypes = fake_prototypes{}

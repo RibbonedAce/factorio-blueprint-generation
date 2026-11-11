@@ -6,7 +6,7 @@
 --   S         a splitter, on both of its tiles (the way it faces shows in the shape: side by side or one above the other)
 --   ( )       the entrance and the exit of an underground belt that runs east
 --   n u       the entrance and the exit of one that runs south
---   }         an inserter, long-handed or not
+--   }         an inserter, fast or long-handed or not
 --   +         a pole
 --   letters   the machines, as `machines` says: {[entity name] = {size = 2, glyph = "i"}}
 --   .         nothing
@@ -30,6 +30,7 @@ local GLYPHS = {
   [NAMES.splitter] = function() return "S" end,
   [NAMES.underground] = function(entity) return (entity.type == "input" and ENTRANCES or EXITS)[entity.direction] end,
   [NAMES.inserter] = function() return "}" end,
+  [NAMES.fast_inserter] = function() return "}" end,
   [NAMES.long_inserter] = function() return "}" end,
   [NAMES.pole] = function() return "+" end,
 }

@@ -28,6 +28,20 @@ describe("builders", function()
     end)
   end)
 
+  describe("a fast inserter", function()
+    it("is on its tile, with the name the layout is given for fast inserters and the direction it is given", function()
+      local inserter = builders.fast_inserter(3, 2, east)
+
+      assert.are.same({builders.NAMES.fast_inserter, 3.5, 2.5, east}, {inserter.name, inserter.position.x, inserter.position.y, inserter.direction})
+    end)
+
+    it("is known to the catalog as an inserter that picks up from the next tile", function()
+      local entry = builders.a_catalog{}[builders.NAMES.fast_inserter]
+
+      assert.are.same({"inserter", 1, 1, true, nil}, {entry.kind, entry.width, entry.height, entry.needs_power, entry.reach})
+    end)
+  end)
+
   describe("an underground belt", function()
     it("is on its tile, with the direction and the end it is given", function()
       local exit = builders.underground(4, 1, east, "output")
@@ -68,6 +82,18 @@ describe("builders", function()
 
     it("leaves the span out when it is told there is none", function()
       assert.is_nil(builders.fake_prototypes{underground_distance = false}.entity["underground-belt"].max_underground_distance)
+    end)
+
+    it("has a fast inserter that swings at 0.04 unless it is told otherwise", function()
+      assert.are.equal(0.04, builders.fake_prototypes{}.entity["fast-inserter"].get_inserter_rotation_speed())
+    end)
+
+    it("gives the fast inserter the speed it is told", function()
+      assert.are.equal(0.05, builders.fake_prototypes{fast_inserter_rotation_speed = 0.05}.entity["fast-inserter"].get_inserter_rotation_speed())
+    end)
+
+    it("leaves the fast inserter's speed out when it is told there is none", function()
+      assert.is_nil(builders.fake_prototypes{fast_inserter_rotation_speed = false}.entity["fast-inserter"].get_inserter_rotation_speed())
     end)
 
     it("leaves out the buildings it is told the game does not have", function()

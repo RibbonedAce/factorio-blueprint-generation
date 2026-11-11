@@ -40,7 +40,7 @@ end
 local function shared_names()
   return {
     belt = config.entities.belt, inserter = config.entities.inserter,
-    long_inserter = config.entities.long_inserter, pole = config.entities.pole,
+    long_inserter = config.entities.long_inserter, fast_inserter = config.entities.fast_inserter, pole = config.entities.pole,
     splitter = config.entities.splitter, underground = config.entities.underground_belt,
   }
 end
@@ -248,6 +248,7 @@ end
 ---@field belt_speed number
 ---@field inserter_rotation_speed number
 ---@field long_inserter_rotation_speed number  the long-handed inserter's, or the plain inserter's when the game has none
+---@field fast_inserter_rotation_speed? number  the fast inserter's, when the force has researched it and the game gives its speed; nil: plain inserters only
 ---@field inputs? bpgen.InputOptions  asks for the design that brings in one belt of each material (see scripts/inputs.lua); nil for the original design, a belt of raw items for every chain
 
 -- Whether the force can build a building: it has unlocked the recipe, which the game names like the
@@ -258,6 +259,19 @@ end
 local function can_build(force, name)
   local recipe = force.recipes[name]
   return recipe ~= nil and recipe.enabled and prototypes.entity[name] ~= nil
+end
+
+-- The rotation speed of the fast inserter when the blueprint may use it: the force has unlocked its recipe (nothing is
+-- known without a force) and the game has the building and says how fast it swings. Nil otherwise: the blueprint then
+-- takes plain inserters only, as it always did.
+---@param names bpgen.SharedNames
+---@param force LuaForce|nil
+---@return number|nil
+local function fast_rotation_speed(names, force)
+  if not (force and names.fast_inserter and can_build(force, names.fast_inserter)) then
+    return nil
+  end
+  return prototypes.entity[names.fast_inserter].get_inserter_rotation_speed()
 end
 
 -- What the design that brings in one belt of each material is asked for, or nil when the blueprint is
@@ -345,6 +359,7 @@ local function read_job(item_name, rate_per_minute, force)
     belt_speed = belt_speed,
     inserter_rotation_speed = rotation_speed,
     long_inserter_rotation_speed = long_rotation_speed,
+    fast_inserter_rotation_speed = fast_rotation_speed(names, force),
     inputs = input_options(names, belt_speed, force),
   }
 end
@@ -569,8 +584,10 @@ local function stage_request(job, stage)
     inserters = {
       items_per_minute = planner.inserter_items_per_minute(job.inserter_rotation_speed),
       long_items_per_minute = planner.inserter_items_per_minute(job.long_inserter_rotation_speed),
+      fast_items_per_minute = job.fast_inserter_rotation_speed and planner.inserter_items_per_minute(job.fast_inserter_rotation_speed) or nil,
       max_input = layout.max_input_inserters(machine_size),
       max_output = layout.max_output_inserters(machine_size),
+      machine_size = machine_size,
     },
   }
 end
@@ -683,8 +700,10 @@ local function shape_of(step)
   return {
     machine_size = machine_size_of(step.stage),
     input_inserters = step.plan.input_inserters,
+    input_fast = step.plan.input_fast,
     long_inserters = step.plan.long_inserters,
     output_inserters = step.plan.output_inserters,
+    output_fast = step.plan.output_fast,
   }
 end
 

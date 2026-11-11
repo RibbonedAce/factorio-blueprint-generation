@@ -1333,6 +1333,48 @@ describe("planner", function()
       assert.are.same({"circuit", "gear", "plate"}, plans.plan.lanes)
     end)
 
+    describe("the output belt of the root stage when the long-handed inserters fill the input side", function()
+      -- Circuit and gear on belt a (one fast inserter), plate on belt b: 120 a minute, two long-handed inserters. The three
+      -- slots are full, which takes a row of poles between the machines, and a winding belt has no room for that: the 180 a
+      -- minute that two fast inserters move from a machine ride one lane, 450 / 180 machines' worth.
+      local limits = {items_per_minute = 50.4, long_items_per_minute = 72, fast_items_per_minute = 144, max_input = 3, max_output = 3, machine_size = 3}
+
+      it("is a plain belt, with the product on one lane", function()
+        local recipe = {
+          energy = 0.5, products = {amount_of(3, "gadget")},
+          ingredients = {amount_of(1, "circuit"), amount_of(1, "gear"), amount_of(2, "plate")},
+        }
+        local request = {
+          rate_per_minute = 1, lane_items_per_minute = 450,
+          root = {
+            stage = {product = "gadget", recipe = recipe, machine_speed = 0.5, inserters = limits},
+            suppliers = {made_from_ore("circuit"), made_from_ore("gear"), made_from_ore("plate")},
+          },
+        }
+
+        assert.near(450, planner.max_tree_rate(request), 1e-6)
+      end)
+    end)
+
+    describe("with fast inserters, which beat the long-handed ones", function()
+      -- A fast inserter moves 144 a minute, more than the long-handed one's 72. A machine eats 60 of each ingredient.
+      local fast_two_slots = {items_per_minute = 50.4, long_items_per_minute = 72, fast_items_per_minute = 144, max_input = 2, max_output = 2}
+
+      it("puts two ingredients on belt a, for the fast inserter, and the one that is eaten last on belt b", function()
+        -- Circuit and gear on belt a: 120 a minute, one fast inserter. Plate alone on belt b: 60 of the 72 a minute. Both
+        -- fit, so the machine runs flat out. (With plain inserters the circuit was alone on belt a, 50.4 a minute.)
+        local plans = planner.plan_tree(gadgets(60, circuit_gear_plate, fast_two_slots))
+
+        assert.are.same({a = {"circuit", "gear"}, b = {"plate"}}, plans.plan.belts)
+      end)
+
+      it("runs the machine flat out, with one fast inserter and one long-handed one on its input side", function()
+        local plans = planner.plan_tree(gadgets(60, circuit_gear_plate, fast_two_slots))
+
+        assert.are.same({1, 60, 1, true, 1}, {plans.plan.machines, plans.plan.output_per_minute, plans.plan.input_inserters, plans.plan.input_fast, plans.plan.long_inserters})
+      end)
+    end)
+
     it("puts the ingredient that is eaten most alone on the long-handed belt when it is much heavier than the others", function()
       -- 3 circuits, 5 gears and 9 plates a craft: 180, 300 and 540 a minute. Plate alone on belt b: 72 / 540 = 0.133,
       -- circuit and gear on belt a: 50.4 / 480 = 0.105, so 0.105 (6.3 crafts a minute). Any other split is slower.
@@ -1490,6 +1532,162 @@ describe("planner", function()
       local plans = planner.plan_tree(gadgets(100, circuit_gear_plate, plain_only))
 
       assert.are.equal(4, plans.plan.machines)
+    end)
+  end)
+
+  describe("plan, with fast inserters", function()
+    -- A machine of speed 1 that crafts every second eats `flow` items of its one ingredient a minute and makes as many of its
+    -- product. One plain inserter moves 50.4 a minute, one fast inserter 144 (so two move 288 and three 432). The planner
+    -- takes the slots it is given: the generator gives two to a 3x3 machine (see `layout.max_input_inserters`), and these
+    -- specs give three to show the whole ladder.
+    local limits = {items_per_minute = 50.4, fast_items_per_minute = 144, max_input = 3, max_output = 3, machine_size = 3}
+
+    local function recipe_moving(flow)
+      return {energy = 1, ingredients = {amount_of(flow / 60, "plate")}, products = {amount_of(flow / 60, "part")}}
+    end
+
+    local function plan_moving(flow, inserters)
+      return planner.plan{
+        product = "part", rate_per_minute = flow, recipe = recipe_moving(flow), machine_speed = 1,
+        lane_items_per_minute = 450, inserters = inserters or limits,
+      }
+    end
+
+    local function ladder(plan)
+      return {plan.input_inserters, plan.input_fast, plan.output_inserters, plan.output_fast}
+    end
+
+    it("uses one plain inserter on each side while that moves what the machine eats and makes", function()
+      assert.are.same({1, false, 1, false}, ladder(plan_moving(48)))
+    end)
+
+    it("keeps one plain inserter when the flow is exactly what it moves", function()
+      assert.are.same({1, false, 1, false}, ladder(plan_moving(50.4)))
+    end)
+
+    it("uses one fast inserter when one plain inserter is not enough", function()
+      assert.are.same({1, true, 1, true}, ladder(plan_moving(90)))
+    end)
+
+    it("uses one fast inserter, not two plain ones, for a flow only two plain inserters would move", function()
+      assert.are.same({1, true, 1, true}, ladder(plan_moving(100)))
+    end)
+
+    it("keeps one fast inserter when the flow is exactly what it moves", function()
+      assert.are.same({1, true, 1, true}, ladder(plan_moving(144)))
+    end)
+
+    it("uses two fast inserters when one is not enough", function()
+      assert.are.same({2, true, 2, true}, ladder(plan_moving(200)))
+    end)
+
+    it("keeps two fast inserters when the flow is exactly what they move", function()
+      assert.are.same({2, true, 2, true}, ladder(plan_moving(288)))
+    end)
+
+    it("uses three fast inserters when two are not enough", function()
+      assert.are.same({3, true, 3, true}, ladder(plan_moving(300)))
+    end)
+
+    it("gives each side the inserters its own flow needs", function()
+      local recipe = {energy = 1, ingredients = {amount_of(5, "plate")}, products = {amount_of(2 / 3, "part")}} -- 300 in, 40 out
+      local plan = planner.plan{product = "part", rate_per_minute = 40, recipe = recipe, machine_speed = 1, lane_items_per_minute = 450, inserters = limits}
+
+      assert.are.same({3, true, 1, false}, {plan.input_inserters, plan.input_fast, plan.output_inserters, plan.output_fast})
+    end)
+
+    it("uses plain inserters when the request gives no limits at all", function()
+      local plan = planner.plan{product = "part", rate_per_minute = 90, recipe = recipe_moving(90), machine_speed = 1, lane_items_per_minute = 450}
+
+      assert.are.same({1, false, 1, false}, ladder(plan)) -- one inserter on each side, as ever without limits
+    end)
+
+    it("uses plain inserters only, as many as it takes, when no fast inserter is given", function()
+      local plain_only = {items_per_minute = 50.4, max_input = 3, max_output = 3}
+
+      assert.are.same({2, false, 2, false}, ladder(plan_moving(90, plain_only)))
+    end)
+
+    it("runs the machine slower when even all its fast inserters cannot move what it needs", function()
+      local two_slots = {items_per_minute = 50.4, fast_items_per_minute = 144, max_input = 2, max_output = 2, machine_size = 3}
+
+      local plan = plan_moving(300, two_slots)
+
+      assert.are.equal(2, plan.machines) -- two fast inserters move 288 of the 300 a minute, so one machine makes 288 and 300 take two
+    end)
+
+    it("gives a machine that is used for part of its time the inserters that share needs: one plain for 45 of its 300", function()
+      local plan = planner.plan{
+        product = "part", rate_per_minute = 45, recipe = recipe_moving(300), machine_speed = 1,
+        lane_items_per_minute = 450, inserters = limits,
+      }
+
+      assert.are.same({1, false, 1, false}, ladder(plan)) -- 45 a minute: one plain inserter moves them
+    end)
+
+    it("gives a machine that is used for part of its time a fast inserter when its share is more than a plain one moves", function()
+      local plan = planner.plan{
+        product = "part", rate_per_minute = 60, recipe = recipe_moving(300), machine_speed = 1,
+        lane_items_per_minute = 450, inserters = limits,
+      }
+
+      assert.are.same({1, true, 1, true}, ladder(plan)) -- 60 a minute is more than the 50.4 of a plain inserter
+    end)
+
+    describe("the paired winding belt of the root stage, which one fast output inserter per 3x3 machine fills in turns", function()
+      -- Machines that eat 60 plates and make 120 parts a minute: one fast output inserter each (144 a minute), so a lane
+      -- carries 3.75 machines' worth. The belt gives both lanes to the machines, in turns outer, inner, inner, outer, so a
+      -- lane gets half of them and one more at most: 2 x 3.75 - 1 = 6.5 machines' worth.
+      local function stage(product, input, output, extra)
+        local recipe = {energy = 1, ingredients = {amount_of(input, extra and extra.eats or "ore")}, products = {amount_of(output, product)}}
+        return {product = product, recipe = recipe, machine_speed = 1, inserters = limits}
+      end
+
+      local function max_rate_of(root, suppliers)
+        return planner.max_tree_rate({rate_per_minute = 1, lane_items_per_minute = 450, root = {stage = root, suppliers = suppliers or {}}})
+      end
+
+      it("carries two lanes' worth of machines less one when each machine has one fast output inserter", function()
+        assert.near(780, max_rate_of(stage("part", 1, 2)), 1e-6) -- 6.5 machines, each making 120
+      end)
+
+      it("carries one lane when one plain inserter moves what each machine makes", function()
+        assert.near(450, max_rate_of(stage("part", 1, 2 / 3)), 1e-6) -- 40 a minute: a plain inserter; 450 / 40 machines' worth, each making 40
+      end)
+
+      it("winds the belt the other way, a lane for each of two fast inserters, when a machine makes more than one moves", function()
+        assert.near(562.5, max_rate_of(stage("part", 1, 3)), 1e-6) -- 180 a minute: two fast inserters; 450 / 144 machines' worth, each making 180
+      end)
+
+      it("does not pair the belt of a stage that feeds another, which carries one lane", function()
+        local first = stage("plate", 1, 2) -- makes 120 plates a minute a machine, with one fast inserter
+        local second = stage("part", 1, 1, {eats = "plate"})
+
+        local most = max_rate_of(second, {{stage = first, suppliers = {}}})
+
+        assert.near(450, most, 1e-6) -- one lane of plates; the root alone would take 840
+      end)
+    end)
+
+    describe("the output belt of the root stage, which winds for two output inserters on a 3x3 machine", function()
+      -- 5 plates in and 3 parts out a craft, 60 crafts a minute: 300 in (three fast inserters, every tile beside the machine,
+      -- so rows of poles between the machines) and 180 out (two fast inserters).
+      local function max_rate_with(input_per_craft)
+        local recipe = {energy = 1, ingredients = {amount_of(input_per_craft, "plate")}, products = {amount_of(3, "part")}}
+        local request = {
+          rate_per_minute = 1, lane_items_per_minute = 450,
+          root = {stage = {product = "part", recipe = recipe, machine_speed = 1, inserters = limits}, suppliers = {}},
+        }
+        return planner.max_tree_rate(request)
+      end
+
+      it("winds when a side is not full: a lane gets what one of the two fast inserters moves from every machine", function()
+        assert.near(562.5, max_rate_with(1), 1e-6) -- 450 / 144 machines' worth, each making 180
+      end)
+
+      it("does not wind when the input side is full, which takes a row of poles: the product rides one lane", function()
+        assert.near(450, max_rate_with(5), 1e-6) -- 450 / 180 machines' worth, each making 180
+      end)
     end)
   end)
 

@@ -12,6 +12,7 @@
 ---@field inserter string
 ---@field pole string
 ---@field long_inserter? string  the long-handed inserter, for a machine that takes from a second input belt
+---@field fast_inserter? string  the fast inserter, for a machine whose side needs more than one plain inserter moves
 ---@field splitter? string  the splitter, for the input design that brings in one belt of each material
 ---@field underground? string  the underground belt, for the same design
 
@@ -64,8 +65,10 @@
 ---@class bpgen.InserterLimits  what limits feeding and emptying a machine
 ---@field items_per_minute number  what one inserter moves
 ---@field long_items_per_minute? number  what one long-handed inserter moves; a plain inserter's figure when nil
+---@field fast_items_per_minute? number  what one fast inserter moves, when the game has them researched: a side then uses fast inserters when one plain inserter is not enough, and as many as it takes. Nil: only plain inserters
 ---@field max_input integer  how many inserters the input side of a machine gets
 ---@field max_output integer  how many inserters the output side of a machine gets
+---@field machine_size? integer  the machine's size in tiles, which decides whether its sides are full (a row of poles) and so whether its output belt can wind; nil when not said
 
 ---@class bpgen.StageRequest  one stage of a chain: a recipe made by one column of machines
 ---@field product string  item name this stage makes
@@ -109,9 +112,11 @@
 ---@field inputs bpgen.PlanInput[]  per ingredient, in the recipe's order
 ---@field lanes string[]  the item on each lane of the input belt: two for a stage fed raw items, one for each ingredient of any other
 ---@field belts bpgen.Belts  which ingredients ride which input belt: all on belt a, except for a stage with three or four ingredients
----@field input_inserters integer  plain inserters per machine, for belt a
+---@field input_inserters integer  inserters per machine, for belt a
+---@field input_fast boolean  whether those are fast inserters
 ---@field long_inserters integer  long-handed inserters per machine, for belt b (0 when belt b carries nothing)
 ---@field output_inserters integer  per machine
+---@field output_fast boolean  whether those are fast inserters
 
 ---@class bpgen.Position  the centre of an entity, in tiles
 ---@field x number
@@ -126,9 +131,11 @@
 -- What the layout needs to know about the machine.
 ---@class bpgen.Shape
 ---@field machine_size integer  tiles wide and tall; see `supports_machine_size`
----@field input_inserters integer  plain inserters per machine, for the input belt next to the machine
+---@field input_inserters integer  inserters per machine, for the input belt next to the machine
+---@field input_fast? boolean  whether those are fast inserters (plain when nil)
 ---@field long_inserters? integer  long-handed inserters per machine, in the rows under the plain ones, for a second belt one column further out (0 when nil); the two kinds together are at most `machine_size`
 ---@field output_inserters integer  per machine, at most `machine_size`; a 3x3 machine with two (and no pole rows) gets a winding output belt
+---@field output_fast? boolean  whether those are fast inserters (plain when nil)
 
 -- One column of machines in a chain.
 ---@class bpgen.StageLayout

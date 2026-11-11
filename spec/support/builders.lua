@@ -17,6 +17,7 @@ builders.NAMES = {
   belt = "transport-belt",
   inserter = "inserter",
   long_inserter = "long-handed-inserter",
+  fast_inserter = "fast-inserter",
   pole = "small-electric-pole",
   splitter = "splitter",
   underground = "underground-belt",
@@ -62,6 +63,15 @@ end
 ---@return table  an entity without its number yet (see `blueprint_of`)
 function builders.inserter(tile_x, tile_y, direction)
   return {name = builders.NAMES.inserter, position = grid.position(tile_x, tile_y), direction = direction}
+end
+
+-- A fast inserter: like `inserter`, with a name of its own.
+---@param tile_x number
+---@param tile_y number
+---@param direction? defines.direction
+---@return table  an entity without its number yet (see `blueprint_of`)
+function builders.fast_inserter(tile_x, tile_y, direction)
+  return {name = builders.NAMES.fast_inserter, position = grid.position(tile_x, tile_y), direction = direction}
 end
 
 -- A long-handed inserter: like `inserter`, but it picks up from and drops onto the tile two tiles away.
@@ -155,6 +165,7 @@ function builders.a_catalog(options)
     [names.splitter] = {kind = "belt", width = 2, height = 1, turns = true},
     [names.underground] = {kind = "belt", width = 1, height = 1},
     [names.inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true},
+    [names.fast_inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true},
     [names.long_inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true, reach = 2},
     [names.pole] = {
       kind = "pole", width = 1, height = 1,
@@ -239,6 +250,8 @@ end
 --   belt_speed              the transport belt's speed, default 0.03125;
 --                           `false` makes it an entity without a belt speed
 --   long_inserter_rotation_speed the long-handed inserter's, default 0.02 (72 items a minute)
+--   fast_inserter_rotation_speed the fast inserter's, default 0.04 (144 items a minute);
+--                           `false` makes it an entity that is not an inserter
 --   inserter_rotation_speed the inserter's rotation speed, default 0.014 (the basic
 --                           inserter, 50.4 items a minute); `false` makes it an
 --                           entity that is not an inserter
@@ -257,7 +270,7 @@ end
 -- form {filter = "fuel-category", ["fuel-category"] = name} combined with "or"
 -- (anything else is an error), and an empty list of filters gives every item,
 -- as the worst case of what the game might do.
----@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, underground_distance?: number|false, missing_entities?: string[]}
+---@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, fast_inserter_rotation_speed?: number|false, underground_distance?: number|false, missing_entities?: string[]}
 ---@return table  a stand-in for the game's `prototypes`
 function builders.fake_prototypes(options)
   options = options or {}
@@ -271,6 +284,7 @@ function builders.fake_prototypes(options)
   local belt_speed = option(options.belt_speed, 0.03125)
   local rotation_speed = option(options.inserter_rotation_speed, 0.014)
   local long_rotation_speed = option(options.long_inserter_rotation_speed, 0.02)
+  local fast_rotation_speed = option(options.fast_inserter_rotation_speed, 0.04)
   local underground_distance = option(options.underground_distance, 5)
   local furnace_energy_usage = option(options.furnace_energy_usage, 1500)
   local furnace_effectivity = option(options.furnace_effectivity, 1)
@@ -313,6 +327,7 @@ function builders.fake_prototypes(options)
     ["underground-belt"] = entity("underground-belt", {underground_distance = underground_distance or nil}),
     ["inserter"] = entity("inserter", {rotation_speed = rotation_speed}),
     ["long-handed-inserter"] = entity("long-handed-inserter", {rotation_speed = long_rotation_speed}),
+    ["fast-inserter"] = entity("fast-inserter", {rotation_speed = fast_rotation_speed or nil}),
     ["small-electric-pole"] = entity("small-electric-pole"),
   }
   for name, machine in pairs(options.machines or {}) do

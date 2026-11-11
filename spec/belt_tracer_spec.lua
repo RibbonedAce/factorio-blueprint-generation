@@ -65,6 +65,36 @@ describe("belt tracer", function()
     assert.are.same({}, problems)
   end)
 
+  it("follows a fast inserter on each side like a plain one", function()
+    local entities = all_of(
+      machine("furnace", 0, 0), builders.fast_inserter(2, 0, west), belts_from(3, 0, south, 3),
+      builders.fast_inserter(4, 2, west), machine("assembler", 5, 2))
+
+    local problems = tracer.problems(entities, {machines = MACHINES, raw = {furnace = true}, product = "gear"})
+
+    assert.are.same({}, problems)
+  end)
+
+  it("reports a fast inserter whose belt does not reach it, as for a plain one", function()
+    local entities = all_of(
+      machine("furnace", 0, 0), builders.inserter(2, 0, west), belts_from(3, 0, south, 2),
+      builders.fast_inserter(4, 3, west), machine("assembler", 5, 3), builders.belt(3, 3, south))
+
+    local problems = tracer.problems(entities, {machines = MACHINES, raw = {furnace = true}, product = "gear"})
+
+    assert.are.same({"the input inserter at 4,3 never sees plate"}, problems)
+  end)
+
+  it("takes the name of the fast inserter from its options when it is not the default", function()
+    local entities = all_of(
+      machine("furnace", 0, 0), builders.inserter(2, 0, west), belts_from(3, 0, south, 3),
+      {name = "quick-inserter", position = grid.position(4, 2), direction = west}, machine("assembler", 5, 2))
+
+    local problems = tracer.problems(entities, {machines = MACHINES, raw = {furnace = true}, product = "gear", fast_inserter = "quick-inserter"})
+
+    assert.are.same({}, problems)
+  end)
+
   it("reports an input inserter that never sees something its machine eats", function()
     local entities = furnace_belt_assembler()
     local machines = {furnace = MACHINES.furnace, assembler = {size = 2, eats = {"plate", "gear"}, makes = "gear"}}

@@ -36,7 +36,8 @@
 -- "inserter" unless `options.belt` and `options.inserter` say otherwise; those of the splitter and
 -- the underground belt are "splitter" and "underground-belt" unless `options.splitter` and
 -- `options.underground` say otherwise (an underground belt entity has `type` "input" for its
--- entrance and "output" for its exit). A long-handed inserter
+-- entrance and "output" for its exit). A fast inserter (`options.fast_inserter`, "fast-inserter" by default) is
+-- an inserter like any other for the tracer. A long-handed inserter
 -- (`options.long_inserter`, "long-handed-inserter" by default) picks up from and drops onto the tile
 -- two away, over whatever stands between. The tracer follows it only when it takes from a belt into a
 -- machine; one that puts items on a belt is reported, since the lane rules above are for a belt next to
@@ -659,7 +660,7 @@ function tracer.problems(entities, options)
   note_supplies(index)
   pair_undergrounds(index)
   for _, entity in ipairs(entities) do
-    if entity.name == (options.inserter or "inserter") then
+    if entity.name == (options.inserter or "inserter") or entity.name == (options.fast_inserter or "fast-inserter") then
       classify(index, entity, 1)
     elseif entity.name == (options.long_inserter or "long-handed-inserter") then
       classify(index, entity, 2)

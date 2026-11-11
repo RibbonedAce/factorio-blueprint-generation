@@ -17,6 +17,7 @@ local EPSILON = 1e-9
 -- exactly this many output inserters, so that each fills a different lane (see
 -- layout.lua); the product then travels on both lanes.
 local WINDING_OUTPUT_INSERTERS = 2
+local WINDING_MACHINE_SIZE = 3
 
 -- The input belt of a stage has two lanes, so a stage fed raw items takes at most this
 -- many items from it: its ingredients and its fuel. A stage fed by other stages has two
@@ -152,8 +153,9 @@ end
 
 -- How many inserters of each kind a machine's input side has.
 ---@class bpgen.InputInserters
----@field a integer  plain ones, for belt a
+---@field a integer  for belt a: plain ones, or fast ones when `fast`
 ---@field b integer  long-handed ones, for belt b
+---@field fast? boolean  whether belt a's are fast ones; nil while the split is only being compared with others
 
 -- What one machine eats of each ingredient and makes a minute at full speed.
 ---@param request bpgen.StageRequest
@@ -188,15 +190,43 @@ local function flow_of(inputs, names)
   return total
 end
 
+-- What one inserter of belt a and of the output side moves, as far as the planner counts: a fast one when the game
+-- has them researched (`limits.fast_items_per_minute`), else a plain one. A side that needs it uses fast ones; one that
+-- needs less uses a plain one (see `side_inserters`).
+---@param limits bpgen.InserterLimits
+---@return number
+local function side_rate(limits)
+  return limits.fast_items_per_minute or limits.items_per_minute
+end
+
+-- The inserters a side of a machine needs for `flow` items a minute: one plain inserter when that moves it, else fast
+-- ones, as many as it takes, when the game has them; else plain ones, as many as it takes.
+---@param flow number
+---@param limits bpgen.InserterLimits
+---@return integer count
+---@return boolean fast
+local function side_inserters(flow, limits)
+  if flow <= limits.items_per_minute + EPSILON or not limits.fast_items_per_minute then
+    return inserters_needed(flow, limits.items_per_minute), false
+  end
+  return inserters_needed(flow, limits.fast_items_per_minute), true
+end
+
 -- How much of its full speed a machine can use for what the inserters of its input
 -- side can move: the belt that holds it back the most decides.
+-- Belt a's inserters are fast ones when `counts.fast` says so, plain ones when it says not, and the best the game has
+-- when it says nothing (a split being compared with others).
 ---@param flows {a: number, b: number}  items a minute that each belt brings, at full speed
 ---@param counts bpgen.InputInserters
 ---@param limits bpgen.InserterLimits
 ---@return number
 local function input_fraction(flows, counts, limits)
+  local rate_a = side_rate(limits)
+  if counts.fast ~= nil then
+    rate_a = counts.fast and limits.fast_items_per_minute or limits.items_per_minute
+  end
   return math.min(
-    side_fraction(flows.a, counts.a * limits.items_per_minute),
+    side_fraction(flows.a, counts.a * rate_a),
     side_fraction(flows.b, counts.b * long_rate(limits)))
 end
 
@@ -230,8 +260,10 @@ end
 ---@param share number
 ---@return bpgen.InputInserters
 local function trimmed_counts(counts, flows, limits, share)
+  local needed, fast = side_inserters(share * flows.a, limits)
   return {
-    a = math.min(counts.a, inserters_needed(share * flows.a, limits.items_per_minute)),
+    a = math.min(counts.a, needed),
+    fast = fast,
     b = counts.b == 0 and 0 or math.min(counts.b, inserters_needed(share * flows.b, long_rate(limits))),
   }
 end
@@ -239,9 +271,27 @@ end
 ---@class bpgen.MachineRates  what ONE machine does each minute, once its inserters are counted
 ---@field output number  items of the product it makes
 ---@field inputs bpgen.PlanInput[]  what it eats, per ingredient, in the recipe's order
----@field input_inserters integer  plain inserters on its input side, for belt a
+---@field input_inserters integer  inserters on its input side, for belt a
+---@field input_fast boolean  whether those are fast inserters
 ---@field long_inserters integer  long-handed inserters on its input side, for belt b
 ---@field output_inserters integer  on its output side
+---@field output_fast boolean  whether those are fast inserters
+
+-- The inserters of a machine that runs at `fraction` of its full speed: what each side needs for the flow it then has.
+---@param flows {a: number, b: number}
+---@param output number  what it makes at full speed
+---@param fraction number
+---@param limits bpgen.InserterLimits
+---@param has_b boolean
+---@return {input: integer, input_fast: boolean, long: integer, output: integer, output_fast: boolean}
+local function inserters_for(flows, output, fraction, limits, has_b)
+  local input, input_fast = side_inserters(flows.a * fraction, limits)
+  local output_count, output_fast = side_inserters(output * fraction, limits)
+  return {
+    input = input, input_fast = input_fast, long = has_b and inserters_needed(flows.b * fraction, long_rate(limits)) or 0,
+    output = output_count, output_fast = output_fast,
+  }
+end
 
 -- What ONE machine does each minute. When the inserters cannot keep up with it at
 -- full speed, it simply waits for items, so every number shrinks by the same
@@ -259,7 +309,7 @@ local function rates_per_machine(request, belts, partial)
   local limits = request.inserters
   local has_b = #belts.b > 0
   local flows = {a = flow_of(inputs, belts.a), b = flow_of(inputs, belts.b)}
-  local fraction, counts, output_inserters = 1, {a = 1, b = has_b and 1 or 0}, 1
+  local fraction, counts = 1, {input = 1, input_fast = false, long = has_b and 1 or 0, output = 1, output_fast = false}
   if limits then
     local allotted = allotted_counts(flows, limits, has_b)
     if not allotted then
@@ -271,13 +321,10 @@ local function rates_per_machine(request, belts, partial)
       share = partial.share,
     } or {flows = flows, output = output, share = 1}
     local movable = trimmed_counts(allotted, reference.flows, limits, reference.share)
-    local movable_out = math.min(limits.max_output, inserters_needed(reference.share * reference.output, limits.items_per_minute))
-    fraction = math.min(input_fraction(flows, movable, limits), side_fraction(output, movable_out * limits.items_per_minute))
-    counts = {
-      a = inserters_needed(flows.a * fraction, limits.items_per_minute),
-      b = has_b and inserters_needed(flows.b * fraction, long_rate(limits)) or 0,
-    }
-    output_inserters = inserters_needed(output * fraction, limits.items_per_minute)
+    local needed_out, out_fast = side_inserters(reference.share * reference.output, limits)
+    local out_rate = out_fast and limits.fast_items_per_minute or limits.items_per_minute
+    fraction = math.min(input_fraction(flows, movable, limits), side_fraction(output, math.min(limits.max_output, needed_out) * out_rate))
+    counts = inserters_for(flows, output, fraction, limits, has_b)
   end
   for _, input in ipairs(inputs) do
     input.per_minute = input.per_minute * fraction
@@ -285,9 +332,11 @@ local function rates_per_machine(request, belts, partial)
   return {
     output = output * fraction,
     inputs = inputs,
-    input_inserters = counts.a,
-    long_inserters = counts.b,
-    output_inserters = output_inserters,
+    input_inserters = counts.input,
+    input_fast = counts.input_fast,
+    long_inserters = counts.long,
+    output_inserters = counts.output,
+    output_fast = counts.output_fast,
   }
 end
 
@@ -299,6 +348,42 @@ local function whole_machines(machines_worth)
   return math.max(1, math.ceil(machines_worth - EPSILON))
 end
 
+-- Whether the sides of the machines leave room for a winding belt: they are 3x3 and neither side is full. Not knowing
+-- the size (`limits.machine_size` nil) leaves the question open and says yes.
+---@param limits bpgen.InserterLimits
+---@param rates bpgen.MachineRates
+---@return boolean
+local function room_for_winding(limits, rates)
+  local size = limits.machine_size
+  if size == nil then
+    return true
+  end
+  return size == WINDING_MACHINE_SIZE and math.max(rates.input_inserters + rates.long_inserters, rates.output_inserters) < size
+end
+
+-- How the output belt of the stage takes the product of its machines (see layout.lua), as "double" when it winds so
+-- that the two output inserters of a machine fill a lane each, "paired" when it winds so that machines side by side, each
+-- with one fast output inserter, fill a lane each, and nil when it is a plain belt with the product on one lane. Only the
+-- root stage's belt winds, and only on a 3x3 machine whose sides are not full: a full side takes a row of poles between the
+-- machines (a machine fits a pole when an inserter does not take every tile beside it), and a winding belt has no room for
+-- that. `limits.machine_size` is nil when the caller does not say, which leaves out the size and the rows of poles, and
+-- the paired belt.
+---@param stage bpgen.StageContext
+---@return "double"|"paired"|nil
+local function output_winding(stage)
+  local limits, rates = stage.request.inserters, stage.per_machine
+  if not (stage.winds and limits and room_for_winding(limits, rates)) then
+    return nil
+  end
+  if rates.output_inserters == WINDING_OUTPUT_INSERTERS then
+    return "double"
+  end
+  if limits.machine_size ~= nil and rates.output_inserters == 1 and rates.output_fast then
+    return "paired"
+  end
+  return nil
+end
+
 -- How many machines' worth of product the output belt can take. With one output
 -- inserter per machine the product is on one lane, which carries all of it. With
 -- two, the winding belt (only the last stage's output belt winds) gives each
@@ -306,13 +391,21 @@ end
 -- everything one inserter moves from every machine. (That is also why the two
 -- lanes together never overfill: no machine makes more than two inserters move.)
 -- An output belt that does not wind carries everything on its one lane, whatever
--- the inserters.
+-- the inserters. With the paired winding belt every machine has one inserter, which
+-- fills one lane, and machines alternate lanes (outer, inner, inner, outer, ...): a lane
+-- gets half the machines, and one more at most. So the belt carries twice the machines'
+-- worth of one lane, less that one (and never less than a plain belt does).
 ---@param stage bpgen.StageContext
 ---@return number
 local function output_machines_worth(stage)
   local lane_flow_per_machine = stage.per_machine.output
-  if stage.winds and stage.per_machine.output_inserters == WINDING_OUTPUT_INSERTERS and stage.request.inserters then
-    lane_flow_per_machine = stage.request.inserters.items_per_minute
+  local winding = output_winding(stage)
+  if winding == "double" then
+    local limits = stage.request.inserters --[[@as bpgen.InserterLimits]] -- a belt only winds when there are limits
+    lane_flow_per_machine = stage.per_machine.output_fast and limits.fast_items_per_minute or limits.items_per_minute
+  elseif winding == "paired" then
+    local one_lane = stage.lane_items_per_minute / lane_flow_per_machine
+    return math.max(one_lane, 2 * one_lane - 1)
   end
   return stage.lane_items_per_minute / lane_flow_per_machine
 end
@@ -649,8 +742,10 @@ local function stage_plan(stage, machines, load, rates, output)
     lanes = stage.lanes,
     belts = stage.belts,
     input_inserters = rates.input_inserters,
+    input_fast = rates.input_fast,
     long_inserters = rates.long_inserters,
     output_inserters = rates.output_inserters,
+    output_fast = rates.output_fast,
   }
 end
 
