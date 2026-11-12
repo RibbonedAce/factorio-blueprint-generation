@@ -2059,4 +2059,101 @@ describe("generator", function()
       end)
     end
   end)
+
+  describe("the medium electric pole, built with once the force has unlocked it", function()
+    -- 60 gears a minute are 7 furnaces and an assembler: the poles beside them are what changes.
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+    local function gear_game(options)
+      options = options or {}
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
+        missing_entities = options.missing_entities,
+        medium_pole_supply_distance = options.medium_pole_supply_distance,
+        medium_pole_wire_distance = options.medium_pole_wire_distance,
+      }
+    end
+
+    it("builds with 8 medium poles, where small poles take 10, and no small pole", function()
+      _G.prototypes = gear_game()
+
+      local result = generator.generate("iron-gear-wheel", 60, fake_force{})
+
+      assert.are.same({8, 0}, {count_named(result.entities, "medium-electric-pole"), count_named(result.entities, "small-electric-pole")})
+    end)
+
+    it("builds a blueprint that passes the validator, every inserter, machine and lamp powered and the poles wired", function()
+      _G.prototypes = gear_game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("iron-gear-wheel", 200, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("takes how far the pole powers from the game: a medium pole that powers 2.5 tiles takes the 10 poles of a small one", function()
+      _G.prototypes = gear_game({medium_pole_supply_distance = 2.5, medium_pole_wire_distance = 7.5})
+
+      local result = generator.generate("iron-gear-wheel", 60, fake_force{})
+
+      assert.are.equal(10, count_named(result.entities, "medium-electric-pole"))
+    end)
+
+    it("puts the lamps by the supply distance the game gives for the medium pole: a game that says 2.5 gets other lamps", function()
+      local function lamp_tiles(entities)
+        local tiles = {}
+        for _, entity in ipairs(entities) do
+          if entity.name == "small-lamp" then
+            local tile = grid.top_left_tile(entity.position)
+            tiles[#tiles + 1] = tile.x .. "," .. tile.y
+          end
+        end
+        return tiles
+      end
+      _G.prototypes = gear_game()
+      local powering_3_5 = generator.generate("iron-gear-wheel", 200, fake_force{})
+      _G.prototypes = gear_game({medium_pole_supply_distance = 2.5, medium_pole_wire_distance = 9})
+
+      local powering_2_5 = generator.generate("iron-gear-wheel", 200, fake_force{})
+
+      assert.are_not.same(lamp_tiles(powering_3_5.entities), lamp_tiles(powering_2_5.entities))
+    end)
+
+    -- The poles of the blueprint of 60 gears when the medium pole is not used: 10 with the force's design (the band of the
+    -- one-belt design is what a force that has the splitter and the underground belt gets), 12 in the original design.
+    local small_only = {
+      {label = "no force is given, so nothing is known to be unlocked", force = nil, poles = 12},
+      {label = "the force has not unlocked the medium pole", force = fake_force{locked = {"medium-electric-pole"}}, poles = 10},
+      {label = "the force does not know the recipe of the medium pole", force = fake_force{absent = {"medium-electric-pole"}}, poles = 10},
+      {label = "the game has no medium pole", force = fake_force{}, game = {missing_entities = {"medium-electric-pole"}}, poles = 10},
+    }
+
+    for _, case in ipairs(small_only) do
+      it("builds with the small pole when " .. case.label, function()
+        _G.prototypes = gear_game(case.game)
+
+        local result = generator.generate("iron-gear-wheel", 60, case.force)
+
+        assert.are.same({0, case.poles}, {count_named(result.entities, "medium-electric-pole"), count_named(result.entities, "small-electric-pole")})
+      end)
+    end
+
+    it("stops with a message when the game does not say how far the medium pole powers", function()
+      _G.prototypes = gear_game({medium_pole_supply_distance = false})
+
+      assert.has_error(function() generator.generate("iron-gear-wheel", 60, fake_force{}) end,
+        "generator: the game does not give the supply area distance of medium-electric-pole")
+    end)
+
+    it("stops with a message when the game gives the medium pole no wire", function()
+      _G.prototypes = gear_game({medium_pole_wire_distance = false})
+
+      assert.has_error(function() generator.generate("iron-gear-wheel", 60, fake_force{}) end,
+        "generator: the game does not give the wire distance of medium-electric-pole")
+    end)
+  end)
 end)

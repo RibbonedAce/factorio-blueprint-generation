@@ -9,6 +9,8 @@ local poles = require("scripts.poles")
 
 local NAMES = builders.NAMES
 local CONNECTOR = defines.wire_connector_id.pole_copper
+local SMALL_WIRE = NAMES.pole_wire_distance -- 7.5: poles are put at most 7 apart
+local MEDIUM_WIRE = builders.POLES.medium.wire_distance -- 9: poles are put at most 8.5 apart
 
 -- A pole with the number it has in the blueprint.
 local function pole_at(number, tile_x, tile_y)
@@ -17,9 +19,10 @@ local function pole_at(number, tile_x, tile_y)
   return pole
 end
 
--- The bridge for a blueprint that has these poles: bridge poles are added to the same list.
-local function bridge_for(entities, taken)
-  return {entities = entities, taken = taken or {}, pole = NAMES.pole}
+-- The bridge for a blueprint that has these poles, whose wire holds `wire_distance` tiles: bridge poles are added to the
+-- same list.
+local function bridge_for(entities, wire_distance, taken)
+  return {entities = entities, taken = taken or {}, pole = NAMES.pole, wire_distance = wire_distance}
 end
 
 describe("poles", function()
@@ -108,7 +111,7 @@ describe("poles", function()
       local west, east = pole_at(1, 0, 0), pole_at(2, 7, 0)
       local entities = {west, east}
 
-      poles.join({{west}, {east}}, bridge_for(entities))
+      poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE))
 
       assert.are.equal(2, #entities)
     end)
@@ -117,7 +120,7 @@ describe("poles", function()
       local west, east = pole_at(1, 0, 0), pole_at(2, 8, 0)
       local entities = {west, east}
 
-      poles.join({{west}, {east}}, bridge_for(entities))
+      poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE))
 
       assert.are.same({x = 7.5, y = 0.5}, entities[3].position)
     end)
@@ -126,7 +129,7 @@ describe("poles", function()
       local west, east = pole_at(1, 0, 0), pole_at(2, 14, 0)
       local entities = {west, east}
 
-      poles.join({{west}, {east}}, bridge_for(entities))
+      poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE))
 
       assert.are.same({NAMES.pole, 3}, {entities[3].name, entities[3].entity_number})
     end)
@@ -135,7 +138,7 @@ describe("poles", function()
       local west, east = pole_at(1, 0, 0), pole_at(2, 14, 0)
       local entities = {west, east}
 
-      poles.join({{west}, {east}}, bridge_for(entities))
+      poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE))
 
       assert.are.same({{{1, CONNECTOR, 3, CONNECTOR}}, {{3, CONNECTOR, 2, CONNECTOR}}}, {west.wires, entities[3].wires})
     end)
@@ -144,7 +147,7 @@ describe("poles", function()
       local west, east = pole_at(1, 0, 0), pole_at(2, 14, 0)
       local entities = {west, east}
 
-      poles.join({{west}, {east}}, bridge_for(entities, {["7,0"] = true})) -- the tile it would have used
+      poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE, {["7,0"] = true})) -- the tile it would have used
 
       assert.are.same({{x = 6.5, y = 0.5}, {x = 13.5, y = 0.5}}, {entities[3].position, entities[4].position})
     end)
@@ -153,7 +156,7 @@ describe("poles", function()
       local west, east = pole_at(1, 0, 0), pole_at(2, 21, 0)
       local entities = {west, east}
 
-      poles.join({{west}, {east}}, bridge_for(entities))
+      poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE))
 
       assert.are.same({{x = 7.5, y = 0.5}, {x = 14.5, y = 0.5}}, {entities[3].position, entities[4].position})
     end)
@@ -162,9 +165,27 @@ describe("poles", function()
       local west, east = pole_at(1, 0, 0), pole_at(2, 14, 0)
       local taken = {}
 
-      poles.join({{west}, {east}}, bridge_for({west, east}, taken))
+      poles.join({{west}, {east}}, bridge_for({west, east}, SMALL_WIRE, taken))
 
       assert.is_true(taken["7,0"])
+    end)
+
+    it("wires medium poles that are 8 tiles apart without a pole between, which a small pole's wire would not hold", function()
+      local west, east = pole_at(1, 0, 0), pole_at(2, 8, 0)
+      local entities = {west, east}
+
+      poles.join({{west}, {east}}, bridge_for(entities, MEDIUM_WIRE))
+
+      assert.are.equal(2, #entities)
+    end)
+
+    it("puts a pole as far toward the other pole as a medium pole's wire reaches, 8 tiles of the 9 it holds", function()
+      local west, east = pole_at(1, 0, 0), pole_at(2, 10, 0)
+      local entities = {west, east}
+
+      poles.join({{west}, {east}}, bridge_for(entities, MEDIUM_WIRE))
+
+      assert.are.same({x = 8.5, y = 0.5}, entities[3].position)
     end)
 
     it("gives up, saying so, when no free tile within reach is nearer to the other pole", function()
@@ -176,7 +197,7 @@ describe("poles", function()
         end
       end
 
-      assert.has_error(function() poles.join({{west}, {east}}, bridge_for({west, east}, taken)) end, "poles: no room for a pole between two poles")
+      assert.has_error(function() poles.join({{west}, {east}}, bridge_for({west, east}, SMALL_WIRE, taken)) end, "poles: no room for a pole between two poles")
     end)
   end)
 

@@ -7,7 +7,7 @@
 -- once and hands that value to whoever asked for it.
 
 ---@class bpgen.Config
----@field entities {belt: string, inserter: string, long_inserter: string, fast_inserter: string, pole: string, splitter: string, underground_belt: string}
+---@field entities {belt: string, inserter: string, long_inserter: string, fast_inserter: string, pole: string, medium_pole: string, lamp: string, splitter: string, underground_belt: string}
 ---@field products table<string, true>  the items a player may ask for, by name
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
 ---@field default_product string  the item the window starts with; must be a key of `products`
@@ -21,6 +21,7 @@ local config = {
     long_inserter = "long-handed-inserter", -- for a second input belt (recipes with three or four ingredients)
     fast_inserter = "fast-inserter", -- for a machine whose side needs more than one plain inserter moves, once researched
     pole = "small-electric-pole",
+    medium_pole = "medium-electric-pole", -- the pole of every blueprint once researched: it powers a 7 x 7 area and reaches 9 tiles (see scripts/layout.lua)
     lamp = "small-lamp", -- the lights of the blueprint, once researched (see scripts/lights.lua)
     -- For the input design that brings in one belt of each material: the blueprint divides and
     -- merges the belts itself, so both have to be researched (see scripts/inputs.lua).

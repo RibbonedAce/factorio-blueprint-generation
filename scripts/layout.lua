@@ -22,7 +22,8 @@
 -- height, so the products can carry on downstream. Inserters move the input
 -- from the belt into the machine, and the product from the machine onto the
 -- output belt. A machine may need several inserters on a side, one under the
--- next. Small poles supply the inserters and the machine and are wired together.
+-- next. Poles supply the inserters and the machine and are wired together: the medium electric pole once it is
+-- unlocked, else the small one (see `generator.lua`); the game says how far each powers (`layout.pole_reach`).
 --
 -- The machines go in twos: the inserters of the first machine of a pair (the first, third, ... machine) stand in its
 -- top rows, those of the second (the second, fourth, ...) in its bottom rows, as drawn above, so that the second
@@ -35,7 +36,7 @@
 -- While a side has a free tile beside the machine (fewer inserters than rows), the poles go there: under the
 -- inserters of a machine whose inserters are in its top rows, above those of one whose inserters are in its bottom
 -- rows. The machines go from the top down, each with a pole unless a pole above it reaches its inserters, which a
--- small pole does for two rows each way (see `Builder:side_pole_plan`). When a side is full, no tile is free, so the
+-- small pole does for two rows each way and a medium pole for three (see `Builder:side_pole_plan`). When a side is full, no tile is free, so the
 -- machines are separated by a row of poles instead (a "pole row"), with one more
 -- row of poles above the first machine and below the last. A 3x3 machine with
 -- three inserters in, two out, drawn the same way:
@@ -120,14 +121,22 @@ local INPUT_INSERTER_OFFSET = 1
 local MACHINE_OFFSET = 2
 
 local LENGTH_TOLERANCE = 1e-9  -- two lengths this close (relative) are equal
-local POLE_REACH = 2  -- a small pole powers the inserters up to two rows above and below it
 
 -- The output belt winds (see the diagram above) for machines of this size with this many output inserters.
 local WINDING_MACHINE_SIZE = 3
 local WINDING_OUTPUT_INSERTERS = 2
 
--- Machines of these sizes (in tiles) can be powered by small poles placed as described above.
+-- Machines of these sizes (in tiles) can be powered by poles placed as described above.
 local SUPPORTED_MACHINE_SIZES = {[2] = true, [3] = true}
+
+-- How many tiles away from its own, along a row or a column, a pole powers. An entity is powered when the supply area
+-- covers part of it, so the supply distance 2.5 of a small pole reaches the tiles up to 2 away, the 3.5 of a medium
+-- pole up to 3.
+---@param supply_distance number  how far from its centre the pole powers, in tiles
+---@return integer
+function layout.pole_reach(supply_distance)
+  return math.ceil(supply_distance - 0.5)
+end
 
 -- The most inserters the input side of a machine gets, plain and long-handed together:
 -- one fewer than the machine is tall, so one tile beside the machine stays free for a
@@ -260,6 +269,7 @@ end
 ---@field entities bpgen.Entity[]  the blueprint so far
 ---@field geometry bpgen.Geometry
 ---@field names bpgen.Names
+---@field pole_reach integer  how many rows above and below itself a pole powers (see `layout.pole_reach`)
 ---@field machine_count integer
 ---@field poles bpgen.Poles
 ---@field draws_input_belt boolean  false when the previous column's output belt is this one's input belt
@@ -284,6 +294,7 @@ function Builder.new(machine_count, names, shape, entities, place)
     entities = entities,
     geometry = geometry_of(shape, place, machine_count),
     names = names,
+    pole_reach = layout.pole_reach(assert(names.pole_supply_distance, "layout: the names give no supply distance for the pole")),
     machine_count = machine_count,
     poles = {input = {}, output = {}},
     draws_input_belt = place.draws_input_belt,
@@ -602,9 +613,10 @@ function Builder:add_pole(side, row)
 end
 
 -- Which machines get a pole on one side, and where, for `count` inserters on the side: the machines from the top down,
--- each unless a pole above it reaches its inserters (a small pole powers two tiles each way). A machine whose inserters
--- are in its top rows has its pole in the free tile under them, one whose inserters are in its bottom rows in the free
--- tile above them.
+-- each unless a pole above it reaches its inserters (a pole powers `pole_reach` tiles each way: two for a small pole,
+-- three for a medium one, which so powers the inserters of two machines of a pair with one pole). A machine whose
+-- inserters are in its top rows has its pole in the free tile under them, one whose inserters are in its bottom rows
+-- in the free tile above them.
 ---@param count integer
 ---@return table<integer, integer>  the tile row of the pole of each machine that has one, by machine number from 0
 function Builder:side_pole_plan(count)
@@ -614,7 +626,7 @@ function Builder:side_pole_plan(count)
     if first + count - 1 > reach then
       local row = index % 2 == 1 and first - 1 or first + count
       plan[index] = row
-      reach = row + POLE_REACH
+      reach = row + self.pole_reach
     end
   end
   return plan
@@ -779,6 +791,7 @@ local function columns_of(stages, names, entities, options)
     local stage_names = {
       machine = stage.machine, recipe = stage.recipe, belt = names.belt, inserter = names.inserter,
       long_inserter = names.long_inserter, fast_inserter = names.fast_inserter, pole = names.pole,
+      pole_supply_distance = names.pole_supply_distance, pole_wire_distance = names.pole_wire_distance,
     }
     local place = place_of(stage, index, #stages, origin, first_row, options)
     local builder = Builder.new(stage.machine_count, stage_names, stage.shape, entities, place)

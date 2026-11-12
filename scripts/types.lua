@@ -7,10 +7,12 @@
 -- The `bpgen.` prefix keeps our names apart from Factorio's own types (for
 -- example its `BlueprintEntity`), which the Factorio Modding Toolkit supplies.
 
----@class bpgen.SharedNames  prototype names every column of the layout builds with
+---@class bpgen.SharedNames  prototype names every column of the layout builds with, and the numbers of its pole
 ---@field belt string
 ---@field inserter string
----@field pole string
+---@field pole string  the pole of the blueprint: the medium electric pole once the force has unlocked it, else the small one
+---@field pole_supply_distance number  how far from its centre that pole powers, in tiles, as the game says (2.5 for a small pole, 3.5 for a medium one)
+---@field pole_wire_distance number  the longest wire that pole holds, in tiles, as the game says (7.5 for a small pole, 9 for a medium one)
 ---@field long_inserter? string  the long-handed inserter, for a machine that takes from a second input belt
 ---@field fast_inserter? string  the fast inserter, for a machine whose side needs more than one plain inserter moves
 ---@field splitter? string  the splitter, for the input design that brings in one belt of each material
@@ -226,11 +228,12 @@
 ---@field item string
 
 -- What `scripts/poles.lua` needs to put poles between two that are further apart than a wire reaches: the blueprint's
--- entities to add them to, which tiles are taken, and the pole's name.
+-- entities to add them to, which tiles are taken, and the pole's name and wire.
 ---@class bpgen.PoleBridge
 ---@field entities bpgen.Entity[]  the poles are added after the ones there, numbered
 ---@field taken table<string, true>  the tiles that hold something, by "x,y" (see `poles.taken_tiles`)
 ---@field pole string  prototype name of the pole
+---@field wire_distance number  the longest wire the pole holds, in tiles (see `bpgen.SharedNames.pole_wire_distance`)
 
 -- A chain or the column of a raw item, as `scripts/feeds.lua` sees it.
 ---@class bpgen.FeedLeaf

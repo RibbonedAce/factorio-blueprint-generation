@@ -10,7 +10,16 @@ local grid = require("scripts.grid")
 
 local builders = {}
 
--- The prototype names the layout is given. They are labels here, nothing more.
+-- The two poles a blueprint may be built with, as the base game has them: the name, how far from its centre the pole
+-- powers and how long a wire it holds, in tiles. The generator takes the medium pole instead of the small one when it is
+-- unlocked.
+---@type table<"small"|"medium", {name: string, supply_distance: number, wire_distance: number}>
+builders.POLES = {
+  small = {name = "small-electric-pole", supply_distance = 2.5, wire_distance = 7.5},
+  medium = {name = "medium-electric-pole", supply_distance = 3.5, wire_distance = 9},
+}
+
+-- The prototype names the layout is given, with the small pole. They are labels here, nothing more.
 ---@type bpgen.Names
 builders.NAMES = {
   machine = "stone-furnace",
@@ -18,11 +27,26 @@ builders.NAMES = {
   inserter = "inserter",
   long_inserter = "long-handed-inserter",
   fast_inserter = "fast-inserter",
-  pole = "small-electric-pole",
+  pole = builders.POLES.small.name,
+  pole_supply_distance = builders.POLES.small.supply_distance,
+  pole_wire_distance = builders.POLES.small.wire_distance,
   lamp = "small-lamp",
   splitter = "splitter",
   underground = "underground-belt",
 }
+
+-- `NAMES` with the medium electric pole in place of the small one.
+---@return bpgen.Names
+function builders.medium_pole_names()
+  local names = {}
+  for key, value in pairs(builders.NAMES) do
+    names[key] = value
+  end
+  names.pole = builders.POLES.medium.name
+  names.pole_supply_distance = builders.POLES.medium.supply_distance
+  names.pole_wire_distance = builders.POLES.medium.wire_distance
+  return names
+end
 
 -- `{name = "iron-ore", amount = 1}` written as `amount_of(1, "iron-ore")`.
 ---@param amount number
@@ -147,11 +171,13 @@ end
 --------------------------------------------------------------------------------
 
 -- Options (all optional):
---   pole_supply_radius   default 2.5
---   pole_wire_reach      default 7.5
+--   pole_supply_radius   of the small pole, default 2.5
+--   pole_wire_reach      of the small pole, default 7.5
+--   medium_pole_supply_radius  of the medium pole, default 3.5
+--   medium_pole_wire_reach     of the medium pole, default 9
 --   machine_needs_power  default false
 --   machine_size         tiles wide and tall, default 2
----@param options? {pole_supply_radius?: number, pole_wire_reach?: number, machine_needs_power?: boolean, machine_size?: integer}
+---@param options? {pole_supply_radius?: number, pole_wire_reach?: number, medium_pole_supply_radius?: number, medium_pole_wire_reach?: number, machine_needs_power?: boolean, machine_size?: integer}
 ---@return table<string, bpgen.CatalogEntry>
 function builders.a_catalog(options)
   options = options or {}
@@ -168,10 +194,15 @@ function builders.a_catalog(options)
     [names.inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true},
     [names.fast_inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true},
     [names.long_inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true, reach = 2},
-    [names.pole] = {
+    [builders.POLES.small.name] = {
       kind = "pole", width = 1, height = 1,
-      supply_radius = options.pole_supply_radius or 2.5,
-      wire_reach = options.pole_wire_reach or 7.5,
+      supply_radius = options.pole_supply_radius or builders.POLES.small.supply_distance,
+      wire_reach = options.pole_wire_reach or builders.POLES.small.wire_distance,
+    },
+    [builders.POLES.medium.name] = {
+      kind = "pole", width = 1, height = 1,
+      supply_radius = options.medium_pole_supply_radius or builders.POLES.medium.supply_distance,
+      wire_reach = options.medium_pole_wire_reach or builders.POLES.medium.wire_distance,
     },
     [names.lamp] = {kind = "lamp", width = 1, height = 1, needs_power = true},
   }
@@ -259,20 +290,24 @@ end
 --                           entity that is not an inserter
 --   underground_distance    the most tiles the underground belt spans, default 5 (the basic one);
 --                           `false` makes it an entity without that field
+--   small_pole_supply_distance, medium_pole_supply_distance  how far the small and the medium electric pole
+--                           power, default 2.5 and 3.5; `false` makes the game not say
+--   small_pole_wire_distance, medium_pole_wire_distance  how long a wire they hold, default 7.5 and 9;
+--                           `false` makes it an entity that holds none (0)
 --   missing_entities        names of buildings the game does not have, default none
 --   furnace_energy_usage    what the stone furnace uses while it crafts, in joules per tick; default 1500 (90 kW);
 --                           `false` makes the game not say
 --   furnace_effectivity     the share of the fuel's energy the stone furnace uses, default 1
 --   coal_fuel_value         the energy of one coal in joules, default 4000000 (4 MJ)
--- The buildings the layout uses (furnace, belt, inserter, pole, and the splitter and the
--- underground belt of the input design that brings in one belt of each material) exist unless
--- listed as missing. Every item a recipe mentions exists, and so does coal, the
+-- The buildings the layout uses (furnace, belt, inserter, pole, the medium pole that a force that
+-- has unlocked it gets instead, and the splitter and the underground belt of the input design that
+-- brings in one belt of each material) exist unless listed as missing. Every item a recipe mentions exists, and so does coal, the
 -- fuel, in the fuel category "chemical". The stone furnace burns "chemical".
 -- `get_item_filtered` understands only what the generator needs, filters of the
 -- form {filter = "fuel-category", ["fuel-category"] = name} combined with "or"
 -- (anything else is an error), and an empty list of filters gives every item,
 -- as the worst case of what the game might do.
----@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, fast_inserter_rotation_speed?: number|false, underground_distance?: number|false, missing_entities?: string[]}
+---@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, fast_inserter_rotation_speed?: number|false, underground_distance?: number|false, small_pole_supply_distance?: number|false, small_pole_wire_distance?: number|false, medium_pole_supply_distance?: number|false, medium_pole_wire_distance?: number|false, missing_entities?: string[]}
 ---@return table  a stand-in for the game's `prototypes`
 function builders.fake_prototypes(options)
   options = options or {}
@@ -288,6 +323,10 @@ function builders.fake_prototypes(options)
   local long_rotation_speed = option(options.long_inserter_rotation_speed, 0.02)
   local fast_rotation_speed = option(options.fast_inserter_rotation_speed, 0.04)
   local underground_distance = option(options.underground_distance, 5)
+  local small_supply_distance = option(options.small_pole_supply_distance, builders.POLES.small.supply_distance)
+  local small_wire_distance = option(options.small_pole_wire_distance, builders.POLES.small.wire_distance)
+  local medium_supply_distance = option(options.medium_pole_supply_distance, builders.POLES.medium.supply_distance)
+  local medium_wire_distance = option(options.medium_pole_wire_distance, builders.POLES.medium.wire_distance)
   local furnace_energy_usage = option(options.furnace_energy_usage, 1500)
   local furnace_effectivity = option(options.furnace_effectivity, 1)
   local coal_fuel_value = option(options.coal_fuel_value, 4000000)
@@ -313,6 +352,7 @@ function builders.fake_prototypes(options)
       belt_speed = fields.belt_speed or nil,
       max_underground_distance = fields.underground_distance or nil,
       get_supply_area_distance = function() return fields.supply_area_distance or nil end,
+      get_max_wire_distance = function() return fields.max_wire_distance or 0 end,
       tile_width = fields.width or 1,
       tile_height = fields.height or 1,
       burner_prototype = burner and {fuel_categories = as_set(burner), effectivity = fields.effectivity or 1} or nil,
@@ -331,7 +371,12 @@ function builders.fake_prototypes(options)
     ["inserter"] = entity("inserter", {rotation_speed = rotation_speed}),
     ["long-handed-inserter"] = entity("long-handed-inserter", {rotation_speed = long_rotation_speed}),
     ["fast-inserter"] = entity("fast-inserter", {rotation_speed = fast_rotation_speed or nil}),
-    ["small-electric-pole"] = entity("small-electric-pole", {supply_area_distance = 2.5}),
+    [builders.POLES.small.name] = entity(builders.POLES.small.name, {
+      supply_area_distance = small_supply_distance or nil, max_wire_distance = small_wire_distance or nil,
+    }),
+    [builders.POLES.medium.name] = entity(builders.POLES.medium.name, {
+      supply_area_distance = medium_supply_distance or nil, max_wire_distance = medium_wire_distance or nil,
+    }),
     ["small-lamp"] = entity("small-lamp"),
   }
   for name, machine in pairs(options.machines or {}) do

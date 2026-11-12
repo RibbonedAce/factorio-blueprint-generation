@@ -36,15 +36,48 @@ local function read_recipe(prototype)
   return recipe
 end
 
--- The building blocks every column of the blueprint shares.
+-- Whether the force can build a building: it has unlocked the recipe, which the game names like the
+-- building, and the building exists.
+---@param force LuaForce
+---@param name string
+---@return boolean
+local function can_build(force, name)
+  local recipe = force.recipes[name]
+  return recipe ~= nil and recipe.enabled and prototypes.entity[name] ~= nil
+end
+
+-- The pole the blueprint is built with: the medium electric pole once the force has unlocked it (nothing is known
+-- without a force) and the game has it, else the small one, which every blueprint can count on.
+---@param force LuaForce|nil
+---@return string
+local function pole_name(force)
+  if force and can_build(force, config.entities.medium_pole) then
+    return config.entities.medium_pole
+  end
+  return config.entities.pole
+end
+
+-- The building blocks every column of the blueprint shares, but for the numbers of the pole (see `add_pole_distances`).
+---@param force LuaForce|nil  whose research decides the pole
 ---@return bpgen.SharedNames
-local function shared_names()
+local function shared_names(force)
   return {
     belt = config.entities.belt, inserter = config.entities.inserter,
-    long_inserter = config.entities.long_inserter, fast_inserter = config.entities.fast_inserter, pole = config.entities.pole,
+    long_inserter = config.entities.long_inserter, fast_inserter = config.entities.fast_inserter, pole = pole_name(force),
     lamp = config.entities.lamp,
     splitter = config.entities.splitter, underground = config.entities.underground_belt,
   }
+end
+
+-- Tells the names how far their pole powers and how long a wire it holds, as the game says. A game that does not say is
+-- a bug, not a case to fall back from: it stops with a message.
+---@param names bpgen.SharedNames  whose pole exists
+local function add_pole_distances(names)
+  local prototype = prototypes.entity[names.pole]
+  names.pole_supply_distance = assert(prototype.get_supply_area_distance(), "generator: the game does not give the supply area distance of " .. names.pole)
+  local wire_distance = prototype.get_max_wire_distance()
+  assert(wire_distance and wire_distance > 0, "generator: the game does not give the wire distance of " .. names.pole) -- 0 for an entity that holds no wire
+  names.pole_wire_distance = wire_distance
 end
 
 -- Whether the buildings that every blueprint needs exist. The long-handed inserter is
@@ -254,16 +287,6 @@ end
 ---@field lamp_supply_distance? number  how far a pole powers, when the blueprint gets lamps (the force has unlocked the small lamp); nil: no lamps
 ---@field inputs? bpgen.InputOptions  asks for the design that brings in one belt of each material (see scripts/inputs.lua); nil for the original design, a belt of raw items for every chain
 
--- Whether the force can build a building: it has unlocked the recipe, which the game names like the
--- building, and the building exists.
----@param force LuaForce
----@param name string
----@return boolean
-local function can_build(force, name)
-  local recipe = force.recipes[name]
-  return recipe ~= nil and recipe.enabled and prototypes.entity[name] ~= nil
-end
-
 -- The rotation speed of the fast inserter when the blueprint may use it: the force has unlocked its recipe (nothing is
 -- known without a force) and the game has the building and says how fast it swings. Nil otherwise: the blueprint then
 -- takes plain inserters only, as it always did.
@@ -277,18 +300,17 @@ local function fast_rotation_speed(names, force)
   return prototypes.entity[names.fast_inserter].get_inserter_rotation_speed()
 end
 
--- How far a pole powers (2.5 tiles for a small pole) if the blueprint gets lamps: the force has unlocked the small
+-- How far the pole powers (2.5 tiles for a small pole) if the blueprint gets lamps: the force has unlocked the small
 -- lamp (nothing is known without a force) and the game has it. Nil otherwise: the blueprint then has no lamps, as it
--- never had. A game that does not give the distance is a bug, not a case to fall back from: it stops with a message.
----@param names bpgen.SharedNames
+-- never had.
+---@param names bpgen.SharedNames  with the numbers of its pole
 ---@param force LuaForce|nil
 ---@return number|nil
 local function lamp_distance(names, force)
   if not (force and names.lamp and can_build(force, names.lamp)) then
     return nil
   end
-  local distance = prototypes.entity[names.pole].get_supply_area_distance()
-  return assert(distance, "generator: the game does not give the supply area distance of " .. names.pole)
+  return names.pole_supply_distance
 end
 
 -- What the design that brings in one belt of each material is asked for, or nil when the blueprint is
@@ -359,11 +381,12 @@ local function read_job(item_name, rate_per_minute, force)
   if not config.products[item_name] then
     return nil, messages.unsupported_item()
   end
-  local names = shared_names()
+  local names = shared_names(force)
   local belt_speed, rotation_speed, long_rotation_speed = read_speeds(names)
   if not (belt_speed and rotation_speed and long_rotation_speed) then
     return nil, messages.missing_prototype()
   end
+  add_pole_distances(names)
   local root, problem = read_root(item_name)
   if not root then
     return nil, problem

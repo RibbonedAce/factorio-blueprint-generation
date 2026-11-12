@@ -62,6 +62,47 @@ describe("builders", function()
 
       assert.are.same({"belt", 1, 1}, {entry.kind, entry.width, entry.height})
     end)
+
+    it("knows the medium pole as a pole that powers 3.5 tiles and holds a wire of 9 unless it is told otherwise", function()
+      local entry = builders.a_catalog{}[builders.POLES.medium.name]
+
+      assert.are.same({"pole", 1, 1, 3.5, 9}, {entry.kind, entry.width, entry.height, entry.supply_radius, entry.wire_reach})
+    end)
+
+    it("gives the medium pole the radius and the wire it is told", function()
+      local entry = builders.a_catalog{medium_pole_supply_radius = 4, medium_pole_wire_reach = 10}[builders.POLES.medium.name]
+
+      assert.are.same({4, 10}, {entry.supply_radius, entry.wire_reach})
+    end)
+
+    it("knows the small pole as a pole that powers 2.5 tiles and holds a wire of 7.5 unless it is told otherwise", function()
+      local entry = builders.a_catalog{}[builders.POLES.small.name]
+
+      assert.are.same({"pole", 1, 1, 2.5, 7.5}, {entry.kind, entry.width, entry.height, entry.supply_radius, entry.wire_reach})
+    end)
+  end)
+
+  describe("the poles", function()
+    it("are the base game's: the small pole powers 2.5 tiles and holds a wire of 7.5, the medium pole 3.5 and 9", function()
+      assert.are.same({
+        small = {name = "small-electric-pole", supply_distance = 2.5, wire_distance = 7.5},
+        medium = {name = "medium-electric-pole", supply_distance = 3.5, wire_distance = 9},
+      }, builders.POLES)
+    end)
+  end)
+
+  describe("the names with the medium pole", function()
+    it("are the names of the layout with the medium pole and its numbers in place of the small pole's", function()
+      local names = builders.medium_pole_names()
+
+      assert.are.same({"medium-electric-pole", 3.5, 9, builders.NAMES.belt}, {names.pole, names.pole_supply_distance, names.pole_wire_distance, names.belt})
+    end)
+
+    it("leave the names of the layout as they were", function()
+      builders.medium_pole_names()
+
+      assert.are.same({"small-electric-pole", 2.5, 7.5}, {builders.NAMES.pole, builders.NAMES.pole_supply_distance, builders.NAMES.pole_wire_distance})
+    end)
   end)
 
   describe("the fake game", function()
@@ -94,6 +135,37 @@ describe("builders", function()
 
     it("leaves the fast inserter's speed out when it is told there is none", function()
       assert.is_nil(builders.fake_prototypes{fast_inserter_rotation_speed = false}.entity["fast-inserter"].get_inserter_rotation_speed())
+    end)
+
+    it("has a small pole that powers 2.5 tiles and holds a wire of 7.5", function()
+      local pole = builders.fake_prototypes{}.entity["small-electric-pole"]
+
+      assert.are.same({2.5, 7.5}, {pole.get_supply_area_distance(), pole.get_max_wire_distance()})
+    end)
+
+    it("has a medium pole that powers 3.5 tiles and holds a wire of 9 unless it is told otherwise", function()
+      local pole = builders.fake_prototypes{}.entity["medium-electric-pole"]
+
+      assert.are.same({3.5, 9}, {pole.get_supply_area_distance(), pole.get_max_wire_distance()})
+    end)
+
+    it("gives the small pole the distances it is told, and leaves them out when it is told there are none", function()
+      local told = builders.fake_prototypes{small_pole_supply_distance = 3, small_pole_wire_distance = 8}.entity["small-electric-pole"]
+      local none = builders.fake_prototypes{small_pole_supply_distance = false, small_pole_wire_distance = false}.entity["small-electric-pole"]
+
+      assert.are.same({{3, 8}, {nil, 0}}, {{told.get_supply_area_distance(), told.get_max_wire_distance()}, {none.get_supply_area_distance(), none.get_max_wire_distance()}})
+    end)
+
+    it("gives the medium pole the distances it is told", function()
+      local pole = builders.fake_prototypes{medium_pole_supply_distance = 2.5, medium_pole_wire_distance = 7.5}.entity["medium-electric-pole"]
+
+      assert.are.same({2.5, 7.5}, {pole.get_supply_area_distance(), pole.get_max_wire_distance()})
+    end)
+
+    it("leaves out how far the medium pole powers when it is told there is none, and gives a wire of 0, as the game does for an entity with no wire", function()
+      local pole = builders.fake_prototypes{medium_pole_supply_distance = false, medium_pole_wire_distance = false}.entity["medium-electric-pole"]
+
+      assert.are.same({nil, 0}, {pole.get_supply_area_distance(), pole.get_max_wire_distance()})
     end)
 
     it("leaves out the buildings it is told the game does not have", function()

@@ -693,7 +693,10 @@ local function pole_bridge(entities, columns, names)
   local function size_of(entity)
     return inputs.footprint(entity, names, sizes)
   end
-  return {entities = entities, taken = poles.taken_tiles(entities, size_of), pole = names.pole}
+  return {
+    entities = entities, taken = poles.taken_tiles(entities, size_of),
+    pole = names.pole, wire_distance = assert(names.pole_wire_distance, "rows: the names give no wire distance for the pole"),
+  }
 end
 
 -- The blueprint for `root` in the design that takes one belt of each material (see the top of the file and

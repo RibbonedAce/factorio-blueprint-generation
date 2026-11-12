@@ -1010,7 +1010,10 @@ describe("layout", function()
 
   describe("fast inserters", function()
     local function names_without_fast_inserter()
-      return {machine = NAMES.machine, belt = NAMES.belt, inserter = NAMES.inserter, long_inserter = NAMES.long_inserter, pole = NAMES.pole}
+      return {
+        machine = NAMES.machine, belt = NAMES.belt, inserter = NAMES.inserter, long_inserter = NAMES.long_inserter, pole = NAMES.pole,
+        pole_supply_distance = NAMES.pole_supply_distance, pole_wire_distance = NAMES.pole_wire_distance,
+      }
     end
 
     it("draws the input side with fast inserters when the shape says so, and the output side with plain ones", function()
@@ -1390,7 +1393,10 @@ describe("layout", function()
     local shape = {machine_size = 3, input_inserters = 1, output_inserters = 1}
 
     local function names_with(recipe)
-      return {machine = "assembling-machine-1", belt = NAMES.belt, inserter = NAMES.inserter, pole = NAMES.pole, recipe = recipe}
+      return {
+        machine = "assembling-machine-1", belt = NAMES.belt, inserter = NAMES.inserter, pole = NAMES.pole,
+        pole_supply_distance = NAMES.pole_supply_distance, pole_wire_distance = NAMES.pole_wire_distance, recipe = recipe,
+      }
     end
 
     local function recipes_of(entities, machine_name)
@@ -1422,5 +1428,113 @@ describe("layout", function()
       assert.are.same({"none", "none"}, recipes_of(entities, "stone-furnace"))
       assert.are.same({"iron-gear-wheel"}, recipes_of(entities, "assembling-machine-1"))
     end)
+  end)
+
+  describe("how far a pole powers", function()
+    it("is two tiles for the 2.5 of a small pole", function()
+      assert.are.equal(2, layout.pole_reach(2.5))
+    end)
+
+    it("is three tiles for the 3.5 of a medium pole", function()
+      assert.are.equal(3, layout.pole_reach(3.5))
+    end)
+
+    it("counts the tile that the supply area covers only a part of", function()
+      assert.are.equal(3, layout.pole_reach(2.6)) -- the tile three away spans 2.5 to 3.5
+    end)
+
+    it("is as many tiles as a supply distance that is a whole number, not one more", function()
+      assert.are.equal(3, layout.pole_reach(3)) -- the tile four away starts at 3.5
+    end)
+
+    it("is asked for by the layout: names without a supply distance for the pole are refused", function()
+      local names = {machine = NAMES.machine, belt = NAMES.belt, inserter = NAMES.inserter, pole = NAMES.pole}
+
+      assert.has_error(function()
+        layout.build(1, names, {machine_size = 2, input_inserters = 1, output_inserters = 1})
+      end, "layout: the names give no supply distance for the pole")
+    end)
+  end)
+
+  describe("built with the medium electric pole", function()
+    -- A medium pole powers three tiles away from its own where a small one powers two, so one pole beside the first
+    -- machine reaches the inserters of the next ones: three furnaces, or both machines of a pair of 3x3 machines.
+    local MEDIUM = builders.medium_pole_names()
+    local furnace_shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+    local assembler_shape = {machine_size = 3, input_inserters = 2, output_inserters = 2}
+
+    -- The tiles of the poles of the entities, in the order they were added.
+    local function pole_tiles(entities, names)
+      local tiles = {}
+      for _, pole in ipairs(entities_named(entities, names.pole)) do
+        local tile = grid.top_left_tile(pole.position)
+        tiles[#tiles + 1] = {tile.x, tile.y}
+      end
+      return tiles
+    end
+
+    it("lets three furnaces share the pole on each side, under the first one's inserter", function()
+      local entities = layout.build(3, MEDIUM, furnace_shape)
+
+      assert.are.same({{1, 1}, {4, 1}}, pole_tiles(entities, MEDIUM))
+    end)
+
+    it("gives the fourth furnace a pole above its inserter, which the first pole is too far from", function()
+      local entities = layout.build(4, MEDIUM, furnace_shape)
+
+      assert.are.same({{1, 1}, {4, 1}, {1, 6}, {4, 6}}, pole_tiles(entities, MEDIUM))
+    end)
+
+    it("lets two 3x3 machines with two inserters on each side share the pole on each side, under the first one's inserters", function()
+      local entities = layout.build(2, MEDIUM, assembler_shape)
+
+      assert.are.same({{1, 2}, {5, 2}}, pole_tiles(entities, MEDIUM))
+    end)
+
+    it("takes a pole for each of the two machines with small poles, whose two tiles do not reach the second one's inserters", function()
+      local entities = layout.build(2, NAMES, assembler_shape)
+
+      assert.are.same({{1, 2}, {5, 2}, {1, 3}, {5, 3}}, pole_tiles(entities, NAMES))
+    end)
+
+    local column_shapes = {
+      {label = "2x2 machines fed and emptied by one inserter", machine = NAMES.machine, shape = furnace_shape},
+      {label = "2x2 machines separated by pole rows", machine = NAMES.machine, shape = {machine_size = 2, input_inserters = 2, output_inserters = 1}},
+      {label = "3x3 machines fed and emptied by two inserters", machine = "assembling-machine-1", shape = assembler_shape},
+      {label = "3x3 machines fed by one inserter and emptied by one", machine = "assembling-machine-1", shape = {machine_size = 3, input_inserters = 1, output_inserters = 1}},
+      {label = "3x3 machines separated by pole rows", machine = "assembling-machine-1", shape = {machine_size = 3, input_inserters = 3, output_inserters = 2}},
+    }
+
+    local function medium_catalog()
+      local catalog = builders.a_catalog{}
+      catalog[NAMES.machine] = {kind = "machine", width = 2, height = 2, needs_power = true}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+      return catalog
+    end
+
+    for _, column in ipairs(column_shapes) do
+      for _, machine_count in ipairs({1, 2, 3, 4, 5, 7, 24}) do
+        it("powers every machine and inserter of " .. machine_count .. " " .. column.label .. ", the poles in one network", function()
+          local entities = layout.build_chain({{machine_count = machine_count, machine = column.machine, shape = column.shape}}, MEDIUM)
+
+          assert.are.same({}, validator.validate(entities, medium_catalog()))
+        end)
+      end
+    end
+
+    for _, first in ipairs(column_shapes) do
+      for _, second in ipairs(column_shapes) do
+        for _, counts in ipairs({{1, 1}, {3, 1}, {1, 4}, {7, 3}}) do
+          it("passes the validator when " .. first.label .. " feed " .. second.label .. ", " .. counts[1] .. " and " .. counts[2] .. " machines", function()
+            local entities = layout.build_chain({
+              {machine_count = counts[1], machine = first.machine, shape = first.shape},
+              {machine_count = counts[2], machine = second.machine, shape = second.shape},
+            }, MEDIUM)
+
+            assert.are.same({}, validator.validate(entities, medium_catalog()))
+          end)
+        end
+      end
+    end
   end)
 end)

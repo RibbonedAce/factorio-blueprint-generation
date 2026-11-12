@@ -15,8 +15,9 @@ local layout = require("scripts.layout")
 
 local poles = {}
 
--- How far apart two small poles may be and still be wired: a little under the 7.5 tiles the game allows.
-local WIRE_REACH = 7
+-- How much less than the game allows two poles of a bridge are put apart: a little under the 7.5 tiles of a small pole
+-- (and the 9 of a medium one).
+local WIRE_MARGIN = 0.5
 
 -- Two poles and how far apart they are.
 ---@class bpgen.PolePair
@@ -85,19 +86,27 @@ local function closest_group(joined, waiting)
   return best, best_index
 end
 
+-- How far apart two poles of a bridge may be and still be wired.
+---@param bridge bpgen.PoleBridge
+---@return number
+local function wire_reach(bridge)
+  return bridge.wire_distance - WIRE_MARGIN
+end
+
 -- The free tile within wire reach of `from` that is closest to `to`, as a position, or nil when there is none.
 ---@param taken table<string, true>
+---@param reach number  how far a wire runs
 ---@param from bpgen.Position
 ---@param to bpgen.Position
 ---@return bpgen.Position|nil
-local function free_tile_toward(taken, from, to)
+local function free_tile_toward(taken, reach, from, to)
   local best, best_apart
-  local reach = math.floor(WIRE_REACH)
-  for dx = -reach, reach do
-    for dy = -reach, reach do
+  local span = math.floor(reach)
+  for dx = -span, span do
+    for dy = -span, span do
       local x, y = math.floor(from.x) + dx, math.floor(from.y) + dy
       local centre = grid.position(x, y)
-      if not taken[tile_key(x, y)] and distance(centre, from) <= WIRE_REACH then
+      if not taken[tile_key(x, y)] and distance(centre, from) <= reach then
         local apart = distance(centre, to)
         if not best or apart < best_apart then
           best, best_apart = centre, apart
@@ -114,7 +123,7 @@ end
 ---@param to bpgen.Entity
 ---@return bpgen.Entity
 local function add_bridge_pole(bridge, from, to)
-  local centre = free_tile_toward(bridge.taken, from.position, to.position)
+  local centre = free_tile_toward(bridge.taken, wire_reach(bridge), from.position, to.position)
   assert(centre and distance(centre, to.position) < distance(from.position, to.position), "poles: no room for a pole between two poles")
   bridge.taken[tile_key(centre.x - 0.5, centre.y - 0.5)] = true
   local pole = {name = bridge.pole, position = centre} --[[@as bpgen.Entity]]
@@ -130,7 +139,7 @@ end
 ---@param bridge bpgen.PoleBridge|nil
 local function connect(from, to, bridge)
   local previous = from
-  while bridge and distance(previous.position, to.position) > WIRE_REACH do
+  while bridge and distance(previous.position, to.position) > wire_reach(bridge) do
     local pole = add_bridge_pole(bridge, previous, to)
     layout.connect_poles(previous, pole)
     previous = pole

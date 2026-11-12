@@ -243,6 +243,8 @@ classDiagram
     belt
     inserter
     pole
+    pole_supply_distance
+    pole_wire_distance
     long_inserter
     fast_inserter
     lamp
@@ -424,6 +426,7 @@ classDiagram
   class PoleBridge {
     taken
     pole
+    wire_distance
   }
 
   PolePair --> Entity : from and to

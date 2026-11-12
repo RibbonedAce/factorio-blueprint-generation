@@ -20,8 +20,8 @@ local UNDERGROUND_REACH = 5
 
 -- The blueprint for `root` in the design that brings in one belt of each material, with a basic belt (450 items a
 -- minute on a lane): its entities and the belts that come in, from the top down.
-local function build_pure(root)
-  return rows.build_pure(root, NAMES, {lane_items_per_minute = 450, underground_reach = UNDERGROUND_REACH})
+local function build_pure(root, names)
+  return rows.build_pure(root, names or NAMES, {lane_items_per_minute = 450, underground_reach = UNDERGROUND_REACH})
 end
 
 -- The ore each furnace smelts, for the feed of the design that brings in one belt of each material.
@@ -643,6 +643,27 @@ describe("rows", function()
 
       it("powers every machine", function()
         local catalog = builders.a_catalog{pole_supply_radius = 2.5, pole_wire_reach = 7.5}
+        catalog["cable-assembler"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+        catalog["pole-assembler"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+        catalog["copper-furnace"] = {kind = "machine", width = 2, height = 2, needs_power = false}
+
+        assert.are.same({}, validator.validate(entities, catalog))
+      end)
+    end)
+
+    describe("the same blueprint with medium poles", function()
+      -- The wire of a medium pole holds 9 tiles, 8.5 of them used, so the nearest poles of the two are within reach and
+      -- no pole between them is needed.
+      local medium = builders.medium_pole_names()
+      local cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)})
+      local entities = build_pure(assemblers("pole-assembler", 1, 2, 1, {cables, wood_supplier()}), medium)
+
+      it("adds no pole between the columns", function()
+        assert.is_nil(entity_at(entities, medium.pole, 19, 4, 1)) -- where the small poles need one
+      end)
+
+      it("powers every machine and wires the poles into one network", function()
+        local catalog = builders.a_catalog{}
         catalog["cable-assembler"] = {kind = "machine", width = 3, height = 3, needs_power = true}
         catalog["pole-assembler"] = {kind = "machine", width = 3, height = 3, needs_power = true}
         catalog["copper-furnace"] = {kind = "machine", width = 2, height = 2, needs_power = false}
