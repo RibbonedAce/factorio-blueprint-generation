@@ -72,6 +72,7 @@ local config = {
     ["boiler"] = true,
     ["offshore-pump"] = true,
     ["automation-science-pack"] = true,
+    ["logistic-science-pack"] = true, -- two made ingredients, an inserter and a transport belt
     ["underground-belt"] = true,
     ["repair-pack"] = true,
     ["shotgun-shell"] = true,
