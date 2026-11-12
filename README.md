@@ -137,6 +137,15 @@ The machines of a column go in twos: the inserters of the first, third, ... mach
 
 The belt between two columns runs south unless the first column is the longer one for the work it does, as before, and now also only when its last drop is at or below the next column's last pickup: items flow only the way the belt runs, so on a northbound belt a pickup below the last drop would never see a plate. In that rare case (one furnace and one assembler with two input inserters, for example) the belt runs south, whatever the load rule says.
 
+### Lights
+
+Once your force has researched the small lamp, every blueprint gets lamps. They stand on free tiles inside the supply area of a pole, so each one is powered by the poles that power the machines, with no wire of its own. Two rules place them:
+
+- **Hard: no two lamps are closer than 10 tiles.**
+- **Soft: every tile a pole powers has a lamp within 10 tiles.**
+
+The tiles a pole powers are taken from the top row down, left to right. Where a tile has no lamp within 10 tiles, one is put on the closest free tile that is at least 10 tiles from every lamp so far, which is the tile itself when it is free. So the hard rule holds for every blueprint, and the soft rule fails only where no free tile is left near a powered tile (a few tiles in a thousand between crowded machines, in the sweep of every recipe at every rate). A tile with something on it is not free, and neither is the tile a belt runs on to, so that you can go on with the belts that leave the blueprint. Without the small lamp researched, or in a game that does not have it, blueprints have no lamps.
+
 ### Fast inserters
 
 Once your force has researched the fast inserter, a machine side that one plain inserter cannot serve gets fast ones. A side goes up a ladder as the machine's flow grows: one plain inserter (50.4 items a minute), one fast inserter (144), two fast inserters (288), never two plain ones, since one fast inserter moves nearly three. Each side climbs on its own, so a machine can eat through two fast inserters and empty through one plain one. The long-handed inserters of the second input belt stay as they are.

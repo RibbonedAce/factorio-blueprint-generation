@@ -36,6 +36,8 @@ flowchart LR
   rows -->|"pole groups, PoleBridge"| poles["poles.lua"]
   poles -->|"wires on poles, bridge poles"| rows
   rows -->|"Entity list, Input list"| generator
+  generator -->|"Entity list, LightOptions"| lights["lights.lua"]
+  lights -->|"lamps added to the Entity list"| generator
 
   generator -->|"RawAmount, StepSummary, belts"| messages["messages.lua"]
   messages -->|"LocalisedString, description"| generator
@@ -59,7 +61,9 @@ flowchart TD
   generator --> layout
   generator --> inputs
   generator --> rows
+  generator --> lights
   generator --> messages
+  lights --> grid
   rows --> feeds
   rows --> inputs
   rows --> layout
@@ -176,6 +180,7 @@ classDiagram
     rate_per_minute
     belt_speed
     fast_inserter_rotation_speed
+    lamp_supply_distance
   }
   class InputOptions {
     lane_items_per_minute
@@ -240,6 +245,7 @@ classDiagram
     pole
     long_inserter
     fast_inserter
+    lamp
     splitter
     underground
   }
@@ -430,7 +436,7 @@ The order of the work in `rows.build_pure` is: columns are made (`Column`), the 
 
 | Where | Types |
 |---|---|
-| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, NewEntity, Entity, InputOptions, Input, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
+| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, NewEntity, Entity, InputOptions, LightOptions, Input, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
 | `scripts/generator.lua` | EnergySource, Candidate, StageData, Job, PlannedStage, Demand |
 | `scripts/planner.lua` | Belts, InputInserters, MachineRates, StageContext, Sizes |

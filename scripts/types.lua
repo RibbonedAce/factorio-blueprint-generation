@@ -15,6 +15,15 @@
 ---@field fast_inserter? string  the fast inserter, for a machine whose side needs more than one plain inserter moves
 ---@field splitter? string  the splitter, for the input design that brings in one belt of each material
 ---@field underground? string  the underground belt, for the same design
+---@field lamp? string  the small lamp, for the lights of the blueprint (see scripts/lights.lua)
+
+-- What `lights.add` needs to know of the game.
+---@class bpgen.LightOptions
+---@field lamp string  prototype name of the lamp
+---@field pole string  prototype name of the pole that powers it
+---@field supply_distance number  how far from its centre a pole powers, in tiles (2.5 for a small pole)
+---@field size_of fun(entity: bpgen.Entity): integer, integer  how many tiles across and along the map an entity covers
+---@field belts? string[]  prototype names of belts, whose tile ahead of them stays free for the belt to go on
 
 ---@class bpgen.Names : bpgen.SharedNames  prototype names one column of the layout builds with
 ---@field machine string

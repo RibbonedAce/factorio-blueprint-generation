@@ -20,7 +20,7 @@
 -- in, so the numbers in it can be made up: nothing here depends on their values.
 --
 -- The catalog maps an entity name to its description:
---   {kind = "belt" | "machine" | "inserter" | "pole",
+--   {kind = "belt" | "machine" | "inserter" | "pole" | "lamp",
 --    width = tiles, height = tiles,
 --    turns = true,                -- optional: covers height x width tiles facing east or west (a splitter)
 --    needs_power = true,          -- optional, for things a pole must reach
@@ -344,7 +344,7 @@ end
 --------------------------------------------------------------------------------
 
 ---@class bpgen.CatalogEntry  what the validator knows about one entity name
----@field kind "belt"|"machine"|"inserter"|"pole"
+---@field kind "belt"|"machine"|"inserter"|"pole"|"lamp"
 ---@field width number  tiles
 ---@field height number  tiles
 ---@field turns? boolean  the entity covers `height` x `width` tiles when it faces east or west (a splitter)

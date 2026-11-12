@@ -19,6 +19,7 @@
 local builders = require("spec.support.builders")
 local generator = require("scripts.generator")
 local validator = require("spec.support.blueprint_validator")
+local grid = require("scripts.grid")
 
 local fake_prototypes = builders.fake_prototypes
 local a_recipe = builders.a_recipe
@@ -1978,5 +1979,84 @@ describe("generator", function()
       assert.is_nil(result)
       assert.are.same({"blueprint-generation.error-missing-prototype"}, error_message)
     end)
+  end)
+
+  describe("lamps, put on the blueprint once the force has unlocked the small lamp", function()
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+    local function gear_game(options)
+      options = options or {}
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
+        missing_entities = options.missing_entities,
+      }
+    end
+
+    -- The tiles of the lamps of a blueprint.
+    local function lamps_of(entities)
+      local lamps = {}
+      for _, entity in ipairs(entities) do
+        if entity.name == "small-lamp" then
+          lamps[#lamps + 1] = grid.top_left_tile(entity.position)
+        end
+      end
+      return lamps
+    end
+
+    local function closest_pair(lamps)
+      local closest = math.huge
+      for i = 1, #lamps - 1 do
+        for j = i + 1, #lamps do
+          closest = math.min(closest, math.sqrt((lamps[i].x - lamps[j].x) ^ 2 + (lamps[i].y - lamps[j].y) ^ 2))
+        end
+      end
+      return closest
+    end
+
+    it("puts lamps on a blueprint, more than one when it is long", function()
+      _G.prototypes = gear_game()
+
+      local result = generator.generate("iron-gear-wheel", 200, fake_force{})
+
+      assert.is_true(#lamps_of(result.entities) > 1)
+    end)
+
+    it("puts no two lamps closer than 10 tiles", function()
+      _G.prototypes = gear_game()
+
+      local result = generator.generate("iron-gear-wheel", 200, fake_force{})
+
+      assert.is_true(closest_pair(lamps_of(result.entities)) >= 10)
+    end)
+
+    it("builds a blueprint that passes the validator, every lamp powered and on a tile of its own", function()
+      _G.prototypes = gear_game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("iron-gear-wheel", 200, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    local without_lamps = {
+      {label = "no force is given, so nothing is known to be researched", force = nil},
+      {label = "the force has not unlocked the small lamp", force = fake_force{locked = {"small-lamp"}}},
+      {label = "the force does not know the recipe of the small lamp", force = fake_force{absent = {"small-lamp"}}},
+      {label = "the game has no small lamp", force = fake_force{}, game = {missing_entities = {"small-lamp"}}},
+    }
+
+    for _, case in ipairs(without_lamps) do
+      it("puts no lamp on the blueprint when " .. case.label, function()
+        _G.prototypes = gear_game(case.game)
+
+        local result = generator.generate("iron-gear-wheel", 200, case.force)
+
+        assert.are.equal(0, count_named(result.entities, "small-lamp"))
+      end)
+    end
   end)
 end)

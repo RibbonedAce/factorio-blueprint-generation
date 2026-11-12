@@ -19,6 +19,7 @@ builders.NAMES = {
   long_inserter = "long-handed-inserter",
   fast_inserter = "fast-inserter",
   pole = "small-electric-pole",
+  lamp = "small-lamp",
   splitter = "splitter",
   underground = "underground-belt",
 }
@@ -172,6 +173,7 @@ function builders.a_catalog(options)
       supply_radius = options.pole_supply_radius or 2.5,
       wire_reach = options.pole_wire_reach or 7.5,
     },
+    [names.lamp] = {kind = "lamp", width = 1, height = 1, needs_power = true},
   }
 end
 
@@ -310,6 +312,7 @@ function builders.fake_prototypes(options)
       get_max_energy_usage = function() return fields.energy_usage or nil end,
       belt_speed = fields.belt_speed or nil,
       max_underground_distance = fields.underground_distance or nil,
+      get_supply_area_distance = function() return fields.supply_area_distance or nil end,
       tile_width = fields.width or 1,
       tile_height = fields.height or 1,
       burner_prototype = burner and {fuel_categories = as_set(burner), effectivity = fields.effectivity or 1} or nil,
@@ -328,7 +331,8 @@ function builders.fake_prototypes(options)
     ["inserter"] = entity("inserter", {rotation_speed = rotation_speed}),
     ["long-handed-inserter"] = entity("long-handed-inserter", {rotation_speed = long_rotation_speed}),
     ["fast-inserter"] = entity("fast-inserter", {rotation_speed = fast_rotation_speed or nil}),
-    ["small-electric-pole"] = entity("small-electric-pole"),
+    ["small-electric-pole"] = entity("small-electric-pole", {supply_area_distance = 2.5}),
+    ["small-lamp"] = entity("small-lamp"),
   }
   for name, machine in pairs(options.machines or {}) do
     machine.is_machine = true

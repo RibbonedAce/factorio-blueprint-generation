@@ -9,6 +9,7 @@ local planner = require("scripts.planner")
 local layout = require("scripts.layout")
 local inputs = require("scripts.inputs")
 local rows = require("scripts.rows")
+local lights = require("scripts.lights")
 local messages = require("scripts.messages")
 
 local generator = {}
@@ -41,6 +42,7 @@ local function shared_names()
   return {
     belt = config.entities.belt, inserter = config.entities.inserter,
     long_inserter = config.entities.long_inserter, fast_inserter = config.entities.fast_inserter, pole = config.entities.pole,
+    lamp = config.entities.lamp,
     splitter = config.entities.splitter, underground = config.entities.underground_belt,
   }
 end
@@ -249,6 +251,7 @@ end
 ---@field inserter_rotation_speed number
 ---@field long_inserter_rotation_speed number  the long-handed inserter's, or the plain inserter's when the game has none
 ---@field fast_inserter_rotation_speed? number  the fast inserter's, when the force has researched it and the game gives its speed; nil: plain inserters only
+---@field lamp_supply_distance? number  how far a pole powers, when the blueprint gets lamps (the force has unlocked the small lamp); nil: no lamps
 ---@field inputs? bpgen.InputOptions  asks for the design that brings in one belt of each material (see scripts/inputs.lua); nil for the original design, a belt of raw items for every chain
 
 -- Whether the force can build a building: it has unlocked the recipe, which the game names like the
@@ -272,6 +275,20 @@ local function fast_rotation_speed(names, force)
     return nil
   end
   return prototypes.entity[names.fast_inserter].get_inserter_rotation_speed()
+end
+
+-- How far a pole powers (2.5 tiles for a small pole) if the blueprint gets lamps: the force has unlocked the small
+-- lamp (nothing is known without a force) and the game has it. Nil otherwise: the blueprint then has no lamps, as it
+-- never had. A game that does not give the distance is a bug, not a case to fall back from: it stops with a message.
+---@param names bpgen.SharedNames
+---@param force LuaForce|nil
+---@return number|nil
+local function lamp_distance(names, force)
+  if not (force and names.lamp and can_build(force, names.lamp)) then
+    return nil
+  end
+  local distance = prototypes.entity[names.pole].get_supply_area_distance()
+  return assert(distance, "generator: the game does not give the supply area distance of " .. names.pole)
 end
 
 -- What the design that brings in one belt of each material is asked for, or nil when the blueprint is
@@ -360,6 +377,7 @@ local function read_job(item_name, rate_per_minute, force)
     inserter_rotation_speed = rotation_speed,
     long_inserter_rotation_speed = long_rotation_speed,
     fast_inserter_rotation_speed = fast_rotation_speed(names, force),
+    lamp_supply_distance = lamp_distance(names, force),
     inputs = input_options(names, belt_speed, force),
   }
 end
@@ -743,17 +761,48 @@ end
 ---@param planned bpgen.PlannedStage  with its `demand`
 ---@return bpgen.Entity[] entities
 ---@return string[]|nil belts
+---@return bpgen.StageLayout root  what the blueprint was laid out from
 local function build_entities(job, planned)
   local root = layout_stage(planned)
   if not job.inputs then
-    return (rows.build(root, job.names)), nil
+    return (rows.build(root, job.names)), nil, root
   end
   local entities, supplies = rows.build_pure(root, job.names, job.inputs)
   local belts = {}
   for index, supply in ipairs(supplies) do
     belts[index] = supply.item
   end
-  return entities, belts
+  return entities, belts, root
+end
+
+-- The tiles on a side of the machine of each column of the layout, by machine name: the names the entities carry.
+---@param stage bpgen.StageLayout
+---@param sizes table<string, integer>
+---@return table<string, integer>
+local function machine_sizes_of(stage, sizes)
+  sizes[stage.machine] = stage.shape.machine_size
+  for _, supplier in ipairs(stage.suppliers or {}) do
+    if supplier.machine then -- a raw item has no machines
+      machine_sizes_of(supplier, sizes)
+    end
+  end
+  return sizes
+end
+
+-- Puts the lamps on the blueprint when the job asks for them (see scripts/lights.lua).
+---@param job bpgen.Job
+---@param entities bpgen.Entity[]
+---@param root bpgen.StageLayout  what the blueprint was laid out from
+local function add_lights(job, entities, root)
+  if not job.lamp_supply_distance then
+    return
+  end
+  local sizes = machine_sizes_of(root, {})
+  lights.add(entities, {
+    lamp = job.names.lamp, pole = job.names.pole, supply_distance = job.lamp_supply_distance,
+    belts = {job.names.belt, job.names.underground},
+    size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
+  })
 end
 
 -- Lay out the planned machines and word the results for the player.
@@ -762,7 +811,8 @@ end
 ---@return bpgen.Generated
 local function assemble(job, planned)
   local raws = raw_amounts(planned) -- also notes what each step takes, which the layout needs
-  local entities, belts = build_entities(job, planned)
+  local entities, belts, root = build_entities(job, planned)
+  add_lights(job, entities, root)
   return {
     entities = entities,
     description = messages.description(job.item_name, planned.plan.output_per_minute, step_summaries(planned)),

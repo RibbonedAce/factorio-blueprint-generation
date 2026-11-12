@@ -21,6 +21,7 @@ local config = {
     long_inserter = "long-handed-inserter", -- for a second input belt (recipes with three or four ingredients)
     fast_inserter = "fast-inserter", -- for a machine whose side needs more than one plain inserter moves, once researched
     pole = "small-electric-pole",
+    lamp = "small-lamp", -- the lights of the blueprint, once researched (see scripts/lights.lua)
     -- For the input design that brings in one belt of each material: the blueprint divides and
     -- merges the belts itself, so both have to be researched (see scripts/inputs.lua).
     splitter = "splitter",
