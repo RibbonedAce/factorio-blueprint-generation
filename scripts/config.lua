@@ -80,6 +80,37 @@ local config = {
     ["steel-plate"] = true,
     ["steel-chest"] = true,
     ["heavy-armor"] = true,
+    -- Steel together with other made ingredients, one belt of each material only.
+    ["stone-wall"] = true,
+    ["gate"] = true,
+    ["fluid-wagon"] = true,
+    ["solar-panel"] = true,
+    ["pumpjack"] = true,
+    ["assembling-machine-2"] = true,
+    ["iron-stick"] = true,
+    ["barrel"] = true,
+    ["engine-unit"] = true, -- the category `advanced-crafting`
+    ["storage-tank"] = true,
+    ["fast-transport-belt"] = true,
+    ["fast-underground-belt"] = true,
+    ["medium-electric-pole"] = true,
+    ["big-electric-pole"] = true,
+    ["pump"] = true,
+    ["rail"] = true,
+    ["train-stop"] = true,
+    ["rail-signal"] = true,
+    ["rail-chain-signal"] = true,
+    ["locomotive"] = true,
+    ["cargo-wagon"] = true,
+    ["car"] = true,
+    ["arithmetic-combinator"] = true,
+    ["decider-combinator"] = true,
+    ["constant-combinator"] = true,
+    ["display-panel"] = true,
+    ["landfill"] = true,
+    ["steel-furnace"] = true,
+    ["piercing-rounds-magazine"] = true,
+    ["grenade"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns
@@ -89,6 +120,7 @@ local config = {
   machines = {
     smelting = {machine = "stone-furnace", fuel = "coal"},
     crafting = {machine = "assembling-machine-1"}, -- electric: no fuel
+    ["advanced-crafting"] = {machine = "assembling-machine-1"}, -- engine units: assembling machine 1 makes this category too
   },
 
   -- The item already picked when the window opens.
