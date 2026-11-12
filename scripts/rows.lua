@@ -627,6 +627,21 @@ local function set_pure_rows(plan, columns, ends)
   end
 end
 
+-- The belt between the last tile of the descent of a chain and the first tile of its own belt, when `chain_top` put the
+-- chain lower than right under the descent (a stage that burns fuel needs room for its fuel to turn in).
+---@param entities bpgen.Entity[]
+---@param columns bpgen.Column[]
+---@param belt_name string
+---@param ends table<bpgen.FeedLeaf, integer>
+local function add_chain_descents(entities, columns, belt_name, ends)
+  for _, column in ipairs(columns) do
+    if column.block and column.kind ~= "final" then
+      local first_belt_row = column.top + column.block.raw_belts[1].row
+      add_run(entities, belt_name, column.drop_x, ends[column] + 1, first_belt_row - 1, south)
+    end
+  end
+end
+
 -- Adds the entities of the top band to the blueprint's, numbered after the ones there.
 ---@param entities bpgen.Entity[]
 ---@param band bpgen.NewEntity[]
@@ -707,6 +722,7 @@ function rows.build_pure(root, names, options)
   local entities = {}
   place_blocks(entities, columns, names.belt)
   add_band(entities, band)
+  add_chain_descents(entities, columns, names.belt, ends)
   add_band(entities, fuel_tails(columns, names, ends))
   if top.kind == "final" then
     add_arcs(entities, names.belt, top)

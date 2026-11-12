@@ -680,6 +680,33 @@ describe("rows", function()
       end)
     end)
 
+    describe("a chain pushed down by the fuel of its steel furnace", function()
+      -- Two chains of iron furnaces and steel furnaces feed one assembler. The second chain's fuel comes down below the
+      -- trunk of its iron ore, so its first belt tile (row 9) is lower than right under the end of the belt that comes
+      -- down to it (row 7, the splitter's output in row 6 is a tile to the west). The tile between, in row 8, is a belt too.
+      --
+      --      7 8   (columns)
+      --   6 |S >|
+      --   7 |. v|
+      --   8 |. v|   <- the tile between
+      --   9 |. v|   <- the first tile of the chain's own belt
+      local root = assemblers("final-assembler", 1, 2, 1, {
+        {
+          machine_count = 1, machine = "steel-furnace", shape = {machine_size = 2, input_inserters = 1, output_inserters = 1},
+          suppliers = {furnaces("iron-furnace", 1)}, fuel_feed = {items = {{name = "coal", amount = 2}}},
+        },
+        {
+          machine_count = 1, machine = "steel-furnace", shape = {machine_size = 2, input_inserters = 1, output_inserters = 1},
+          suppliers = {furnaces("iron-furnace", 1)}, fuel_feed = {items = {{name = "coal", amount = 2}}},
+        },
+      })
+      local entities = build_pure(root)
+
+      it("runs the belt down every row between the end of the descent and its own first tile", function()
+        assert.are.same({"8,7 " .. south, "8,8 " .. south, "8,9 " .. south}, belts_in(entities, 8, 7, 8, 9))
+      end)
+    end)
+
     describe("more iron ore than one belt carries", function()
       -- Three columns of 22 furnaces take 440 ore a minute each. A trunk carries a lane of ore, 450 a minute, so each column
       -- gets a trunk of its own; a belt that comes in carries two lanes, 900, so one belt of iron ore feeds two of the
