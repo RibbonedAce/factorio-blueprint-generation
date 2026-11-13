@@ -1691,6 +1691,151 @@ describe("planner", function()
     end)
   end)
 
+  describe("a furnace stage that may be built wide: a second input belt, an output belt that winds in twos", function()
+    -- A furnace column makes 18.75 plates a minute a furnace, and a lane carries 450: 24 furnaces fill the lane of ore and the
+    -- lane of plates. Built wide, the ore rides three lanes (the second belt carries it on both) and the plates two, which
+    -- the winding belt in twos carries for 2 * 24 - 1 = 47 furnaces (one lane may get one furnace more than the other):
+    -- 47 * 18.75 = 881.25 plates a minute.
+    local plate_recipe = {energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
+    local gear_recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+    local furnace_inserters = {items_per_minute = 50.4, long_items_per_minute = 72, max_input = 1, max_output = 1, machine_size = 2}
+    local assembler_inserters = {items_per_minute = 50.4, long_items_per_minute = 72, max_input = 2, max_output = 2, machine_size = 3}
+
+    local function furnace(options)
+      options = options or {}
+      return {
+        product = "iron-plate", recipe = plate_recipe, machine_speed = 1, fuel = options.fuel == nil and "coal" or options.fuel or nil,
+        inserters = options.inserters == nil and furnace_inserters or options.inserters, wide = options.wide,
+      }
+    end
+
+    local function gear_assembler()
+      return {product = "iron-gear-wheel", recipe = gear_recipe, machine_speed = 0.5, inserters = assembler_inserters}
+    end
+
+    it("builds the furnaces plain while the rate fits what a plain column makes", function()
+      local plan = planner.plan{rate_per_minute = 450, lane_items_per_minute = 450, product = "iron-plate", recipe = plate_recipe,
+        machine_speed = 1, fuel = "coal", inserters = furnace_inserters, wide = true}
+
+      assert.are.same({24, false, {"iron-ore", "coal"}, 0}, {plan.machines, plan.wide, plan.lanes, plan.long_inserters})
+    end)
+
+    it("builds them wide when the rate is above that, with three lanes of ore and a second plain input inserter, for belt b", function()
+      local plan = planner.plan{rate_per_minute = 451, lane_items_per_minute = 450, product = "iron-plate", recipe = plate_recipe,
+        machine_speed = 1, fuel = "coal", inserters = furnace_inserters, wide = true}
+
+      assert.are.same({25, true, {"iron-ore", "coal", "iron-ore", "iron-ore"}, 2, 0}, {plan.machines, plan.wide, plan.lanes, plan.input_inserters, plan.long_inserters})
+    end)
+
+    it("makes 881.25 plates a minute at the most, with 47 furnaces, where it made 450 with 24", function()
+      local request = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace{wide = true}}}
+      local plain = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace()}}
+
+      assert.are.same({881.25, 450}, {planner.max_rate(request), planner.max_rate(plain)})
+    end)
+
+    it("plans the most with 47 furnaces", function()
+      local plans = planner.plan_chain{rate_per_minute = 881.25, lane_items_per_minute = 450, stages = {furnace{wide = true}}}
+
+      assert.are.same({47, true}, {plans[1].machines, plans[1].wide})
+    end)
+
+    it("refuses a rate above that, naming the most", function()
+      local plans, reason, most = planner.plan_chain{rate_per_minute = 882, lane_items_per_minute = 450, stages = {furnace{wide = true}}}
+
+      assert.are.same({nil, "rate-too-high", 881.25}, {plans, reason, most})
+    end)
+
+    it("does not build furnaces wide that are not asked to be, and refuses the rate", function()
+      local plans, reason, most = planner.plan_chain{rate_per_minute = 451, lane_items_per_minute = 450, stages = {furnace()}}
+
+      assert.are.same({nil, "rate-too-high", 450}, {plans, reason, most})
+    end)
+
+    it("does not build furnaces wide when the layout does not know the size of the machine", function()
+      local stage = furnace{wide = true, inserters = {items_per_minute = 50.4, max_input = 1, max_output = 1}}
+
+      assert.are.equal(450, planner.max_rate{rate_per_minute = 1, lane_items_per_minute = 450, stages = {stage}})
+    end)
+
+    it("does not build furnaces wide when one plain inserter on a side is not all the machine gets", function()
+      local stage = furnace{wide = true, inserters = {items_per_minute = 50.4, max_input = 2, max_output = 2, machine_size = 2}}
+      stage.recipe = {energy = 0.5, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}} -- 120 plates a minute: two inserters a side
+
+      local plain = {product = stage.product, recipe = stage.recipe, machine_speed = 1, fuel = "coal", inserters = stage.inserters}
+
+      assert.are.equal(planner.max_rate{rate_per_minute = 1, lane_items_per_minute = 450, stages = {plain}},
+        planner.max_rate{rate_per_minute = 1, lane_items_per_minute = 450, stages = {stage}})
+    end)
+
+    it("does not build a machine wide that burns no fuel: its belt has no lane of fuel to share", function()
+      local stage = furnace{wide = true, fuel = false}
+
+      assert.are.equal(450, planner.max_rate{rate_per_minute = 1, lane_items_per_minute = 450, stages = {stage}}) -- the lane of plates: 24 machines
+    end)
+
+    it("builds the furnaces of a chain wide, and the stage that eats their plates takes them on both lanes", function()
+      local request = {rate_per_minute = 226, lane_items_per_minute = 450, stages = {furnace{wide = true}, gear_assembler()}}
+
+      local plans = planner.plan_chain(request)
+
+      assert.are.same({{25, true, {"iron-ore", "coal", "iron-ore", "iron-ore"}}, {5, false, {"iron-plate", "iron-plate"}}}, -- 226 gears are 4.5 assemblers of 50.4
+        {{plans[1].machines, plans[1].wide, plans[1].lanes}, {plans[2].machines, plans[2].wide, plans[2].lanes}})
+    end)
+
+    it("makes more gears with wide furnaces than with plain ones: 440.625 a minute, where it made 225", function()
+      local wide = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace{wide = true}, gear_assembler()}}
+      local plain = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace(), gear_assembler()}}
+
+      assert.are.same({440.625, 225}, {planner.max_rate(wide), planner.max_rate(plain)})
+    end)
+
+    it("leaves the furnaces of a chain plain at a rate the plain chain makes", function()
+      local plans = planner.plan_chain{rate_per_minute = 225, lane_items_per_minute = 450, stages = {furnace{wide = true}, gear_assembler()}}
+
+      assert.are.same({false, {"iron-plate"}}, {plans[1].wide, plans[2].lanes})
+    end)
+
+    it("leaves the furnaces plain that feed a stage that burns fuel too: the fuel needs the lane the plates would take", function()
+      local steel_recipe = {energy = 16, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "steel-plate")}}
+      local steel = {product = "steel-plate", recipe = steel_recipe, machine_speed = 1, fuel = "coal", inserters = furnace_inserters}
+      local wide = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace{wide = true}, steel}}
+      local plain = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace(), steel}}
+
+      assert.are.equal(planner.max_rate(plain), planner.max_rate(wide))
+    end)
+
+    it("leaves the furnaces plain that feed a stage with a second ingredient: the lane is that ingredient's", function()
+      local alloy_recipe = {energy = 1, ingredients = {amount_of(1, "iron-plate"), amount_of(1, "copper-plate")}, products = {amount_of(1, "alloy")}}
+      local copper = furnace()
+      copper.product, copper.recipe = "copper-plate", {energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}}
+      local wide_copper = furnace{wide = true}
+      wide_copper.product, wide_copper.recipe = copper.product, copper.recipe
+      local alloy = {product = "alloy", recipe = alloy_recipe, machine_speed = 0.5, inserters = assembler_inserters}
+      local wide = {rate_per_minute = 1, lane_items_per_minute = 450, root = {stage = alloy, suppliers = {{stage = furnace{wide = true}, suppliers = {}}, {stage = wide_copper, suppliers = {}}}}}
+      local plain = {rate_per_minute = 1, lane_items_per_minute = 450, root = {stage = alloy, suppliers = {{stage = furnace(), suppliers = {}}, {stage = copper, suppliers = {}}}}}
+
+      assert.are.equal(planner.max_tree_rate(plain), planner.max_tree_rate(wide))
+    end)
+
+    it("keeps both input inserters of furnaces built wide that do only a fraction of one furnace's work", function()
+      -- A widget takes 100 gears and a pipe. Three widgets a minute are 600 plates for the gears, more than a plain column
+      -- makes, so the furnaces are built wide, those that make the plates of the pipes too: 3 plates a minute, 3 / 18.75 of a
+      -- furnace, which a machine used for a part of its time would give fewer inserters.
+      local pipe_recipe = {energy = 0.5, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "pipe")}}
+      local widget_recipe = {energy = 1, ingredients = {amount_of(100, "iron-gear-wheel"), amount_of(1, "pipe")}, products = {amount_of(1, "widget")}}
+      local pipe_assembler = {product = "pipe", recipe = pipe_recipe, machine_speed = 0.5, inserters = assembler_inserters}
+      local widget = {product = "widget", recipe = widget_recipe, machine_speed = 1, inserters = assembler_inserters}
+      local gears = {stage = gear_assembler(), suppliers = {{stage = furnace{wide = true}, suppliers = {}}}}
+      local pipes = {stage = pipe_assembler, suppliers = {{stage = furnace{wide = true}, suppliers = {}}}}
+
+      local plans = planner.plan_tree{rate_per_minute = 3, lane_items_per_minute = 450, root = {stage = widget, suppliers = {gears, pipes}}}
+
+      local pipe_furnaces = plans.suppliers[2].suppliers[1].plan
+      assert.are.same({1, true, 2}, {pipe_furnaces.machines, pipe_furnaces.wide, pipe_furnaces.input_inserters})
+    end)
+  end)
+
   describe("inserter_items_per_minute", function()
     it("turns an inserter's rotation speed into items per minute", function()
       local basic_rotation_speed = 0.014

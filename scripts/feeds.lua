@@ -58,13 +58,19 @@ local function add_leaf(trunk, leaf)
   trunk.last = math.max(trunk.last or leaf.index, leaf.index)
 end
 
--- The leaves grouped by what they take, in the order the kinds first appear, each group from the west.
+-- The leaves grouped by what they take, in the order the kinds first appear, each group from the west. The second input belt
+-- of a chain built wide is a group of its own, one for each chain: its belt comes down just west of the chain's own, on a
+-- trunk that has to stand below the chain's (the splitter in front of the chain's leaf, if it has leaves east of it, would
+-- be in the way of a belt that crosses that trunk), which a trunk of its own does, since the trunks go by their last leaf.
 ---@param leaves bpgen.FeedLeaf[]  from the west
 ---@return {names: string[], leaves: bpgen.FeedLeaf[]}[]
 local function group_by_kind(leaves)
   local by_key, groups = {}, {}
   for _, leaf in ipairs(leaves) do
     local key, names = kind_of(leaf.feed)
+    if leaf.second_of then
+      key = key .. "#" .. leaf.index
+    end
     if not by_key[key] then
       by_key[key] = {names = names, leaves = {}}
       groups[#groups + 1] = by_key[key]

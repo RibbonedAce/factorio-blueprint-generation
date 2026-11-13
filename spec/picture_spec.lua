@@ -50,6 +50,12 @@ describe("picture", function()
       assert.are.same({"}}+"}, picture.draw(entities, {}, 0, 0, 2, 0))
     end)
 
+    it("draws a medium pole like a small one", function()
+      local entities = {builders.pole(0, 0), builders.pole(1, 0, builders.POLES.medium.name)}
+
+      assert.are.same({"++"}, picture.draw(entities, {}, 0, 0, 1, 0))
+    end)
+
     it("draws a machine on every tile it covers, with the glyph its table gives", function()
       assert.are.same({"ii", "ii"}, picture.draw({builders.furnace(0, 0)}, MACHINES, 0, 0, 1, 1))
     end)

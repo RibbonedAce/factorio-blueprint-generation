@@ -87,6 +87,7 @@
 ---@field machine_speed number  the machine's crafting speed
 ---@field fuel? string  item the machine burns; it takes one of the two input lanes (a stage fed raw items, or one that eats one made ingredient)
 ---@field inserters? bpgen.InserterLimits  nil means no limit: one inserter a side, full speed
+---@field wide? boolean  the stage may be built wide, which the planner does only when the rate asks more than the plain design makes: a stage fed raw items that burns fuel and eats one ingredient gets a second input belt (the ingredient on both its lanes), woven with the first (the ingredient on one lane, the fuel on the other) so that two plain inserters on every machine reach both, so three lanes of the ingredient, and an output belt that winds (two lanes of product), also when it feeds another column. The stage that eats its product takes it on both lanes, if it eats nothing else and burns no fuel, and the stage must be the root or such a stage's supplier. Needs `inserters.machine_size`, one plain inserter on each side of a machine, and poles that reach the input side from the output side (the generator checks the last)
 
 ---@alias bpgen.PlanReason "unsupported-recipe"|"rate-too-high"  why the planner gave no plan
 
@@ -128,6 +129,7 @@
 ---@field long_inserters integer  long-handed inserters per machine, for belt b (0 when belt b carries nothing)
 ---@field output_inserters integer  per machine
 ---@field output_fast boolean  whether those are fast inserters
+---@field wide boolean  whether the stage is built wide (see `bpgen.StageRequest.wide`): `lanes` then has the four lanes of its two input belts, and each machine has two plain input inserters, one for each belt
 
 ---@class bpgen.Position  the centre of an entity, in tiles
 ---@field x number
@@ -147,6 +149,9 @@
 ---@field long_inserters? integer  long-handed inserters per machine, in the rows under the plain ones, for a second belt one column further out (0 when nil); the two kinds together are at most `machine_size`
 ---@field output_inserters integer  per machine, at most `machine_size`; a 3x3 machine with two (and no pole rows) gets a winding output belt
 ---@field output_fast? boolean  whether those are fast inserters (plain when nil)
+---@field output_paired? boolean  the machines go in twos and the output belt winds, whatever the size of the machine and the inserter (plain, for a furnace), so that machines side by side fill a lane each and the product rides both lanes, also when the belt feeds another column; needs one output inserter and at least two machines
+---@field powered_from_output? boolean  the inserters of the input side stand within reach of the poles beside the output side (a medium pole reaches the input inserters of a 2x2 machine from there), so the input side may be full without rows of poles between the machines; the output side keeps a free tile for each machine
+---@field second_input_belt? boolean  the column draws its two input belts itself, woven (belt a goes under for two rows in the column beside the inserters while belt b, one column west, comes into it and goes back; `input_inserters` is 2), since they come down from the band: for a stage fed raw items that takes its second belt from there; the first column of a chain only
 
 -- One column of machines in a chain.
 ---@class bpgen.StageLayout
@@ -158,6 +163,7 @@
 ---@field recipe? string  the recipe to set on the machines; nil for a machine that picks its own recipe (a furnace)
 ---@field suppliers? (bpgen.StageLayout|bpgen.RawSupplier)[]  what it eats: the stages whose products it eats, in the order of the recipe's ingredients, then the raw item that goes with them, if any; none or one in a chain, two when a recipe has two made ingredients or one made ingredient and a raw one (`rows.build` uses it; `layout.build_chain` ignores it)
 ---@field feed? bpgen.Feed  of a stage that eats only raw items: what it takes from the belts that come in a minute (`rows.build_pure` uses it; the original `rows.build` ignores it)
+---@field second_feed? bpgen.Feed  of a stage built wide (its shape has `second_input_belt`): what it takes from its second input belt, one item on both lanes; `feed` is then what it takes from the first belt, the ingredient on one lane and the fuel on the other
 ---@field fuel_feed? bpgen.Feed  of a stage that burns fuel and eats what the stage before it in its chain makes (steel plate from iron plates): the fuel it takes a minute. It rides the free lane of the belt between the two stages, which therefore runs south, and is side-loaded at the head of that belt (`rows.build_pure` only; the original `rows.build` cannot do it)
 
 -- A raw item that a stage eats next to a made one: no machines, only a belt that brings the
@@ -237,9 +243,10 @@
 
 -- A chain or the column of a raw item, as `scripts/feeds.lua` sees it.
 ---@class bpgen.FeedLeaf
----@field index number  place among the columns, from the west (a fraction for the fuel of a stage in the middle of a chain: just after its chain)
+---@field index number  place among the columns, from the west (a fraction for the fuel of a stage in the middle of a chain, just after its chain, and for the second input belt of a chain built wide, just before it)
 ---@field feed bpgen.Feed
 ---@field drop_x? integer  the tile column its belt comes down, once the columns are placed
+---@field second_of? bpgen.Column  for the second input belt of a chain built wide: the chain
 ---@field owner? bpgen.Column  for a fuel feed: the chain column whose stage burns the fuel
 ---@field fuel? bpgen.FuelFeed  for a fuel feed: where the fuel has to arrive in the block of `owner`
 

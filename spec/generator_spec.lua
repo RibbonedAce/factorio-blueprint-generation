@@ -1402,7 +1402,7 @@ describe("generator", function()
 
     it("shows the same message under the rate field for a locked item, and the rate for one that is not", function()
       _G.prototypes = game()
-      local force = fake_force{locked = {"iron-gear-wheel"}}
+      local force = fake_force{locked = {"iron-gear-wheel", "medium-electric-pole"}} -- without the medium pole no step is built wide
 
       assert.are.same(locked_message("iron-gear-wheel"), generator.max_rate_message("iron-gear-wheel", force))
       assert.are.same({"blueprint-generation.max-rate", "450"}, generator.max_rate_message("iron-plate", force))
@@ -1731,7 +1731,9 @@ describe("generator", function()
     it("shows the maximum the same way when the fast inserter is not researched", function()
       _G.prototypes = gear_game()
 
-      assert.are.same(generator.max_rate_message("iron-gear-wheel"), generator.max_rate_message("iron-gear-wheel", fake_force{locked = {"fast-inserter"}}))
+      -- (the medium pole is locked as well: with it a step is built wide when the rate asks for more, which the
+      -- message for no force, the original design, does not show)
+      assert.are.same(generator.max_rate_message("iron-gear-wheel"), generator.max_rate_message("iron-gear-wheel", fake_force{locked = {"fast-inserter", "medium-electric-pole"}}))
     end)
   end)
 
@@ -2056,6 +2058,135 @@ describe("generator", function()
         local result = generator.generate("iron-gear-wheel", 200, case.force)
 
         assert.are.equal(0, count_named(result.entities, "small-lamp"))
+      end)
+    end
+  end)
+
+  describe("furnaces built wide, when the force has what they need and the rate asks for more than the plain design makes", function()
+    -- A furnace makes 18.75 plates a minute and a lane carries 450, so 24 furnaces make the most a plain column does. Built
+    -- wide (a second input belt woven with the first, poles beside the output side, the output belt winding in twos)
+    -- 47 furnaces make 881.25. 500 plates a minute are 26.67 furnaces: 27.
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+    local function game(options)
+      options = options or {}
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
+        missing_entities = options.missing_entities,
+        medium_pole_supply_distance = options.medium_pole_supply_distance,
+      }
+    end
+
+    -- A furnace built wide has two input inserters and an output inserter; a plain one has an input and an output inserter.
+    local function inserters_per_furnace(result)
+      return count_named(result.entities, "inserter") / count_named(result.entities, "stone-furnace")
+    end
+
+    it("builds the furnaces plain at a rate the plain design makes", function()
+      _G.prototypes = game()
+
+      local result = generator.generate("iron-plate", 450, fake_force{})
+
+      assert.are.equal(2, inserters_per_furnace(result))
+    end)
+
+    it("builds the furnaces wide above that, two input inserters and an output inserter on each", function()
+      _G.prototypes = game()
+
+      local result = generator.generate("iron-plate", 500, fake_force{})
+
+      assert.are.same({27, 3}, {count_named(result.entities, "stone-furnace"), inserters_per_furnace(result)})
+    end)
+
+    it("builds a blueprint that passes the validator, the second belt and the poles beside the output side included", function()
+      _G.prototypes = game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+
+      local result = generator.generate("iron-plate", 881, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("builds the furnaces of a chain wide too, and the assemblers that eat their plates", function()
+      _G.prototypes = game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("iron-gear-wheel", 300, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+      assert.is_true(count_named(result.entities, "stone-furnace") > 24) -- 300 gears need 600 plates: 32 furnaces, more than a plain column makes
+    end)
+
+    it("allows 881.25 plates a minute, 47 furnaces' worth", function()
+      _G.prototypes = game()
+
+      assert.are.same({"blueprint-generation.max-rate", "881.25"}, generator.max_rate_message("iron-plate", fake_force{}))
+    end)
+
+    it("refuses a rate above that", function()
+      _G.prototypes = game()
+
+      local result, message = generator.generate("iron-plate", 882, fake_force{})
+
+      assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "881.25"}}, {result, message})
+    end)
+
+    -- What the generator tells the layout about the furnaces: the stage layout `rows.build_pure` is given.
+    local function layout_of(item, rate)
+      local rows = require("scripts.rows")
+      local build_pure, given = rows.build_pure, nil
+      rows.build_pure = function(root, names, options)
+        given = root
+        return build_pure(root, names, options)
+      end
+      local ok, problem = pcall(generator.generate, item, rate, fake_force{})
+      rows.build_pure = build_pure
+      assert(ok, problem)
+      return given
+    end
+
+    -- The items of a feed with their amounts to two decimals: "iron-ore 450.00".
+    local function amounts(feed)
+      local list = {}
+      for _, item in ipairs(feed.items) do
+        list[#list + 1] = string.format("%s %.2f", item.name, item.amount)
+      end
+      return list
+    end
+
+    it("takes a lane of ore and the fuel from the first belt of furnaces built wide", function()
+      _G.prototypes = game()
+
+      local root = layout_of("iron-plate", 600) -- 32 furnaces: 600 ore a minute, and 32 x 1.35 coal
+
+      assert.are.same({"iron-ore 450.00", "coal 43.20"}, amounts(root.feed))
+    end)
+
+    it("takes the rest of the ore from the second belt of furnaces built wide, and no fuel", function()
+      _G.prototypes = game()
+
+      local root = layout_of("iron-plate", 600)
+
+      assert.are.same({"iron-ore 150.00"}, amounts(root.second_feed))
+    end)
+
+    local plain = {
+      {label = "no force is given, which is the original design", force = nil},
+      {label = "the force has not unlocked the splitter, which is the original design too", force = fake_force{locked = {"splitter"}}},
+      {label = "the force has not unlocked the underground belt, which is the original design too", force = fake_force{locked = {"underground-belt"}}},
+      {label = "the force has not unlocked the medium pole, whose small pole does not reach the input inserters from the output side", force = fake_force{locked = {"medium-electric-pole"}}},
+      {label = "the medium pole of the game powers no more than 2.5 tiles", force = fake_force{}, game = {medium_pole_supply_distance = 2.5}},
+    }
+
+    for _, case in ipairs(plain) do
+      it("allows 450 plates a minute, as the plain design does, when " .. case.label, function()
+        _G.prototypes = game(case.game)
+
+        assert.are.same({"blueprint-generation.max-rate", "450"}, generator.max_rate_message("iron-plate", case.force))
       end)
     end
   end)

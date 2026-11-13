@@ -361,25 +361,39 @@ local function room_for_winding(limits, rates)
   return size == WINDING_MACHINE_SIZE and math.max(rates.input_inserters + rates.long_inserters, rates.output_inserters) < size
 end
 
+-- The winding a machine's output inserters ask for when the belt can wind: "double" for two of them, which fill a lane
+-- each, "paired" for one fast one, which fills a lane when the machines go in twos (nil when the caller does not give the
+-- machine's size, which leaves out the paired belt), and nil for a plain belt.
+---@param limits bpgen.InserterLimits
+---@param rates bpgen.MachineRates
+---@return "double"|"paired"|nil
+local function winding_asked_for(limits, rates)
+  if rates.output_inserters == WINDING_OUTPUT_INSERTERS then
+    return "double"
+  end
+  if limits.machine_size ~= nil and rates.output_inserters == 1 and rates.output_fast then
+    return "paired"
+  end
+  return nil
+end
+
 -- How the output belt of the stage takes the product of its machines (see layout.lua), as "double" when it winds so
 -- that the two output inserters of a machine fill a lane each, "paired" when it winds so that machines side by side, each
--- with one fast output inserter, fill a lane each, and nil when it is a plain belt with the product on one lane. Only the
--- root stage's belt winds, and only on a 3x3 machine whose sides are not full: a full side takes a row of poles between the
+-- with one output inserter, fill a lane each, and nil when it is a plain belt with the product on one lane. The belt of a
+-- stage built wide is paired, for any machine and whatever it feeds. Otherwise only the root stage's belt winds, and only
+-- on a 3x3 machine whose sides are not full: a full side takes a row of poles between the
 -- machines (a machine fits a pole when an inserter does not take every tile beside it), and a winding belt has no room for
 -- that. `limits.machine_size` is nil when the caller does not say, which leaves out the size and the rows of poles, and
 -- the paired belt.
 ---@param stage bpgen.StageContext
 ---@return "double"|"paired"|nil
 local function output_winding(stage)
-  local limits, rates = stage.request.inserters, stage.per_machine
-  if not (stage.winds and limits and room_for_winding(limits, rates)) then
-    return nil
-  end
-  if rates.output_inserters == WINDING_OUTPUT_INSERTERS then
-    return "double"
-  end
-  if limits.machine_size ~= nil and rates.output_inserters == 1 and rates.output_fast then
+  if stage.wide then
     return "paired"
+  end
+  local limits, rates = stage.request.inserters, stage.per_machine
+  if stage.winds and limits and room_for_winding(limits, rates) then
+    return winding_asked_for(limits, rates)
   end
   return nil
 end
@@ -460,6 +474,7 @@ end
 ---@field belts bpgen.Belts  which of its ingredients ride which input belt
 ---@field winds boolean  whether this stage's output belt may wind (only the root stage's can)
 ---@field per_machine bpgen.MachineRates
+---@field wide boolean  whether the stage is built wide (see `bpgen.StageRequest.wide`)
 ---@field machines_worth number  how many machines' worth of work the belts of a column carry before a lane is full (not a whole number)
 
 -- The lanes of a stage that burns fuel and is fed by another stage: the one ingredient that
@@ -475,6 +490,18 @@ local function fuel_lanes(stage, suppliers)
     return nil
   end
   return {ingredients[1].name, stage.fuel}, {}
+end
+
+-- The lanes of a stage fed by one stage that is built wide: that stage's product rides both lanes of the belt between
+-- them (see `takes_both_lanes`, which a stage that takes it so has), the lanes as they are for any other.
+---@param lanes string[]  the ingredients, in the recipe's order
+---@param suppliers bpgen.StageContext[]
+---@return string[]
+local function both_lanes_of_wide(lanes, suppliers)
+  if suppliers[1] and suppliers[1].wide then
+    lanes[2] = lanes[1]
+  end
+  return lanes
 end
 
 -- The items on the lanes of the belts that feed a stage, or nil when they do not
@@ -510,7 +537,7 @@ local function stage_lanes(stage, suppliers)
     end
     unmade[supplier.request.product] = nil
   end
-  return lanes, unmade
+  return both_lanes_of_wide(lanes, suppliers), unmade
 end
 
 -- The ingredients on belts a and b for one way of splitting them: the ingredients whose
@@ -602,20 +629,115 @@ local function choose_belts(stage, lanes, raw)
   return best and best.belts
 end
 
--- Everything the planner works out about a stage and the stages that feed it before
--- it is asked for a rate, or nil when one of them does not fit (see `stage_lanes`,
--- `is_supported`). Only the root stage may wind its output belt.
+-- Whether a stage takes the product of the stage that feeds it on both lanes of one belt: it eats that product and
+-- nothing else (no second ingredient, no fuel, whose lane the product would have to leave free), so a supplier built wide,
+-- which puts its product on both lanes, can feed it. (A stage with one ingredient has one supplier at most.)
+---@param stage bpgen.StageRequest
+---@return boolean
+local function takes_both_lanes(stage)
+  return #stage.recipe.ingredients == 1 and stage.fuel == nil
+end
+
+-- Whether a stage is of the kind that is built wide (see `bpgen.StageRequest.wide`): it asks for it, it is fed raw items,
+-- burns fuel and eats one ingredient, so that its belt has a lane of each.
+---@param stage bpgen.StageRequest
+---@param suppliers bpgen.StageContext[]
+---@return boolean
+local function is_wide_kind(stage, suppliers)
+  return stage.wide == true and #suppliers == 0 and stage.fuel ~= nil and #stage.recipe.ingredients == 1
+end
+
+-- Whether the sides of a machine are what a stage built wide has: the layout knows the size of the machine, and a plain
+-- inserter on each side moves what it needs (the second plain inserter, for belt b, then fills the input side).
+---@param stage bpgen.StageRequest
+---@param per_machine bpgen.MachineRates
+---@return boolean
+local function has_wide_sides(stage, per_machine)
+  return stage.inserters ~= nil and stage.inserters.machine_size ~= nil
+    and per_machine.input_inserters == 1 and per_machine.long_inserters == 0 and per_machine.output_inserters == 1
+end
+
+-- Whether a stage may be built wide.
+---@param stage bpgen.StageRequest
+---@param suppliers bpgen.StageContext[]
+---@param per_machine bpgen.MachineRates
+---@return boolean
+local function can_be_wide(stage, suppliers, per_machine)
+  return is_wide_kind(stage, suppliers) and has_wide_sides(stage, per_machine)
+end
+
+-- The four lanes of the two input belts of a stage built wide, from the two of the belt it would have: belt a keeps its
+-- ingredient and its fuel, belt b carries the ingredient on both lanes.
+---@param lanes string[]  the ingredient and the fuel
+---@return string[]
+local function wide_lanes(lanes)
+  return {lanes[1], lanes[2], lanes[1], lanes[1]}
+end
+
+-- What one machine does when it has a second plain input inserter, for belt b.
+---@param rates bpgen.MachineRates
+---@return bpgen.MachineRates
+local function with_second_inserter(rates)
+  local wide = {}
+  for key, value in pairs(rates) do
+    wide[key] = value
+  end
+  wide.input_inserters = 2
+  return wide
+end
+
+-- Whether a stage is built wide, with the lanes and the machine rates that go with it (as they were worked out when it is
+-- not). `may_widen` is whether the tree asks for it of this stage (see `stage_context`).
+---@param stage bpgen.StageRequest
+---@param suppliers bpgen.StageContext[]
+---@param lanes string[]
+---@param per_machine bpgen.MachineRates
+---@param may_widen boolean
+---@return boolean wide
+---@return string[] lanes
+---@return bpgen.MachineRates per_machine
+local function widened(stage, suppliers, lanes, per_machine, may_widen)
+  if not (may_widen and can_be_wide(stage, suppliers, per_machine)) then
+    return false, lanes, per_machine
+  end
+  return true, wide_lanes(lanes), with_second_inserter(per_machine)
+end
+
+local stage_context -- defined below: a stage is worked out with the stages that feed it
+
+-- The contexts of the stages that feed a stage, or nil when one of them does not fit. A stage that feeds a stage that takes
+-- its product on both lanes (see `takes_both_lanes`) may be built wide where `widen` says so.
 ---@param tree bpgen.StageTree
 ---@param request bpgen.TreeRequest
----@param is_root boolean
----@return bpgen.StageContext|nil
-local function stage_context(tree, request, is_root)
+---@param widen boolean
+---@return bpgen.StageContext[]|nil
+local function supplier_contexts(tree, request, widen)
   local suppliers = {}
+  local may_widen = widen and takes_both_lanes(tree.stage)
   for index, supplier in ipairs(tree.suppliers) do
-    suppliers[index] = stage_context(supplier, request, false)
+    suppliers[index] = stage_context(supplier, request, false, widen, may_widen)
     if not suppliers[index] then
       return nil
     end
+  end
+  return suppliers
+end
+
+-- Everything the planner works out about a stage and the stages that feed it before
+-- it is asked for a rate, or nil when one of them does not fit (see `stage_lanes`,
+-- `is_supported`). Only the root stage may wind its output belt, but for the stages built wide: a stage is built wide when
+-- `may_widen` (the tree is built that way, and the stage is the root or feeds a stage that takes its product on both
+-- lanes) and it is of the kind that can be (see `can_be_wide`).
+---@param tree bpgen.StageTree
+---@param request bpgen.TreeRequest
+---@param is_root boolean
+---@param widen boolean  build the stages that can be built wide that way
+---@param may_widen boolean  this stage may be one of them
+---@return bpgen.StageContext|nil
+function stage_context(tree, request, is_root, widen, may_widen)
+  local suppliers = supplier_contexts(tree, request, widen)
+  if not suppliers then
+    return nil
   end
   local stage = tree.stage
   local lanes, raw = stage_lanes(stage, suppliers)
@@ -627,13 +749,23 @@ local function stage_context(tree, request, is_root)
   if not (belts and per_machine) then
     return nil
   end
+  local wide
+  wide, lanes, per_machine = widened(stage, suppliers, lanes, per_machine, may_widen)
   ---@type bpgen.StageContext
   local context = {
     request = stage, suppliers = suppliers, lane_items_per_minute = request.lane_items_per_minute,
-    lanes = lanes, belts = belts, winds = is_root, per_machine = per_machine, machines_worth = 0,
+    lanes = lanes, belts = belts, winds = is_root, wide = wide, per_machine = per_machine, machines_worth = 0,
   }
   context.machines_worth = machines_per_belt(context)
   return context
+end
+
+-- The context of the whole tree, whose root may be built wide when `widen` says the tree is.
+---@param request bpgen.TreeRequest
+---@param widen boolean
+---@return bpgen.StageContext|nil
+local function root_context(request, widen)
+  return stage_context(request.root, request, true, widen, widen)
 end
 
 -- What the rate asks of every stage of a tree.
@@ -675,7 +807,7 @@ end
 local function stage_rates(stage, load)
   local limits = stage.request.inserters
   local used = math.min(load, 1) -- the share of its full speed the busiest machine runs at
-  if not limits or used >= 1 - EPSILON then
+  if not limits or used >= 1 - EPSILON or stage.wide then
     return stage.per_machine
   end
   return rates_per_machine(stage.request, stage.belts, {share = used, rates = stage.per_machine}) --[[@as bpgen.MachineRates]] -- it fitted once, at full speed
@@ -746,6 +878,7 @@ local function stage_plan(stage, machines, load, rates, output)
     long_inserters = rates.long_inserters,
     output_inserters = rates.output_inserters,
     output_fast = rates.output_fast,
+    wide = stage.wide,
   }
 end
 
@@ -820,9 +953,12 @@ end
 ---@return bpgen.PlanReason|nil reason
 ---@return number|nil max_rate  only with "rate-too-high"
 function planner.plan_tree(request)
-  local root = stage_context(request.root, request, true)
+  local root = root_context(request, false)
   if not root then
     return nil, "unsupported-recipe"
+  end
+  if request.rate_per_minute > final_output(root, 1) + EPSILON then
+    root = root_context(request, true) --[[@as bpgen.StageContext]] -- it fits when the same stages do, narrow
   end
   local most = final_output(root, 1)
   if request.rate_per_minute > most + EPSILON then
@@ -839,7 +975,7 @@ end
 ---@return number|nil max_rate
 ---@return bpgen.PlanReason|nil reason
 function planner.max_tree_rate(request)
-  local root = stage_context(request.root, request, true)
+  local root = root_context(request, true)
   if not root then
     return nil, "unsupported-recipe"
   end

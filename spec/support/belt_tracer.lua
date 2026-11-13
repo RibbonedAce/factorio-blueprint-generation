@@ -49,7 +49,9 @@
 -- is on a belt next to the inserter of a machine of `options.raw`.
 -- `options.raw_lanes` (optional) says, by name of a machine of `options.raw`, what the belt that
 -- its input inserters take from must hold: {item} is that item on both lanes, {first, second} is one
--- item on each lane, either way round.
+-- item on each lane, either way round. `options.raw_second_lanes` (optional) says the same of the second
+-- belt a machine's input inserters may take from (a machine with two input belts: each of its inserters
+-- takes from one that holds what `raw_lanes` says or what `raw_second_lanes` says).
 --
 -- Lanes are "left" and "right" of the way a belt runs. Like the validator, this reads
 -- the table `defines`, so a test must define it first.
@@ -371,6 +373,17 @@ local function bring_in(index, belt, lanes, visiting)
   end
 end
 
+-- Adds what the player supplies on a tile (a belt, or the entrance of an underground belt) to both its lanes.
+---@param index bpgen.TraceIndex
+---@param node table
+---@param lanes bpgen.Lanes
+local function add_supplied(index, node, lanes)
+  if index.supplied[node] then
+    lanes.left[index.supplied[node]] = true
+    lanes.right[index.supplied[node]] = true
+  end
+end
+
 -- The items on each lane of a belt: what inserters drop on it, what the player supplies on it,
 -- and what the belts that feed it bring.
 ---@param index bpgen.TraceIndex
@@ -381,10 +394,7 @@ local function fill_belt(index, belt, lanes, visiting)
   if index.drops[belt] then
     add_along(lanes, index.drops[belt])
   end
-  if index.supplied[belt] then
-    lanes.left[index.supplied[belt]] = true
-    lanes.right[index.supplied[belt]] = true
-  end
+  add_supplied(index, belt, lanes)
   bring_in(index, belt, lanes, visiting)
 end
 
@@ -404,6 +414,7 @@ local function fill_node(index, node, lanes, visiting)
       add_along(lanes, contents_of(index, entrance, visiting))
     end
   else
+    add_supplied(index, node, lanes)
     local tiles = kind == "splitter" and {node, index.twin[node]} or {node}
     for _, tile in ipairs(tiles) do
       local rear = feeder_from(index, tile, OPPOSITE[tile.direction])
@@ -565,7 +576,8 @@ end
 ---@param index bpgen.TraceIndex
 local function note_supplies(index)
   for _, supply in ipairs(index.options.supplies or {}) do
-    index.supplied[index.belts[tile_key(supply.x, supply.y)]] = supply.item -- a supply that is not on a belt is a mistake in the test: this fails
+    local key = tile_key(supply.x, supply.y)
+    index.supplied[index.belts[key] or index.flow[key]] = supply.item -- a supply that is not on a belt is a mistake in the test: this fails
     index.raw_items[supply.item] = true
   end
 end
@@ -637,25 +649,57 @@ local function lanes_match(lanes, expected)
   return (only(left, expected[1]) and only(right, expected[2])) or (only(left, expected[2]) and only(right, expected[1]))
 end
 
+-- What the belt that an input inserter takes from may hold: what `raw_lanes` says of its machine, and what
+-- `raw_second_lanes` says when the machine has an entry there (its second belt). Nil when the machine has none.
+---@param index bpgen.TraceIndex
+---@param taker table
+---@return string[][]|nil
+local function expected_lanes(index, taker)
+  local options, name = index.options, taker.machine.name
+  local first, second = options.raw_lanes and options.raw_lanes[name], options.raw_second_lanes and options.raw_second_lanes[name]
+  if not first then
+    return nil
+  end
+  return second and {first, second} or {first}
+end
+
+-- Whether the lanes hold one of the `allowed` contents.
+---@param lanes bpgen.Lanes
+---@param allowed string[][]
+---@return boolean
+local function matches_any(lanes, allowed)
+  for _, expected in ipairs(allowed) do
+    if lanes_match(lanes, expected) then
+      return true
+    end
+  end
+  return false
+end
+
 -- The belt that the input inserters of a machine of `raw_lanes` take from holds what the machine needs, on the lanes it needs.
 ---@param index bpgen.TraceIndex
 local function check_raw_lanes(index)
-  local expectations = index.options.raw_lanes
   for _, taker in ipairs(index.takers) do
-    local expected = expectations and expectations[taker.machine.name]
-    local lanes = expected and contents_of(index, taker.belt, {})
-    if lanes and not lanes_match(lanes, expected) then
+    local allowed = expected_lanes(index, taker)
+    local lanes = allowed and contents_of(index, taker.belt, {})
+    if lanes and not matches_any(lanes, allowed --[[@as string[][] ]]) then
       local tile = index.tile[taker.inserter]
+      local texts = {}
+      for position, expected in ipairs(allowed --[[@as string[][] ]]) do
+        texts[position] = table.concat(expected, " and ")
+      end
       report(index, string.format("the belt next to the inserter at %g,%g carries [%s] on its left lane and [%s] on its right lane, not %s",
-        tile.x, tile.y, table.concat(sorted_items(lanes.left), ","), table.concat(sorted_items(lanes.right), ","), table.concat(expected, " and ")))
+        tile.x, tile.y, table.concat(sorted_items(lanes.left), ","), table.concat(sorted_items(lanes.right), ","), table.concat(texts, " or ")))
     end
   end
 end
 
----@param entities table[]  blueprint entities with positions and directions
----@param options table  see the top of the file
----@return string[] problems  empty when the flow is sound
-function tracer.problems(entities, options)
+-- Finds what the tracer works out from: the entities, the supplies, the underground belts that pair up and what the
+-- inserters put on the belts.
+---@param entities table[]
+---@param options table
+---@return bpgen.TraceIndex
+local function traced(entities, options)
   local index = index_of(entities, options)
   note_supplies(index)
   pair_undergrounds(index)
@@ -667,6 +711,27 @@ function tracer.problems(entities, options)
     end
   end
   note_drops(index)
+  return index
+end
+
+-- The items on the two lanes of the belt (or the splitter or underground piece) on the tile (`x`, `y`), as the tracer
+-- works them out: {left = {item = true, ...}, right = {...}}, looking along the way it runs.
+---@param entities table[]  blueprint entities with positions and directions
+---@param options table  see the top of the file
+---@param x integer  tile column
+---@param y integer  tile row
+---@return bpgen.Lanes
+function tracer.lanes_at(entities, options, x, y)
+  local index = traced(entities, options)
+  local node = assert(index.flow[tile_key(x, y)], "the tracer finds nothing that moves items on that tile")
+  return contents_of(index, node, {})
+end
+
+---@param entities table[]  blueprint entities with positions and directions
+---@param options table  see the top of the file
+---@return string[] problems  empty when the flow is sound
+function tracer.problems(entities, options)
+  local index = traced(entities, options)
   check_sides(index)
   check_lanes(index)
   check_raw_lanes(index)

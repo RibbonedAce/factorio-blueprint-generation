@@ -81,6 +81,8 @@ local north, east, south = defines.direction.north, defines.direction.east, defi
 ---@field block? bpgen.Block  not for a raw item
 ---@field arc? bpgen.Arc  not for the root
 ---@field has_belt_b? boolean  of a final column: whether a second input belt stands west of belt a
+---@field wide_input? boolean  of a chain: whether its first stage is built wide, with a second input belt that comes down from the band west of belt a (see `bpgen.StageRequest.wide`; `build_pure` only)
+---@field second_leaf? bpgen.FeedLeaf  of a chain built wide: what its second input belt takes from the belts that come in
 ---@field index integer  place in the row of columns, from the west
 ---@field x_b? integer  tile column of belt b
 ---@field x0? integer  tile column of the input belt (belt a for a final column); nil for a raw item
@@ -219,7 +221,7 @@ function column_of(stage, names, is_root)
   end
   local stages = straight_chain(stage)
   return {
-    kind = "chain", belt = belt, fed = stages[1], children = {}, stages = stages,
+    kind = "chain", belt = belt, fed = stages[1], children = {}, stages = stages, wide_input = stages[1].shape.second_input_belt == true,
     block = layout.chain_block(stages, names, {product_belt = is_root}),
   }
 end
@@ -236,7 +238,7 @@ local function flatten(column, columns)
 end
 
 -- Gives every column its tile columns, side by side from column `start` (0 by default). A final column
--- with a belt b has a column of its own for it, west of belt a.
+-- with a belt b has a column of its own for it, west of belt a, and so has a chain built wide.
 ---@param columns bpgen.Column[]
 ---@param start? integer
 local function place_across(columns, start)
@@ -246,7 +248,7 @@ local function place_across(columns, start)
       column.x_source = cursor + 1
       cursor = cursor + 2
     else
-      if column.has_belt_b then
+      if column.has_belt_b or column.wide_input then
         column.x_b = cursor
         cursor = cursor + 1
       end
@@ -520,6 +522,16 @@ local function raw_stages_of(runs)
   return stages
 end
 
+-- Stops when a stage of the tree is built wide: its second input belt comes down from the band of the design that brings
+-- in one belt of each material, which the original design has not.
+---@param stage bpgen.StageLayout|bpgen.RawSupplier
+local function refuse_wide(stage)
+  assert(not (stage.shape and stage.shape.second_input_belt), "rows: the original design cannot bring the second input belt of a column built wide")
+  for _, supplier in ipairs(stage.suppliers or {}) do
+    refuse_wide(supplier)
+  end
+end
+
 -- The blueprint for `root`, the stage that makes the final product, with the stages that
 -- make its ingredients in `suppliers`: none or one for a stage fed raw items or by a
 -- chain, two or more for a stage with several made ingredients.
@@ -531,6 +543,7 @@ end
 ---@return bpgen.Entity[] entities
 ---@return (bpgen.StageLayout|bpgen.RawSupplier)[] raw_stages
 function rows.build(root, names)
+  refuse_wide(root)
   local top = column_of(root, names, true)
   if top.kind == "chain" then
     return top.block.entities, {top.fed}
@@ -561,8 +574,17 @@ local function fuel_leaves_of(column)
   return leaves
 end
 
+-- The leaf for the second input belt of a chain built wide: it comes down just west of the chain's own belt, so the leaf
+-- stands just before the chain's.
+---@param column bpgen.Column  a chain built wide
+---@return bpgen.FeedLeaf
+local function second_leaf_of(column)
+  return {index = column.index - 0.5, feed = assert(column.fed.second_feed, "rows: a stage built wide has no second feed"), second_of = column}
+end
+
 -- The chains and the raw columns among the columns, and the fuel their stages burn: the leaves, which take what they
--- need from belts that come in. A chain keeps its fuel leaves in `fuel_leaves`.
+-- need from belts that come in. A chain keeps its fuel leaves in `fuel_leaves`, and a chain built wide its second belt's
+-- leaf in `second_leaf`.
 ---@param columns bpgen.Column[]
 ---@return bpgen.FeedLeaf[]
 local function leaves_of(columns)
@@ -572,6 +594,10 @@ local function leaves_of(columns)
       column.feed = assert(column.fed.feed, "rows: a stage fed raw items has no feed")
       column.drop_x = nil
       column.fuel_leaves = column.block and fuel_leaves_of(column) or {}
+      if column.wide_input then
+        column.second_leaf = second_leaf_of(column)
+        leaves[#leaves + 1] = column.second_leaf
+      end
       leaves[#leaves + 1] = column
       for _, leaf in ipairs(column.fuel_leaves) do
         leaves[#leaves + 1] = leaf
@@ -582,25 +608,31 @@ local function leaves_of(columns)
 end
 
 -- Tells every leaf the tile column its belt comes down, once the columns are placed: the fuel of a stage comes
--- down beside the output inserters of the stage before it, one column west of the belt between them.
+-- down beside the output inserters of the stage before it, one column west of the belt between them, and the second belt
+-- of a chain built wide in the column of its own.
 ---@param leaves bpgen.FeedLeaf[]
 local function set_drops(leaves)
   for _, leaf in ipairs(leaves) do
     if leaf.owner then
       leaf.drop_x = leaf.owner.x0 + leaf.fuel.belt_column - 1
+    elseif leaf.second_of then
+      leaf.drop_x = leaf.second_of.x_b
     else
       leaf.drop_x = leaf.x0 or leaf.x_source
     end
   end
 end
 
--- The first row of a chain: right under the last tile of the belt that comes down to it, and low enough for the
+-- The first row of a chain: right under the last tile of the belts that come down to it, and low enough for the
 -- fuel of its stages to turn into the heads of their belts (see `inputs.fuel_tail`).
 ---@param column bpgen.Column  a chain
 ---@param ends table<bpgen.FeedLeaf, integer>
 ---@return integer
 local function chain_top(column, ends)
   local first_belt_row = ends[column] + 1
+  if column.second_leaf then
+    first_belt_row = math.max(first_belt_row, ends[column.second_leaf] + 1)
+  end
   for _, leaf in ipairs(column.fuel_leaves) do
     first_belt_row = math.max(first_belt_row, ends[leaf] + 2)
   end
@@ -628,7 +660,8 @@ local function set_pure_rows(plan, columns, ends)
 end
 
 -- The belt between the last tile of the descent of a chain and the first tile of its own belt, when `chain_top` put the
--- chain lower than right under the descent (a stage that burns fuel needs room for its fuel to turn in).
+-- chain lower than right under the descent (a stage that burns fuel needs room for its fuel to turn in, and a chain built
+-- wide has two belts that come down). The same for the second belt of a chain built wide.
 ---@param entities bpgen.Entity[]
 ---@param columns bpgen.Column[]
 ---@param belt_name string
@@ -636,8 +669,10 @@ end
 local function add_chain_descents(entities, columns, belt_name, ends)
   for _, column in ipairs(columns) do
     if column.block and column.kind ~= "final" then
-      local first_belt_row = column.top + column.block.raw_belts[1].row
-      add_run(entities, belt_name, column.drop_x, ends[column] + 1, first_belt_row - 1, south)
+      for number, leaf in ipairs({column, column.second_leaf}) do
+        local first_belt_row = column.top + column.block.raw_belts[number].row
+        add_run(entities, belt_name, leaf.drop_x, ends[leaf] + 1, first_belt_row - 1, south)
+      end
     end
   end
 end

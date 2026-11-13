@@ -74,6 +74,45 @@ describe("feeds", function()
       assert.are.equal(1, #plan.trunks)
     end)
 
+    describe("the second belt of a chain built wide", function()
+      -- It comes down just west of the chain's own belt (a place half a column before the chain's), with the ore on both lanes.
+      -- The trunk of the chain's leaf must stand above it, so that the belt does not have to cross it where the tap splitter of
+      -- the chain's leaf is: so every second belt has a trunk of its own, which the trunks, ordered by their last leaf, put below
+      -- the trunk of its chain.
+      local function second_leaf(chain, ore_per_minute)
+        local leaf = one_item_leaf(chain.index - 0.5, "iron-ore", ore_per_minute)
+        leaf.second_of = chain
+        return leaf
+      end
+
+      it("takes a trunk of its own, below the chain's, though another second belt of the same ore would fit on it", function()
+        local first, second = furnace_leaf(3, "iron-ore", 300, 24), furnace_leaf(6, "iron-ore", 300, 24)
+        local leaves = {second_leaf(first, 100), first, second_leaf(second, 100), second}
+
+        local plan = feeds.plan(leaves, LANE)
+
+        assert.are.same({{6}, {5.5}, {3}, {2.5}}, {places_of(plan.trunks[1]), places_of(plan.trunks[2]), places_of(plan.trunks[3]), places_of(plan.trunks[4])})
+      end)
+
+      it("puts the chain's own leaf on a trunk with the other leaves that take the same, as before", function()
+        local first, second = furnace_leaf(3, "iron-ore", 100, 8), furnace_leaf(6, "iron-ore", 100, 8)
+        local leaves = {second_leaf(first, 100), first, second_leaf(second, 100), second}
+
+        local plan = feeds.plan(leaves, LANE)
+
+        assert.are.same({3, 6}, places_of(plan.trunks[1]))
+      end)
+
+      it("lets the pure ore of two second belts ride one belt that comes in, since it is a bus of feeders", function()
+        local first, second = furnace_leaf(3, "iron-ore", 300, 24), furnace_leaf(6, "iron-ore", 300, 24)
+        local leaves = {second_leaf(first, 100), first, second_leaf(second, 100), second}
+
+        local plan = feeds.plan(leaves, LANE)
+
+        assert.are.same({"iron-ore: 4", "coal: 2"}, belts_summary(plan)) -- the ore of the two chains and of the two second belts: 300 + 300 + 100 + 100 = 800, a belt of 900
+      end)
+    end)
+
     it("lets a trunk with one item carry two lanes of it", function()
       local leaves = {one_item_leaf(1, "wood", 400), one_item_leaf(2, "wood", 500)}
 

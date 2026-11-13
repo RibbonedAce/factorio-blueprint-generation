@@ -124,6 +124,7 @@ classDiagram
     product
     machine_speed
     fuel
+    wide
   }
   class InserterLimits {
     items_per_minute
@@ -159,6 +160,7 @@ classDiagram
     long_inserters
     output_inserters
     output_fast
+    wide
   }
   class PlanInput {
     name
@@ -221,6 +223,9 @@ classDiagram
     long_inserters
     output_inserters
     output_fast
+    output_paired
+    powered_from_output
+    second_input_belt
   }
   class RawSupplier {
     raw_item
@@ -235,6 +240,7 @@ classDiagram
   StageLayout o-- StageLayout : suppliers
   StageLayout o-- RawSupplier : suppliers
   StageLayout *-- Feed : feed, only a stage fed raw items
+  StageLayout *-- Feed : second_feed, only a stage built wide, what its second input belt carries
   StageLayout *-- Feed : fuel_feed, only a stage that burns fuel from the belt before it
   RawSupplier *-- Feed
   Feed *-- FeedItem : items
@@ -350,6 +356,8 @@ classDiagram
     top
     bottom
     drop_x
+    wide_input
+    x_b
   }
   class Arc {
     head
@@ -368,12 +376,14 @@ classDiagram
   Column --> Block : block
   Column o-- StageLayout : stages
   Column o-- FeedLeaf : fuel_leaves
+  Column --> FeedLeaf : second_leaf, a chain built wide
   Column --> Feed : feed, a chain or a raw column
   RawRun --> Column
 
   class FeedLeaf {
     index
     drop_x
+    second_of
   }
   class Trunk {
     items

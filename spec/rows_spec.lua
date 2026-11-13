@@ -728,6 +728,166 @@ describe("rows", function()
       end)
     end)
 
+    describe("a chain whose first column is built wide: a second belt comes down beside the first", function()
+      -- Four iron furnaces built wide (i) and a gear assembler (G): the ore comes down on two belts, the one beside the
+      -- furnaces (column 9) with the ore on one lane and the coal on the other, the second (column 8) with the ore on both;
+      -- in the furnaces' rows they are woven (n u the entrance and the exit of the hop of the first belt under the second's
+      -- detour; see `layout.lua`).
+      -- The mixed belt comes from the trunk in row 3, the pure one from the trunk of its own in row 6, which ends in column
+      -- 8: so the mixed belt passes it. The belt between the columns runs north (the furnaces are the longer column) and
+      -- winds, so that the plates ride both its lanes (x from 0, the belts that come in from the west edge: the coal in
+      -- row 4, the ore in row 0).
+      --
+      --      0123456789012345678901
+      --   0 |>>v...................|
+      --   1 |..SS..................|
+      --   2 |..v>>v................|
+      --   3 |..v..>>>>v............|
+      --   4 |>(v.)^...v............|
+      --   5 |..v......v............|
+      --   6 |..>>>>>>vv............|
+      --   7 |........vv............|
+      --   8 |........vn}ii}>^}GGG}v|
+      --   9 |........>v}ii+.^}GGG+v|
+      --  10 |........v<}ii.>^+GGG.v|
+      --  11 |........vu}ii}^<......|
+      --  12 |........vn}ii}>^......|
+      --  13 |........>v}ii+.^......|
+      --  14 |........v<}ii..^......|
+      --  15 |........vu}ii}>^......|
+      --  16 |..............^.......|
+      local MEDIUM = builders.medium_pole_names()
+      local WIDE_SHAPE = {
+        machine_size = 2, input_inserters = 2, output_inserters = 1,
+        output_paired = true, powered_from_output = true, second_input_belt = true,
+      }
+      local function wide_furnaces(count)
+        return {
+          machine_count = count, load = count, machine = "iron-furnace", shape = WIDE_SHAPE, suppliers = {},
+          feed = {items = {{name = "iron-ore", amount = 300}, {name = "coal", amount = 20}}},
+          second_feed = {items = {{name = "iron-ore", amount = 100}}},
+        }
+      end
+      local glyphs = {["iron-furnace"] = {size = 2, glyph = "i"}, ["gear-assembler"] = {size = 3, glyph = "G"}}
+      local root = assemblers("gear-assembler", 1, 2, 1, {wide_furnaces(4)})
+      local entities, inputs = build_pure(root, MEDIUM)
+
+      it("brings the ore and the coal down on two belts side by side, and winds the belt between the columns north", function()
+        assert.are.same({
+          ">>v...................",
+          "..SS..................",
+          "..v>>v................",
+          "..v..>>>>v............",
+          ">(v.)^...v............",
+          "..v......v............",
+          "..>>>>>>vv............",
+          "........vv............",
+          "........vn}ii}>^}GGG}v",
+          "........>v}ii+.^}GGG+v",
+          "........v<}ii.>^+GGG.v",
+          "........vu}ii}^<......",
+          "........vn}ii}>^......",
+          "........>v}ii+.^......",
+          "........v<}ii..^......",
+          "........vu}ii}>^......",
+          "..............^.......",
+        }, picture.draw(entities, glyphs, 0, 0, 21, 16))
+      end)
+
+      it("brings in the coal and the ore from the west edge, each along the row of its feeder", function()
+        assert.are.same({{x = 0, y = 0, item = "iron-ore"}, {x = 0, y = 4, item = "coal"}}, inputs)
+      end)
+
+      it("keeps the ore of the second belt on both lanes and the ore and the coal of the first on one each", function()
+        local lanes_a = tracer.lanes_at(entities, {machines = {}, raw = {}, product = "x", supplies = inputs, underground_reach = 5}, 9, 12)
+        local lanes_b = tracer.lanes_at(entities, {machines = {}, raw = {}, product = "x", supplies = inputs, underground_reach = 5}, 8, 12)
+
+        assert.are.same({{left = {["iron-ore"] = true}, right = {coal = true}}, {left = {["iron-ore"] = true}, right = {["iron-ore"] = true}}}, {lanes_a, lanes_b})
+      end)
+
+      it("passes the tracer: each belt holds what the inserters that take from it need, and the plates reach the assembler", function()
+        local machines = {
+          ["iron-furnace"] = {size = 2, eats = {"iron-ore"}, makes = "iron-plate"},
+          ["gear-assembler"] = {size = 3, eats = {"iron-plate"}, makes = "gear"},
+        }
+
+        local problems = tracer.problems(entities, {
+          machines = machines, raw = {["iron-furnace"] = true}, product = "gear", supplies = inputs, underground_reach = 5,
+          raw_lanes = {["iron-furnace"] = {"iron-ore", "coal"}}, raw_second_lanes = {["iron-furnace"] = {"iron-ore"}},
+        })
+
+        assert.are.same({}, problems)
+      end)
+
+      it("powers every machine and inserter", function()
+        local catalog = builders.a_catalog{}
+        catalog["iron-furnace"] = {kind = "machine", width = 2, height = 2, needs_power = true}
+        catalog["gear-assembler"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+        assert.are.same({}, validator.validate(entities, catalog))
+      end)
+
+      it("numbers every entity once", function()
+        for index, entity in ipairs(entities) do
+          assert.are.equal(index, entity.entity_number)
+        end
+      end)
+
+      it("is refused by the original design, whether the column stands alone or beside another", function()
+        local message = "rows: the original design cannot bring the second input belt of a column built wide"
+
+        assert.has_error(function() rows.build(wide_furnaces(4), MEDIUM) end, message)
+        assert.has_error(function() rows.build(root, MEDIUM) end, message)
+      end)
+    end)
+
+    describe("a chain built wide whose ore needs a trunk of its own", function()
+      -- Ten furnaces; the winding belt now runs south, since the assemblers (three, beside the furnaces' first rows) and
+      -- their column are not longer: with more assemblers than furnaces, the belt runs south to their last row.
+      local MEDIUM = builders.medium_pole_names()
+      local WIDE_SHAPE = {
+        machine_size = 2, input_inserters = 2, output_inserters = 1,
+        output_paired = true, powered_from_output = true, second_input_belt = true,
+      }
+      local wide = {
+        machine_count = 4, load = 4, machine = "iron-furnace", shape = WIDE_SHAPE, suppliers = {},
+        feed = {items = {{name = "iron-ore", amount = 300}, {name = "coal", amount = 20}}},
+        second_feed = {items = {{name = "iron-ore", amount = 100}}},
+      }
+
+      -- What the validator and the tracer find wrong with the blueprint of the furnaces and the gear assemblers.
+      local function problems_of(entities, inputs)
+        local catalog = builders.a_catalog{}
+        catalog["iron-furnace"] = {kind = "machine", width = 2, height = 2, needs_power = true}
+        catalog["gear-assembler"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+        local machines = {
+          ["iron-furnace"] = {size = 2, eats = {"iron-ore"}, makes = "iron-plate"},
+          ["gear-assembler"] = {size = 3, eats = {"iron-plate"}, makes = "gear"},
+        }
+
+        local problems = validator.validate(entities, catalog)
+        for _, problem in ipairs(tracer.problems(entities, {
+          machines = machines, raw = {["iron-furnace"] = true}, product = "gear", supplies = inputs, underground_reach = 5,
+          raw_lanes = {["iron-furnace"] = {"iron-ore", "coal"}}, raw_second_lanes = {["iron-furnace"] = {"iron-ore"}},
+        })) do
+          problems[#problems + 1] = problem
+        end
+        return problems
+      end
+
+      it("runs the winding belt south when the assemblers are the longer column, and the validator and tracer pass", function()
+        local entities, inputs = build_pure(assemblers("gear-assembler", 6, 2, 1, {wide}), MEDIUM)
+
+        assert.are.same({}, problems_of(entities, inputs))
+      end)
+
+      it("brings both belts down to a chain that stands a row lower, because its assemblers take rows of poles, and the validator and tracer pass", function()
+        local entities, inputs = build_pure(assemblers("gear-assembler", 6, 3, 1, {wide}), MEDIUM) -- three inserters fill the side
+
+        assert.are.same({}, problems_of(entities, inputs))
+      end)
+    end)
+
     describe("more iron ore than one belt carries", function()
       -- Three columns of 22 furnaces take 440 ore a minute each. A trunk carries a lane of ore, 450 a minute, so each column
       -- gets a trunk of its own; a belt that comes in carries two lanes, 900, so one belt of iron ore feeds two of the

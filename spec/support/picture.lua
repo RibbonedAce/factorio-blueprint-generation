@@ -33,6 +33,7 @@ local GLYPHS = {
   [NAMES.fast_inserter] = function() return "}" end,
   [NAMES.long_inserter] = function() return "}" end,
   [NAMES.pole] = function() return "+" end,
+  [builders.POLES.medium.name] = function() return "+" end,
 }
 
 -- How many tiles the entity covers across and along the map.

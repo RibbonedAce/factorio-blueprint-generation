@@ -1537,4 +1537,340 @@ describe("layout", function()
       end
     end
   end)
+
+  describe("furnaces built wide: two woven input belts, poles beside the output side, an output belt that winds in twos", function()
+    -- Four furnaces (F) on their own, from column -1: belt b, belt a, the input inserters (two plain ones in every furnace),
+    -- the furnaces, the output inserters (one in each furnace: the machines go in twos, so the first furnace's is in its
+    -- top row, the second's in its bottom row), the inner column of the winding belt and the outer one. Belt a goes under
+    -- the column beside the inserters for two rows out of four (n the entrance and u the exit of the underground belt), and
+    -- belt b comes into that column for those two rows (> v and v <) and goes back. The poles stand in the free tile of the
+    -- output side; the medium pole reaches the input inserters from there, three tiles away. The output belt winds in twos
+    -- (see `Builder:add_winding_output_belt`): the first furnace alone on a curve, the second and third at a seam, the
+    -- fourth alone.
+    --
+    --       -1  0  1  2  3  4  5  6
+    --   -1 |.  .  .  .  .  .  v  .|     the belt starts a tile behind the first curve
+    --    0 |v  n  }  F  F  }  >  v|     belt a goes under; the first furnace takes it
+    --    1 |>  v  }  F  F  +  .  v|     belt b comes in; the first furnace takes it
+    --    2 |v  <  }  F  F  .  .  v|     the second furnace takes belt b, which goes back
+    --    3 |v  u  }  F  F  }  >  v|     belt a is up again, for the second furnace
+    --    4 |v  n  }  F  F  }  v  <|
+    --    5 |>  v  }  F  F  +  >  v|
+    --    6 |v  <  }  F  F  .  .  v|
+    --    7 |v  u  }  F  F  }  >  v|
+    local MEDIUM = builders.medium_pole_names()
+    local ASSEMBLER = "assembling-machine-1"
+    local wide = {
+      machine_size = 2, input_inserters = 2, output_inserters = 1,
+      output_paired = true, powered_from_output = true, second_input_belt = true,
+    }
+    local assembler_shape = {machine_size = 3, input_inserters = 2, output_inserters = 1}
+    local machines = {[NAMES.machine] = {size = 2, glyph = "F"}, [ASSEMBLER] = {size = 3, glyph = "A"}}
+
+    -- The furnaces, then the assemblers (when there are any) with a belt of plates between them.
+    local function wide_chain(furnace_count, assembler_count)
+      return layout.build_chain({
+        {machine_count = furnace_count, load = furnace_count, machine = NAMES.machine, shape = wide},
+        {machine_count = assembler_count, load = assembler_count, machine = ASSEMBLER, shape = assembler_shape},
+      }, MEDIUM)
+    end
+
+    it("draws four furnaces on their own as the picture above", function()
+      local entities = layout.build(4, MEDIUM, wide)
+
+      assert.are.same({
+        "......v.",
+        "vn}FF}>v",
+        ">v}FF+.v",
+        "v<}FF..v",
+        "vu}FF}>v",
+        "vn}FF}v<",
+        ">v}FF+>v",
+        "v<}FF..v",
+        "vu}FF}>v",
+      }, picture.draw(entities, machines, -1, -1, 6, 7))
+    end)
+
+    it("draws five furnaces with a seam of the last two, and an exit for belt a two rows under the last inserter", function()
+      local entities = layout.build(5, MEDIUM, wide)
+
+      assert.are.same({
+        "......v.",
+        "vn}FF}>v",
+        ">v}FF+.v",
+        "v<}FF..v",
+        "vu}FF}>v",
+        "vn}FF}v<",
+        ">v}FF+>v",
+        "v<}FF..v",
+        "vu}FF}>v",
+        "vn}FF}v<",
+        ">v}FF+>v",
+        "........",
+        ".u......",
+      }, picture.draw(entities, machines, -1, -1, 6, 11))
+    end)
+
+    it("runs the winding belt north, reflected, when the plates go north to a column that needs the lowest furnaces'", function()
+      -- Four furnaces and an assembler beside the first three rows: the belt between the columns runs north, since the
+      -- furnaces are the longer column, and starts a tile under the last furnace.
+      local entities = wide_chain(4, 1)
+
+      assert.are.same({
+        "vn}FF}>^}AAA}v",
+        ">v}FF+.^}AAA+v",
+        "v<}FF.>^+AAA.v",
+        "vu}FF}^<......",
+        "vn}FF}>^......",
+        ">v}FF+.^......",
+        "v<}FF..^......",
+        "vu}FF}>^......",
+        "......^.......",
+        "..............",
+      }, picture.draw(entities, machines, -1, 0, 12, 9))
+    end)
+
+    it("keeps the winding belt running south when the plates go south, to a column longer than the furnaces", function()
+      local entities = wide_chain(4, 3)
+
+      assert.are.same({
+        "......v.......",
+        "vn}FF}>v}AAA}v",
+        ">v}FF+.v}AAA+v",
+        "v<}FF..v+AAA.v",
+        "vu}FF}>v.AAA.v",
+        "vn}FF}v<}AAA+v",
+        ">v}FF+>v}AAA}v",
+        "v<}FF..v}AAA}v",
+        "vu}FF}>v}AAA.v",
+      }, picture.draw(entities, machines, -1, -1, 12, 7))
+    end)
+
+    it("gives every furnace two plain inserters, and no long-handed one", function()
+      local entities = layout.build(4, MEDIUM, wide)
+
+      assert.are.same({8, 0}, {#entities_named(entities, NAMES.inserter) - 4, #entities_named(entities, NAMES.long_inserter)}) -- 8 input inserters and 4 output
+    end)
+
+    it("stands the poles on the output side only, in the free tile of every other furnace's pair", function()
+      local entities = layout.build(4, MEDIUM, wide)
+
+      local poles = {}
+      for _, pole in ipairs(entities_named(entities, MEDIUM.pole)) do
+        local tile = grid.top_left_tile(pole.position)
+        poles[#poles + 1] = {tile.x, tile.y}
+      end
+      assert.are.same({{4, 1}, {4, 5}}, poles)
+    end)
+
+    it("stands a pole only where the one above it stops reaching the machines, with a pole that reaches four rows", function()
+      local far_reaching = builders.medium_pole_names()
+      far_reaching.pole_supply_distance = 4.5 -- four rows each way: the first pole (row 1) reaches the furnaces down to row 5
+
+      local entities = layout.build(6, far_reaching, wide)
+
+      local poles = {}
+      for _, pole in ipairs(entities_named(entities, far_reaching.pole)) do
+        local tile = grid.top_left_tile(pole.position)
+        poles[#poles + 1] = {tile.x, tile.y}
+      end
+      assert.are.same({{4, 1}, {4, 6}, {4, 10}}, poles) -- the third furnace (rows 4 and 5) is still reached from row 1
+    end)
+
+    it("joins a column powered from its output side to the column before it, though it has no poles on its input side", function()
+      -- The furnaces of the second column have two input inserters, which fill the side: its poles stand on the output side.
+      local catalog = builders.a_catalog{}
+      catalog[NAMES.machine] = {kind = "machine", width = 2, height = 2, needs_power = true}
+      local plain = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+      local powered_from_output = {machine_size = 2, input_inserters = 2, output_inserters = 1, powered_from_output = true}
+
+      local entities = layout.build_chain({
+        {machine_count = 2, load = 2, machine = NAMES.machine, shape = plain},
+        {machine_count = 4, load = 4, machine = NAMES.machine, shape = powered_from_output},
+      }, MEDIUM)
+
+      assert.are.same({}, validator.validate(entities, catalog))
+    end)
+
+    it("draws the second input belt from the first row of a chain that starts a row lower, down to the last inserter", function()
+      -- An assembler with three inserters on a side takes rows of poles, which start every column of the chain a row lower.
+      local pole_rows = {machine_size = 3, input_inserters = 3, output_inserters = 1}
+      local entities = layout.build_chain({
+        {machine_count = 4, load = 4, machine = NAMES.machine, shape = wide},
+        {machine_count = 1, load = 1, machine = ASSEMBLER, shape = pole_rows},
+      }, MEDIUM)
+
+      local rows = {}
+      for _, belt in ipairs(entities_named(entities, NAMES.belt)) do
+        local tile = grid.top_left_tile(belt.position)
+        if tile.x == -1 then
+          rows[#rows + 1] = tile.y
+        end
+      end
+      table.sort(rows)
+      assert.are.same({1, 2, 3, 4, 5, 6, 7, 8}, rows) -- the inserters of the four furnaces are in rows 1 to 8
+    end)
+
+    it("needs no rows of poles between the furnaces: the second one starts two rows under the first", function()
+      local entities = layout.build(2, MEDIUM, wide)
+
+      assert.are.equal(NAMES.machine, name_at(entities, 2, 2, 2))
+    end)
+
+    it("refuses a pole beside the output side that is too short to reach the input inserters", function()
+      assert.has_error(function() layout.build(4, NAMES, wide) end, "layout: the poles beside the output side do not reach the input inserters")
+    end)
+
+    it("keeps a plain output belt for a single furnace, which has no partner to fill the other lane", function()
+      local entities = layout.build(1, MEDIUM, wide)
+
+      assert.are.same({"vn}FF}v", ">v}FF+v", ".......", ".u....."}, picture.draw(entities, machines, -1, 0, 5, 3)) -- belt a ends in its exit two rows under the last inserter
+    end)
+
+    it("lists the second input belt after the first among the belts of raw items, at column -1", function()
+      local block = layout.chain_block({{machine_count = 4, load = 4, machine = NAMES.machine, shape = wide}}, MEDIUM, {product_belt = true})
+
+      assert.are.same({{0, 0}, {-1, 0}}, {{block.raw_belts[1].column, block.raw_belts[1].row}, {block.raw_belts[2].column, block.raw_belts[2].row}})
+    end)
+
+    it("lists no second input belt for furnaces that are not built wide", function()
+      local block = layout.chain_block({{machine_count = 4, load = 4, machine = NAMES.machine, shape = {machine_size = 2, input_inserters = 1, output_inserters = 1}}}, MEDIUM, {product_belt = true})
+
+      assert.are.equal(1, #block.raw_belts)
+    end)
+
+    it("takes the row under the head of the winding belt that runs north for the block: nine rows for four furnaces, which stand in eight", function()
+      local block = layout.chain_block({
+        {machine_count = 4, load = 4, machine = NAMES.machine, shape = wide},
+        {machine_count = 1, load = 1, machine = ASSEMBLER, shape = assembler_shape},
+      }, MEDIUM, {product_belt = true})
+
+      assert.are.equal(9, block.height)
+    end)
+
+    -- Four furnaces, not fed raw items (so with no free row under their belts, which a column fed raw items has), and an
+    -- assembler: the furnaces are the longer column, so the belt between them runs north.
+    local function height_of_four_furnaces_before_an_assembler(furnace_shape)
+      local block = layout.chain_block({
+        {machine_count = 4, load = 4, machine = NAMES.machine, shape = furnace_shape, suppliers = {}},
+        {machine_count = 1, load = 1, machine = ASSEMBLER, shape = assembler_shape},
+      }, MEDIUM, {product_belt = true})
+      return block.height
+    end
+
+    it("takes the row under the head of the winding belt that runs north also for a column that is not fed raw items", function()
+      local paired = {machine_size = 2, input_inserters = 1, output_inserters = 1, output_paired = true}
+
+      assert.are.equal(9, height_of_four_furnaces_before_an_assembler(paired))
+    end)
+
+    it("takes no row under a plain belt that runs north, which has no head behind it", function()
+      local plain = {machine_size = 2, input_inserters = 1, output_inserters = 1}
+
+      assert.are.equal(8, height_of_four_furnaces_before_an_assembler(plain))
+    end)
+
+    for _, furnace_count in ipairs({1, 2, 3, 4, 5, 8, 11, 24, 47}) do
+      it("powers every machine and inserter of " .. furnace_count .. " furnaces on their own, the poles in one network", function()
+        local catalog = builders.a_catalog{}
+        catalog[NAMES.machine] = {kind = "machine", width = 2, height = 2, needs_power = true}
+
+        local entities = layout.build(furnace_count, MEDIUM, wide)
+
+        assert.are.same({}, validator.validate(entities, catalog))
+      end)
+    end
+
+    for _, counts in ipairs({{2, 1}, {4, 1}, {5, 1}, {6, 2}, {7, 2}, {12, 3}, {13, 8}, {47, 8}}) do
+      it("passes the validator for " .. counts[1] .. " furnaces and " .. counts[2] .. " assemblers", function()
+        local catalog = builders.a_catalog{}
+        catalog[NAMES.machine] = {kind = "machine", width = 2, height = 2, needs_power = true}
+        catalog[ASSEMBLER] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+        local entities = wide_chain(counts[1], counts[2])
+
+        assert.are.same({}, validator.validate(entities, catalog))
+      end)
+    end
+
+    -- Belt a carries "a" and belt b carries "b": what the tile in front of each input inserter holds, per furnace.
+    local function belts_taken_by_each_furnace(furnace_count)
+      local entities = layout.build(furnace_count, MEDIUM, wide)
+      local options = {machines = {}, raw = {}, product = "x", supplies = {{x = 0, y = 0, item = "a"}, {x = -1, y = 0, item = "b"}}}
+      local taken = {}
+      for furnace = 0, furnace_count - 1 do
+        local items = {}
+        for row = 2 * furnace, 2 * furnace + 1 do
+          local lanes = tracer.lanes_at(entities, options, 0, row)
+          for item in pairs(lanes.left) do
+            items[#items + 1] = item
+          end
+        end
+        table.sort(items)
+        taken[#taken + 1] = table.concat(items, ",")
+      end
+      return taken
+    end
+
+    for _, furnace_count in ipairs({1, 2, 3, 4, 5, 8, 9}) do
+      it("lets each of " .. furnace_count .. " furnaces take belt a with one inserter and belt b with the other", function()
+        local expected = {}
+        for furnace = 1, furnace_count do
+          expected[furnace] = "a,b"
+        end
+
+        assert.are.same(expected, belts_taken_by_each_furnace(furnace_count))
+      end)
+    end
+
+    -- Every furnace makes an item of its own, so the tracer tells which furnaces' plates ride which lane of the belt
+    -- between the columns, read at the end of the belt (the end it runs to).
+    local function plates_per_lane(furnace_count, assembler_count)
+      local entities = wide_chain(furnace_count, assembler_count)
+      local furnaces = entities_named(entities, NAMES.machine)
+      table.sort(furnaces, function(first, second) return first.position.y < second.position.y end)
+      local options = {machines = {}, raw = {}, product = "gear", supplies = {{x = 0, y = 0, item = "ore"}, {x = -1, y = 0, item = "ore"}}}
+      local eaten = {}
+      for index, furnace in ipairs(furnaces) do
+        furnace.name = "furnace-" .. index
+        options.machines[furnace.name] = {size = 2, eats = {"ore"}, makes = "plate-" .. index}
+        options.raw[furnace.name] = true
+        eaten[index] = "plate-" .. index
+      end
+      options.machines[ASSEMBLER] = {size = 3, eats = eaten, makes = "gear"}
+      local belt_rows = {}
+      for _, belt in ipairs(entities_named(entities, NAMES.belt)) do
+        local tile = grid.top_left_tile(belt.position)
+        if tile.x == 6 then
+          belt_rows[#belt_rows + 1] = {row = tile.y, direction = belt.direction}
+        end
+      end
+      table.sort(belt_rows, function(first, second) return first.row < second.row end)
+      local north = belt_rows[2].direction == defines.direction.north
+      local at = north and belt_rows[1].row or belt_rows[#belt_rows].row
+      local lanes = tracer.lanes_at(entities, options, 6, at)
+      local function count(set)
+        local total = 0
+        for _ in pairs(set) do
+          total = total + 1
+        end
+        return total
+      end
+      return {count(lanes.left), count(lanes.right)}
+    end
+
+    for furnace_count = 2, 14 do
+      it("puts the plates of " .. furnace_count .. " furnaces on the two lanes of a belt that runs south, half on each", function()
+        local lanes = plates_per_lane(furnace_count, 40)
+
+        assert.are.same({math.max(lanes[1], lanes[2]), math.min(lanes[1], lanes[2])}, {math.ceil(furnace_count / 2), math.floor(furnace_count / 2)})
+      end)
+
+      it("puts the plates of " .. furnace_count .. " furnaces on the two lanes of a belt that runs north, half on each", function()
+        local lanes = plates_per_lane(furnace_count, 1)
+
+        assert.are.same({math.max(lanes[1], lanes[2]), math.min(lanes[1], lanes[2])}, {math.ceil(furnace_count / 2), math.floor(furnace_count / 2)})
+      end)
+    end
+  end)
 end)

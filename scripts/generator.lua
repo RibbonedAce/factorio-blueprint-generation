@@ -610,6 +610,19 @@ local function machine_size_of(stage)
   return stage.machine_size --[[@as integer]]
 end
 
+-- Whether the planner may build a step wide (see `bpgen.StageRequest.wide`): the blueprint is of the design with one belt of
+-- each material (which has the underground belts the woven input belts need), the step is fed raw items (it has no step
+-- before it and no raw item next to a made one) and burns fuel, and the pole of the blueprint reaches the inserters of the
+-- input side of its machine from the output side.
+---@param job bpgen.Job
+---@param stage bpgen.StageData
+---@param machine_size integer
+---@return boolean
+local function may_be_wide(job, stage, machine_size)
+  return job.inputs ~= nil and #stage.suppliers == 0 and stage.raw_item == nil
+    and stage.fuel ~= nil and layout.pole_reach(job.names.pole_supply_distance) > machine_size
+end
+
 -- What the planner is told about one step: the inserters that feed and empty each
 -- of its machines, as many as the layout leaves room for.
 ---@param job bpgen.Job
@@ -630,6 +643,7 @@ local function stage_request(job, stage)
       max_output = layout.max_output_inserters(machine_size),
       machine_size = machine_size,
     },
+    wide = may_be_wide(job, stage, machine_size),
   }
 end
 
@@ -721,23 +735,50 @@ local function feed_of(step)
   return {items = items}
 end
 
--- What a step takes from the belts that come in, by where it rides: a step that eats only raw items takes it on the
--- belt of raw items that ends in it (the first result), a step that eats what another step makes and burns fuel takes
--- the fuel on the free lane of the belt between them (the second).
+-- What a step built wide takes from its two input belts: of its ingredient, as much as one lane carries on the first belt
+-- (the fuel on the other lane) and the rest on both lanes of the second.
 ---@param step bpgen.PlannedStage  with its `demand`
----@return bpgen.Feed|nil feed
----@return bpgen.Feed|nil fuel_feed
-local function feeds_of(step)
-  if #step.suppliers == 0 then
-    return feed_of(step), nil
+---@param lane number  what one lane of a belt carries a minute
+---@return bpgen.Feed first
+---@return bpgen.Feed second
+local function wide_feeds(step, lane)
+  local first, second = {}, {}
+  for _, entry in ipairs(step.demand) do
+    local on_first = entry.is_fuel and entry.amount or math.min(entry.amount, lane)
+    first[#first + 1] = {name = entry.name, amount = on_first}
+    if not entry.is_fuel then
+      second[#second + 1] = {name = entry.name, amount = entry.amount - on_first}
+    end
   end
-  return nil, step.stage.fuel and feed_of(step) or nil
+  return {items = first}, {items = second}
 end
 
--- The size of a step's machines and how many inserters each has, as the layout wants it.
+-- What a step takes from the belts that come in, by where it rides: a step that eats only raw items takes it on the
+-- belt of raw items that ends in it (the first result; for a step built wide, on two belts: the second result is what
+-- the second one carries), a step that eats what another step makes and burns fuel takes the fuel on the free lane of
+-- the belt between them (the third).
+---@param step bpgen.PlannedStage  with its `demand`
+---@param lane number  what one lane of a belt carries a minute
+---@return bpgen.Feed|nil feed
+---@return bpgen.Feed|nil second_feed
+---@return bpgen.Feed|nil fuel_feed
+local function feeds_of(step, lane)
+  if #step.suppliers > 0 then
+    return nil, nil, step.stage.fuel and feed_of(step) or nil
+  end
+  if step.plan.wide then
+    local feed, second_feed = wide_feeds(step, lane)
+    return feed, second_feed, nil
+  end
+  return feed_of(step), nil, nil
+end
+
+-- The size of a step's machines and how many inserters each has, as the layout wants it: a step built wide has its second
+-- input belt, its poles beside the output side and its output belt winding for machines in twos.
 ---@param step bpgen.PlannedStage
 ---@return bpgen.Shape
 local function shape_of(step)
+  local wide = step.plan.wide
   return {
     machine_size = machine_size_of(step.stage),
     input_inserters = step.plan.input_inserters,
@@ -745,6 +786,9 @@ local function shape_of(step)
     long_inserters = step.plan.long_inserters,
     output_inserters = step.plan.output_inserters,
     output_fast = step.plan.output_fast,
+    output_paired = wide,
+    powered_from_output = wide,
+    second_input_belt = wide,
   }
 end
 
@@ -753,18 +797,19 @@ end
 -- with them, if any, which has no machines and only a belt (on belt a). A step that eats only
 -- raw items also says what it takes of them (`feed`), which `rows.build_pure` uses.
 ---@param step bpgen.PlannedStage  with its `demand`
+---@param lane number  what one lane of a belt carries a minute
 ---@return bpgen.StageLayout
-local function layout_stage(step)
+local function layout_stage(step, lane)
   local suppliers = {}
   for index, supplier in ipairs(step.suppliers) do
-    suppliers[index] = layout_stage(supplier)
+    suppliers[index] = layout_stage(supplier, lane)
     suppliers[index].belt = rides_belt_b(step.plan, supplier.stage.item) and "b" or "a"
   end
   local raw_item = step.stage.raw_item
   if raw_item then
     suppliers[#suppliers + 1] = {raw_item = raw_item, feed = feed_of(step)}
   end
-  local feed, fuel_feed = feeds_of(step)
+  local feed, second_feed, fuel_feed = feeds_of(step, lane)
   return {
     machine_count = step.plan.machines,
     load = step.plan.load,
@@ -773,6 +818,7 @@ local function layout_stage(step)
     shape = shape_of(step),
     suppliers = suppliers,
     feed = feed,
+    second_feed = second_feed,
     fuel_feed = fuel_feed,
   }
 end
@@ -786,7 +832,7 @@ end
 ---@return string[]|nil belts
 ---@return bpgen.StageLayout root  what the blueprint was laid out from
 local function build_entities(job, planned)
-  local root = layout_stage(planned)
+  local root = layout_stage(planned, planner.lane_items_per_minute(job.belt_speed))
   if not job.inputs then
     return (rows.build(root, job.names)), nil, root
   end

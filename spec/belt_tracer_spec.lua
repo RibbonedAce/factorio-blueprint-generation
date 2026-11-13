@@ -575,6 +575,39 @@ describe("belt tracer", function()
     end)
   end)
 
+  describe("the lanes at a tile", function()
+    it("gives the items on each lane of a belt, looking along the way it runs: a supplied item rides both", function()
+      local entities = belts_from(3, 0, south, 3)
+
+      local lanes = tracer.lanes_at(entities, {machines = {}, raw = {}, product = "product", supplies = {{x = 3, y = 0, item = "ore"}}}, 3, 2)
+
+      assert.are.same({left = {ore = true}, right = {ore = true}}, lanes)
+    end)
+
+    it("gives each lane its own item when a belt is fed from both sides: the west side of a belt that runs south is its right lane", function()
+      local entities = all_of(builders.belt(2, 0, east), builders.belt(4, 0, west), belts_from(3, 0, south, 3))
+
+      local lanes = tracer.lanes_at(entities, {
+        machines = {}, raw = {}, product = "product", supplies = {{x = 2, y = 0, item = "ore"}, {x = 4, y = 0, item = "coal"}},
+      }, 3, 2)
+
+      assert.are.same({left = {coal = true}, right = {ore = true}}, lanes)
+    end)
+
+    it("gives what an inserter puts on a belt, on the lane the rules say: the far one", function()
+      local entities = all_of(machine("furnace", 0, 0), builders.inserter(2, 0, west), belts_from(3, 0, south, 3))
+
+      local lanes = tracer.lanes_at(entities, {machines = MACHINES, raw = {furnace = true}, product = "plate"}, 3, 2)
+
+      assert.are.same({left = {plate = true}, right = {}}, lanes) -- the far lane of a belt that runs south, looking from the west, is its left
+    end)
+
+    it("stops with a message when nothing that moves items is on the tile", function()
+      assert.has_error(function() tracer.lanes_at({}, {machines = {}, raw = {}, product = "product"}, 3, 2) end,
+        "the tracer finds nothing that moves items on that tile")
+    end)
+  end)
+
   describe("the lanes of the belt of a machine fed raw items", function()
     -- A belt running south down x = 3, fed from its two sides in its first tile (nothing is behind it): from the west by a
     -- belt of `west_item` and from the east by a belt of `east_item`. A furnace takes from it with an inserter in x = 4,
@@ -627,6 +660,43 @@ describe("belt tracer", function()
       })
 
       assert.are.same({}, problems)
+    end)
+
+    describe("of a machine with a second input belt", function()
+      -- A belt of coal down x = 3 and a belt of ore down x = 4, a furnace at x = 6..7 and in x = 5 a plain inserter (row 2)
+      -- that takes from the belt of ore and a long-handed one (row 3) that reaches over it to the belt of coal.
+      local function furnace_with_two_belts()
+        return all_of(
+          belts_from(3, 0, south, 4), belts_from(4, 0, south, 4),
+          builders.inserter(5, 2, west), builders.long_inserter(5, 3, west), machine("furnace", 6, 2))
+      end
+      local supplies = {{x = 3, y = 0, item = "coal"}, {x = 4, y = 0, item = "ore"}}
+
+      it("accepts a belt that holds what `raw_lanes` says and one that holds what `raw_second_lanes` says", function()
+        local problems = tracer.problems(furnace_with_two_belts(), {
+          machines = MACHINES, raw = {furnace = true}, product = "plate", supplies = supplies,
+          raw_lanes = {furnace = {"ore"}}, raw_second_lanes = {furnace = {"coal"}},
+        })
+
+        assert.are.same({}, problems)
+      end)
+
+      it("reports an inserter whose belt holds neither, naming both", function()
+        local problems = tracer.problems(furnace_with_two_belts(), {
+          machines = MACHINES, raw = {furnace = true}, product = "plate", supplies = supplies,
+          raw_lanes = {furnace = {"ore"}}, raw_second_lanes = {furnace = {"stone"}},
+        })
+
+        assert.are.same({"the belt next to the inserter at 5,3 carries [coal] on its left lane and [coal] on its right lane, not ore or stone"}, problems)
+      end)
+
+      it("expects what `raw_lanes` says of every belt when there is no `raw_second_lanes`", function()
+        local problems = tracer.problems(furnace_with_two_belts(), {
+          machines = MACHINES, raw = {furnace = true}, product = "plate", supplies = supplies, raw_lanes = {furnace = {"ore"}},
+        })
+
+        assert.are.same({"the belt next to the inserter at 5,3 carries [coal] on its left lane and [coal] on its right lane, not ore"}, problems)
+      end)
     end)
 
     it("reports a lone item that is only on one lane", function()
