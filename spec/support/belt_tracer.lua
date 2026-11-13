@@ -305,6 +305,15 @@ local function is_belt(index, entity)
   return entity ~= nil and entity.name == (index.options.belt or "transport-belt")
 end
 
+-- Whether an inserter can take items from this entity: a belt, or the entrance or the exit of an underground belt (an
+-- inserter takes from the tile of either, which holds what the tracer works out for it).
+---@param index bpgen.TraceIndex
+---@param entity table|nil
+---@return boolean
+local function is_pickup(index, entity)
+  return is_belt(index, entity) or (entity ~= nil and entity.name == (index.options.underground or "underground-belt"))
+end
+
 -- Notes which kind of inserter this is, if it moves between a machine and a belt. `reach` is
 -- how many tiles away it picks up and drops.
 ---@param index bpgen.TraceIndex
@@ -318,7 +327,7 @@ local function classify(index, inserter, reach)
     report(index, string.format("the long-handed inserter at %g,%g puts items on a belt, which the tracer does not follow", tile.x, tile.y))
   elseif is_machine(index, from) and is_belt(index, to) then
     index.makers[#index.makers + 1] = {inserter = inserter, machine = from, belt = to}
-  elseif is_belt(index, from) and is_machine(index, to) then
+  elseif is_pickup(index, from) and is_machine(index, to) then
     index.takers[#index.takers + 1] = {inserter = inserter, machine = to, belt = from}
   end
 end

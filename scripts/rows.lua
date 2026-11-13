@@ -526,7 +526,8 @@ end
 -- in one belt of each material, which the original design has not.
 ---@param stage bpgen.StageLayout|bpgen.RawSupplier
 local function refuse_wide(stage)
-  assert(not (stage.shape and stage.shape.second_input_belt), "rows: the original design cannot bring the second input belt of a column built wide")
+  local shape = stage.shape
+  assert(not (shape and (shape.second_input_belt or shape.fuel_belt)), "rows: the original design cannot bring the second input belt of a column built wide")
   for _, supplier in ipairs(stage.suppliers or {}) do
     refuse_wide(supplier)
   end
@@ -608,13 +609,14 @@ local function leaves_of(columns)
 end
 
 -- Tells every leaf the tile column its belt comes down, once the columns are placed: the fuel of a stage comes
--- down beside the output inserters of the stage before it, one column west of the belt between them, and the second belt
--- of a chain built wide in the column of its own.
+-- down beside the output inserters of the stage before it, one column west of the belt between them (the fuel of a stage
+-- built wide, which has a belt of its own, in the column of that belt), and the second belt of a chain built wide in the
+-- column of its own.
 ---@param leaves bpgen.FeedLeaf[]
 local function set_drops(leaves)
   for _, leaf in ipairs(leaves) do
     if leaf.owner then
-      leaf.drop_x = leaf.owner.x0 + leaf.fuel.belt_column - 1
+      leaf.drop_x = leaf.owner.x0 + leaf.fuel.belt_column - (leaf.fuel.woven and 0 or 1)
     elseif leaf.second_of then
       leaf.drop_x = leaf.second_of.x_b
     else
@@ -634,7 +636,7 @@ local function chain_top(column, ends)
     first_belt_row = math.max(first_belt_row, ends[column.second_leaf] + 1)
   end
   for _, leaf in ipairs(column.fuel_leaves) do
-    first_belt_row = math.max(first_belt_row, ends[leaf] + 2)
+    first_belt_row = math.max(first_belt_row, ends[leaf] + (leaf.fuel.woven and 1 or 2))
   end
   return first_belt_row - column.block.raw_belts[1].row
 end
@@ -659,9 +661,25 @@ local function set_pure_rows(plan, columns, ends)
   end
 end
 
+-- The belts that come down to a chain by themselves, each with the row of the block where its belt starts: its own first
+-- belt, and the fuel of the stages built wide that have a belt of their own. (The second belt of a chain built wide has
+-- the lowest trunk of the chain's leaves, so its descent reaches the chain; it is the chain's own belt that goes on.)
+---@param column bpgen.Column  a chain
+---@return {leaf: bpgen.FeedLeaf, row: integer}[]
+local function descents_of(column)
+  local descents = {{leaf = column, row = column.block.raw_belts[1].row}}
+  for _, leaf in ipairs(column.fuel_leaves) do
+    if leaf.fuel.woven then
+      descents[#descents + 1] = {leaf = leaf, row = leaf.fuel.row}
+    end
+  end
+  return descents
+end
+
 -- The belt between the last tile of the descent of a chain and the first tile of its own belt, when `chain_top` put the
 -- chain lower than right under the descent (a stage that burns fuel needs room for its fuel to turn in, and a chain built
--- wide has two belts that come down). The same for the second belt of a chain built wide.
+-- wide has two belts that come down). The same for the second belt of a chain built wide, and for the fuel of a stage
+-- built wide, which comes down straight into its own belt.
 ---@param entities bpgen.Entity[]
 ---@param columns bpgen.Column[]
 ---@param belt_name string
@@ -669,9 +687,8 @@ end
 local function add_chain_descents(entities, columns, belt_name, ends)
   for _, column in ipairs(columns) do
     if column.block and column.kind ~= "final" then
-      for number, leaf in ipairs({column, column.second_leaf}) do
-        local first_belt_row = column.top + column.block.raw_belts[number].row
-        add_run(entities, belt_name, leaf.drop_x, ends[leaf] + 1, first_belt_row - 1, south)
+      for _, descent in ipairs(descents_of(column)) do
+        add_run(entities, belt_name, descent.leaf.drop_x, ends[descent.leaf] + 1, column.top + descent.row - 1, south)
       end
     end
   end
@@ -697,7 +714,7 @@ local function fuel_tails(columns, names, ends)
   local tails = {}
   for _, column in ipairs(columns) do
     for _, leaf in ipairs(column.fuel_leaves or {}) do
-      for _, entity in ipairs(inputs.fuel_tail(names, leaf.drop_x, ends[leaf], column.top + leaf.fuel.row)) do
+      for _, entity in ipairs(leaf.fuel.woven and {} or inputs.fuel_tail(names, leaf.drop_x, ends[leaf], column.top + leaf.fuel.row)) do
         tails[#tails + 1] = entity
       end
     end

@@ -1823,6 +1823,231 @@ describe("layout", function()
       end)
     end
 
+    describe("with steel furnaces after them, which take their fuel on a belt of their own", function()
+      -- The steel furnaces (S) have the fuel in the column beside their inserters (column 7), going under for two rows
+      -- (n u) while the plates of the winding belt before them (column 6, its outer column) turn into it in the second
+      -- row of four and come back in the third (> v and v <), so that each furnace takes the fuel with one inserter and the
+      -- plates with the other. The iron furnaces are those of the picture above. The fuel comes down into the first
+      -- entrance from the band, and the winding belt of the steel furnaces starts a tile behind its first curve. The steel
+      -- furnaces start one furnace under the iron furnaces (row 2) with the rows of the weave of the iron furnaces, so that
+      -- the plates of the lowest iron furnace, which drop in the last row, still pass the inserter of a steel furnace: a plate
+      -- only goes the way the belt runs, and the inserter of a steel furnace takes the plates from the tile of the detour,
+      -- in the first or the second of its two rows.
+      local STEEL = "steel-furnace"
+      local steel = {
+        machine_size = 2, input_inserters = 2, output_inserters = 1,
+        output_paired = true, powered_from_output = true, fuel_belt = true,
+      }
+      local fuel_feed = {items = {{name = "coal", amount = 1}}}
+      local steel_machines = {[NAMES.machine] = {size = 2, glyph = "F"}, [STEEL] = {size = 2, glyph = "S"}}
+
+      local function iron_and_steel(count)
+        return layout.chain_block({
+          {machine_count = count, load = count, machine = NAMES.machine, shape = wide},
+          {machine_count = count, load = count, machine = STEEL, shape = steel, fuel_feed = fuel_feed},
+        }, MEDIUM, {product_belt = true})
+      end
+
+      it("draws four iron furnaces and four steel furnaces, the steel furnaces one furnace lower, the belt of the plates running south", function()
+        assert.are.same({
+          "......v........",
+          "vn}FF}>vn......",
+          ">v}FF+.>v....v.",
+          "v<}FF..v<}SS}>v",
+          "vu}FF}>vu}SS+.v",
+          "vn}FF}v<n}SS..v",
+          ">v}FF+>>v}SS}>v",
+          "v<}FF..v<}SS}v<",
+          "vu}FF}>vu}SS+>v",
+          ".......vn}SS..v",
+          ".......>v}SS}>v",
+          "...............",
+          "........u......",
+        }, picture.draw(iron_and_steel(4).entities, steel_machines, -1, -1, 13, 11))
+      end)
+
+      it("ends the belt of the fuel in an exit two rows under the last inserter when the last furnace has the entrance and the detour only", function()
+        assert.are.same({"n", "v", ".", "u", "."}, picture.draw(iron_and_steel(4).entities, steel_machines, 7, 8, 7, 12))
+      end)
+
+      it("ends the belt of the fuel in the exit of the last furnace when it has the detour and the exit", function()
+        assert.are.same({"n", "v", "<", "u", "."}, picture.draw(iron_and_steel(5).entities, steel_machines, 7, 8, 7, 12))
+      end)
+
+      it("takes the free row under the exit of the belt of fuel for the block when the steel furnaces are the longer column", function()
+        local block = layout.chain_block({
+          {machine_count = 4, load = 4, machine = NAMES.machine, shape = wide},
+          {machine_count = 4, load = 4, machine = STEEL, shape = steel, fuel_feed = fuel_feed},
+        }, MEDIUM, {product_belt = true})
+
+        assert.are.equal(13, block.height) -- four steel furnaces stand in rows 2 to 9, their belt of fuel ends in an exit in row 11
+      end)
+
+      local function iron_steel_assemblers(count, assemblers)
+        return layout.build_chain({
+          {machine_count = count, load = count, machine = NAMES.machine, shape = wide},
+          {machine_count = count, load = count, machine = STEEL, shape = steel, fuel_feed = fuel_feed},
+          {machine_count = assemblers, load = assemblers, machine = ASSEMBLER, shape = assembler_shape},
+        }, MEDIUM)
+      end
+
+      it("takes the belt of the steel, which runs north to the assembler, up to the first row, above the first steel furnace", function()
+        local with_assembler = {[NAMES.machine] = {size = 2, glyph = "F"}, [STEEL] = {size = 2, glyph = "S"}, [ASSEMBLER] = {size = 3, glyph = "A"}}
+
+        -- (column 13: the outer column of the belt that the steel furnaces wind; the first steel furnace stands in row 2)
+        assert.are.same({"^", "^", "^", "^"}, picture.draw(iron_steel_assemblers(4, 1), with_assembler, 13, 0, 13, 3))
+      end)
+
+      it("takes that belt up to the first row of a chain that starts a row lower, because the assemblers after the steel furnaces have rows of poles", function()
+        local with_assembler = {[NAMES.machine] = {size = 2, glyph = "F"}, [STEEL] = {size = 2, glyph = "S"}, [ASSEMBLER] = {size = 3, glyph = "A"}}
+        local pole_rows = {machine_size = 3, input_inserters = 3, output_inserters = 1}
+        local entities = layout.build_chain({
+          {machine_count = 4, load = 4, machine = NAMES.machine, shape = wide},
+          {machine_count = 4, load = 4, machine = STEEL, shape = steel, fuel_feed = fuel_feed},
+          {machine_count = 1, load = 1, machine = ASSEMBLER, shape = pole_rows},
+        }, MEDIUM)
+
+        local belts = 0 -- (the picture would show a belt twice on a tile as one)
+        for _, belt in ipairs(entities_named(entities, NAMES.belt)) do
+          local tile = grid.top_left_tile(belt.position)
+          if tile.x == 13 and tile.y <= 4 then
+            belts = belts + 1
+          end
+        end
+        assert.are.same({{".", "^", "^", "^", "^"}, 4}, {picture.draw(entities, with_assembler, 13, 0, 13, 4), belts}) -- the chain starts in row 1, the steel furnaces in row 3
+      end)
+
+      it("refuses steel furnaces that start lower than the assemblers after them when those are the longer column, whose belt would run south", function()
+        assert.has_error(function() iron_steel_assemblers(2, 6) end,
+          "layout: a column that starts lower than the next one, whose belt runs south, leaves the inserters above it without plates")
+      end)
+
+      it("tells the block where the fuel comes down: the column of its belt, in the first row", function()
+        local feeds = iron_and_steel(4).fuel_feeds
+
+        assert.are.same({{7, 0, true}}, {{feeds[1].belt_column, feeds[1].row, feeds[1].woven}})
+      end)
+
+      it("starts the steel furnaces one furnace under the iron furnaces, and one column further east than a stage that has the fuel on the belt before it", function()
+        local entities = iron_and_steel(4).entities
+
+        assert.are.same({false, STEEL, STEEL}, {name_at(entities, 9, 0, 2) ~= nil, name_at(entities, 9, 2, 2), name_at(entities, 9, 8, 2)})
+      end)
+
+      -- The tile rows of the top of the steel furnaces, from the first.
+      local function steel_furnace_tops(entities)
+        local tops = {}
+        for _, furnace in ipairs(entities_named(entities, STEEL)) do
+          tops[#tops + 1] = grid.top_left_tile(furnace.position, 2, 2).y
+        end
+        table.sort(tops)
+        return tops
+      end
+
+      -- The plates ride the belt that the iron furnaces wind, which holds "plates" here from its first tile; the fuel is "coal".
+      local function items_taken_by_each_steel_furnace(furnace_count)
+        local entities = iron_and_steel(furnace_count).entities
+        local options = {
+          machines = {}, raw = {}, product = "x",
+          supplies = {{x = 0, y = 0, item = "ore"}, {x = -1, y = 0, item = "ore"}, {x = 6, y = 0, item = "plates"}, {x = 7, y = 0, item = "coal"}},
+        }
+        local taken = {}
+        for _, top in ipairs(steel_furnace_tops(entities)) do
+          local items = {}
+          for row = top, top + 1 do
+            for item in pairs(tracer.lanes_at(entities, options, 7, row).left) do
+              items[#items + 1] = item
+            end
+          end
+          table.sort(items)
+          taken[#taken + 1] = table.concat(items, ",")
+        end
+        return taken
+      end
+
+      for _, furnace_count in ipairs({2, 3, 4, 5, 8, 9}) do -- (one furnace has a plain belt, in column 5)
+        it("lets each of " .. furnace_count .. " steel furnaces take the fuel with one inserter and the plates with the other", function()
+          local expected = {}
+          for furnace = 1, furnace_count do
+            expected[furnace] = "coal,plates"
+          end
+
+          assert.are.same(expected, items_taken_by_each_steel_furnace(furnace_count))
+        end)
+      end
+
+      -- Every iron furnace makes an item of its own ("plate-1", ...): the plates that reach the tile in front of the plate
+      -- inserter of each steel furnace, from the top down, for as many iron furnaces and steel furnaces. A plate only goes the
+      -- way the belt runs, so a steel furnace takes the plates of the iron furnaces that drop them in its row or before it.
+      local function plates_at_each_steel_furnace(furnace_count)
+        local entities = iron_and_steel(furnace_count).entities
+        local steel_rows = steel_furnace_tops(entities)
+        local irons = entities_named(entities, NAMES.machine)
+        table.sort(irons, function(first, second) return first.position.y < second.position.y end)
+        local options = {machines = {}, raw = {}, product = "x", supplies = {{x = 0, y = 0, item = "ore"}, {x = -1, y = 0, item = "ore"}, {x = 7, y = 0, item = "coal"}}}
+        for index, furnace in ipairs(irons) do
+          furnace.name = "furnace-" .. index
+          options.machines[furnace.name] = {size = 2, eats = {"ore"}, makes = "plate-" .. index}
+          options.raw[furnace.name] = true
+        end
+        local at_each = {}
+        for _, top in ipairs(steel_rows) do
+          local seen = {}
+          for row = top, top + 1 do
+            local lanes = tracer.lanes_at(entities, options, 7, row)
+            for _, lane in ipairs({lanes.left, lanes.right}) do
+              for item in pairs(lane) do
+                seen[item] = item ~= "coal" or nil
+              end
+            end
+          end
+          at_each[#at_each + 1] = seen
+        end
+        return at_each
+      end
+
+      local function count_of(set)
+        local total = 0
+        for _ in pairs(set) do
+          total = total + 1
+        end
+        return total
+      end
+
+      for _, furnace_count in ipairs({2, 3, 4, 5, 8, 9}) do
+        it("lets the plates of every one of " .. furnace_count .. " iron furnaces reach an inserter of a steel furnace, the lowest furnace's too", function()
+          local reached = {}
+          for _, seen in ipairs(plates_at_each_steel_furnace(furnace_count)) do
+            for item in pairs(seen) do
+              reached[item] = true
+            end
+          end
+
+          assert.are.equal(furnace_count, count_of(reached))
+        end)
+
+        it("gives the steel furnaces of " .. furnace_count .. " the plates of at least as many iron furnaces as steel furnaces are before them and itself", function()
+          local enough, expected = {}, {}
+          for steel, seen in ipairs(plates_at_each_steel_furnace(furnace_count)) do
+            enough[steel] = count_of(seen) >= steel
+            expected[steel] = true
+          end
+
+          assert.are.same(expected, enough)
+        end)
+      end
+
+      for _, furnace_count in ipairs({1, 2, 3, 4, 5, 12, 25, 47}) do
+        it("powers every machine and inserter of " .. furnace_count .. " iron furnaces and as many steel furnaces, the poles in one network", function()
+          local catalog = builders.a_catalog{}
+          catalog[NAMES.machine] = {kind = "machine", width = 2, height = 2, needs_power = true}
+          catalog[STEEL] = {kind = "machine", width = 2, height = 2, needs_power = true}
+
+          assert.are.same({}, validator.validate(iron_and_steel(furnace_count).entities, catalog))
+        end)
+      end
+    end)
+
     -- Every furnace makes an item of its own, so the tracer tells which furnaces' plates ride which lane of the belt
     -- between the columns, read at the end of the belt (the end it runs to).
     local function plates_per_lane(furnace_count, assembler_count)

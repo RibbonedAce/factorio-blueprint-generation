@@ -2068,13 +2068,14 @@ describe("generator", function()
     -- 47 furnaces make 881.25. 500 plates a minute are 26.67 furnaces: 27.
     local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+    local steel = a_recipe{energy = 16, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "steel-plate")}, category = "smelting"}
 
     local function game(options)
       options = options or {}
       return fake_prototypes{
         furnace_speed = 1,
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
-        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
+        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear, ["steel-plate"] = steel},
         missing_entities = options.missing_entities,
         medium_pole_supply_distance = options.medium_pole_supply_distance,
       }
@@ -2172,6 +2173,34 @@ describe("generator", function()
       local root = layout_of("iron-plate", 600)
 
       assert.are.same({"iron-ore 150.00"}, amounts(root.second_feed))
+    end)
+
+    it("allows 176.25 steel plates a minute, 47 steel furnaces' worth, where the plain design allows 90", function()
+      _G.prototypes = game()
+
+      assert.are.same({{"blueprint-generation.max-rate", "176.25"}, {"blueprint-generation.max-rate", "90"}},
+        {generator.max_rate_message("steel-plate", fake_force{}), generator.max_rate_message("steel-plate", fake_force{locked = {"medium-electric-pole"}})})
+    end)
+
+    it("tells the layout that the iron furnaces draw a second belt and the steel furnaces a belt of fuel", function()
+      _G.prototypes = game()
+
+      local steel_stage = layout_of("steel-plate", 100)
+      local iron_stage = steel_stage.suppliers[1]
+
+      assert.are.same({{false, true}, {true, false}}, {
+        {iron_stage.shape.fuel_belt, iron_stage.shape.second_input_belt},
+        {steel_stage.shape.fuel_belt, steel_stage.shape.second_input_belt},
+      }) -- (each is {the belt of fuel, the second belt}: the iron furnaces draw the second, the steel furnaces the belt of fuel)
+    end)
+
+    it("builds the iron furnaces and the steel furnaces wide, three inserters on each, and a blueprint that passes the validator", function()
+      _G.prototypes = game()
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = true}
+
+      local result = generator.generate("steel-plate", 100, fake_force{}) -- 27 steel furnaces, and 27 iron furnaces for their plates
+
+      assert.are.same({54, 3, {}}, {count_named(result.entities, "stone-furnace"), inserters_per_furnace(result), validator.validate(result.entities, catalog)})
     end)
 
     local plain = {

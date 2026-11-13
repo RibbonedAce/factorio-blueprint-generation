@@ -631,20 +631,25 @@ end
 
 -- Whether a stage takes the product of the stage that feeds it on both lanes of one belt: it eats that product and
 -- nothing else (no second ingredient, no fuel, whose lane the product would have to leave free), so a supplier built wide,
--- which puts its product on both lanes, can feed it. (A stage with one ingredient has one supplier at most.)
+-- which puts its product on both lanes, can feed it. (A stage with one ingredient has one supplier at most.) A stage that
+-- burns fuel takes plates on both lanes only when it is built wide too (it has a belt of its own for the fuel), which it is
+-- when it asks for it and the tree allows it (`may_widen`): its supplier is not built wide for nothing otherwise.
 ---@param stage bpgen.StageRequest
+---@param may_widen boolean  whether the tree allows `stage` itself to be built wide
 ---@return boolean
-local function takes_both_lanes(stage)
-  return #stage.recipe.ingredients == 1 and stage.fuel == nil
+local function takes_both_lanes(stage, may_widen)
+  return #stage.recipe.ingredients == 1 and (stage.fuel == nil or (stage.wide == true and may_widen))
 end
 
--- Whether a stage is of the kind that is built wide (see `bpgen.StageRequest.wide`): it asks for it, it is fed raw items,
--- burns fuel and eats one ingredient, so that its belt has a lane of each.
+-- Whether a stage is of the kind that is built wide (see `bpgen.StageRequest.wide`): it asks for it, burns fuel and eats
+-- one ingredient, and it is fed raw items (its belt has a lane of each, and a second belt) or by a stage that is built wide
+-- (the plates on both lanes of the belt, and a belt of its own for the fuel).
 ---@param stage bpgen.StageRequest
 ---@param suppliers bpgen.StageContext[]
 ---@return boolean
 local function is_wide_kind(stage, suppliers)
-  return stage.wide == true and #suppliers == 0 and stage.fuel ~= nil and #stage.recipe.ingredients == 1
+  local fed_wide = #suppliers == 1 and suppliers[1].wide
+  return stage.wide == true and stage.fuel ~= nil and #stage.recipe.ingredients == 1 and (#suppliers == 0 or fed_wide)
 end
 
 -- Whether the sides of a machine are what a stage built wide has: the layout knows the size of the machine, and a plain
@@ -666,12 +671,17 @@ local function can_be_wide(stage, suppliers, per_machine)
   return is_wide_kind(stage, suppliers) and has_wide_sides(stage, per_machine)
 end
 
--- The four lanes of the two input belts of a stage built wide, from the two of the belt it would have: belt a keeps its
--- ingredient and its fuel, belt b carries the ingredient on both lanes.
+-- The four lanes of the two input belts of a stage built wide, from the two of the belt it would have. A stage fed raw
+-- items keeps its ingredient and its fuel on belt a, and belt b carries the ingredient on both lanes. A stage fed by one
+-- built wide has the ingredient on both lanes of the belt before it, and its fuel on both lanes of a belt of its own.
 ---@param lanes string[]  the ingredient and the fuel
+---@param suppliers bpgen.StageContext[]
 ---@return string[]
-local function wide_lanes(lanes)
-  return {lanes[1], lanes[2], lanes[1], lanes[1]}
+local function wide_lanes(lanes, suppliers)
+  if #suppliers == 0 then
+    return {lanes[1], lanes[2], lanes[1], lanes[1]}
+  end
+  return {lanes[1], lanes[1], lanes[2], lanes[2]}
 end
 
 -- What one machine does when it has a second plain input inserter, for belt b.
@@ -687,7 +697,9 @@ local function with_second_inserter(rates)
 end
 
 -- Whether a stage is built wide, with the lanes and the machine rates that go with it (as they were worked out when it is
--- not). `may_widen` is whether the tree asks for it of this stage (see `stage_context`).
+-- not). `may_widen` is whether the tree asks for it of this stage (see `stage_context`). (A stage that burns fuel and
+-- cannot be built wide after one that is, whose plates then fill both lanes of its belt and leave none for the fuel, is
+-- planned with the lanes of a plain stage, so it makes no more than the plain design: the rate asked is refused.)
 ---@param stage bpgen.StageRequest
 ---@param suppliers bpgen.StageContext[]
 ---@param lanes string[]
@@ -700,7 +712,27 @@ local function widened(stage, suppliers, lanes, per_machine, may_widen)
   if not (may_widen and can_be_wide(stage, suppliers, per_machine)) then
     return false, lanes, per_machine
   end
-  return true, wide_lanes(lanes), with_second_inserter(per_machine)
+  return true, wide_lanes(lanes, suppliers), with_second_inserter(per_machine)
+end
+
+-- The lanes, the belts and what one machine does for a stage fed by `suppliers`, before it is built wide, or nil when it
+-- does not fit (see `stage_lanes`, `is_supported`).
+---@param stage bpgen.StageRequest
+---@param suppliers bpgen.StageContext[]
+---@return string[]|nil lanes
+---@return bpgen.Belts|nil belts
+---@return bpgen.MachineRates|nil per_machine
+local function machine_setup(stage, suppliers)
+  local lanes, raw = stage_lanes(stage, suppliers)
+  if not lanes or not is_supported(stage.recipe, stage.product) then
+    return nil
+  end
+  local belts = choose_belts(stage, lanes, raw or {})
+  local per_machine = belts and rates_per_machine(stage, belts)
+  if not per_machine then
+    return nil
+  end
+  return lanes, belts, per_machine
 end
 
 local stage_context -- defined below: a stage is worked out with the stages that feed it
@@ -710,12 +742,13 @@ local stage_context -- defined below: a stage is worked out with the stages that
 ---@param tree bpgen.StageTree
 ---@param request bpgen.TreeRequest
 ---@param widen boolean
+---@param may_widen boolean  whether the tree allows the stage itself to be built wide
 ---@return bpgen.StageContext[]|nil
-local function supplier_contexts(tree, request, widen)
+local function supplier_contexts(tree, request, widen, may_widen)
   local suppliers = {}
-  local may_widen = widen and takes_both_lanes(tree.stage)
+  local suppliers_may_widen = widen and takes_both_lanes(tree.stage, may_widen)
   for index, supplier in ipairs(tree.suppliers) do
-    suppliers[index] = stage_context(supplier, request, false, widen, may_widen)
+    suppliers[index] = stage_context(supplier, request, false, widen, suppliers_may_widen)
     if not suppliers[index] then
       return nil
     end
@@ -735,18 +768,13 @@ end
 ---@param may_widen boolean  this stage may be one of them
 ---@return bpgen.StageContext|nil
 function stage_context(tree, request, is_root, widen, may_widen)
-  local suppliers = supplier_contexts(tree, request, widen)
+  local suppliers = supplier_contexts(tree, request, widen, may_widen)
   if not suppliers then
     return nil
   end
   local stage = tree.stage
-  local lanes, raw = stage_lanes(stage, suppliers)
-  if not lanes or not is_supported(stage.recipe, stage.product) then
-    return nil
-  end
-  local belts = choose_belts(stage, lanes, raw or {})
-  local per_machine = belts and rates_per_machine(stage, belts)
-  if not (belts and per_machine) then
+  local lanes, belts, per_machine = machine_setup(stage, suppliers)
+  if not (lanes and belts and per_machine) then
     return nil
   end
   local wide

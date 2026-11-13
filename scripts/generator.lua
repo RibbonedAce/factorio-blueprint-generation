@@ -611,15 +611,15 @@ local function machine_size_of(stage)
 end
 
 -- Whether the planner may build a step wide (see `bpgen.StageRequest.wide`): the blueprint is of the design with one belt of
--- each material (which has the underground belts the woven input belts need), the step is fed raw items (it has no step
--- before it and no raw item next to a made one) and burns fuel, and the pole of the blueprint reaches the inserters of the
--- input side of its machine from the output side.
+-- each material (which has the underground belts the woven input belts need), the step burns fuel and has no raw item next
+-- to a made one, and the pole of the blueprint reaches the inserters of the input side of its machine from the output side.
+-- The planner decides the rest: a step fed raw items, or by one that it builds wide (steel plate from iron plate).
 ---@param job bpgen.Job
 ---@param stage bpgen.StageData
 ---@param machine_size integer
 ---@return boolean
 local function may_be_wide(job, stage, machine_size)
-  return job.inputs ~= nil and #stage.suppliers == 0 and stage.raw_item == nil
+  return job.inputs ~= nil and stage.raw_item == nil
     and stage.fuel ~= nil and layout.pole_reach(job.names.pole_supply_distance) > machine_size
 end
 
@@ -774,11 +774,13 @@ local function feeds_of(step, lane)
 end
 
 -- The size of a step's machines and how many inserters each has, as the layout wants it: a step built wide has its second
--- input belt, its poles beside the output side and its output belt winding for machines in twos.
+-- input belt, its poles beside the output side and its output belt winding for machines in twos. A step built wide that is
+-- fed by another one (steel plate from iron plate) has a belt of fuel of its own, woven with the belt before it, instead.
 ---@param step bpgen.PlannedStage
 ---@return bpgen.Shape
 local function shape_of(step)
   local wide = step.plan.wide
+  local fuel_belt = wide and #step.suppliers > 0
   return {
     machine_size = machine_size_of(step.stage),
     input_inserters = step.plan.input_inserters,
@@ -788,7 +790,8 @@ local function shape_of(step)
     output_fast = step.plan.output_fast,
     output_paired = wide,
     powered_from_output = wide,
-    second_input_belt = wide,
+    second_input_belt = wide and not fuel_belt,
+    fuel_belt = fuel_belt,
   }
 end
 

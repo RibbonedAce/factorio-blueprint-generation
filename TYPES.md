@@ -226,6 +226,7 @@ classDiagram
     output_paired
     powered_from_output
     second_input_belt
+    fuel_belt
   }
   class RawSupplier {
     raw_item
@@ -270,6 +271,7 @@ classDiagram
   class FuelFeed {
     belt_column
     row
+    woven
   }
   class RawBelt {
     column

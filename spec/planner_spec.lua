@@ -1805,6 +1805,62 @@ describe("planner", function()
       assert.are.equal(planner.max_rate(plain), planner.max_rate(wide))
     end)
 
+    describe("steel furnaces after furnaces built wide, which take their fuel on a belt of their own", function()
+      -- A steel furnace eats 5 plates every 16 s: 18.75 a minute, like a furnace makes, and makes 3.75 steel a minute. The
+      -- plates ride both lanes of the belt (881.25 a minute from 47 furnaces) and the fuel has a belt of its own, so 47
+      -- steel furnaces make 176.25 where the plain design, with the fuel on a lane of the plates' belt, made 90.
+      local steel_recipe = {energy = 16, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "steel-plate")}}
+      local function steel(options)
+        options = options or {}
+        return {
+          product = "steel-plate", recipe = steel_recipe, machine_speed = 1, fuel = "coal", wide = options.wide,
+          inserters = options.inserters or furnace_inserters,
+        }
+      end
+
+      it("makes 176.25 steel a minute at the most, with 47 steel furnaces, where it made 90", function()
+        local wide = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace{wide = true}, steel{wide = true}}}
+        local plain = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace(), steel()}}
+
+        assert.are.same({176.25, 90}, {planner.max_rate(wide), planner.max_rate(plain)})
+      end)
+
+      it("builds both wide, the steel furnaces with the plates on two lanes and the fuel on two of its own", function()
+        local plans = planner.plan_chain{rate_per_minute = 100, lane_items_per_minute = 450, stages = {furnace{wide = true}, steel{wide = true}}}
+
+        assert.are.same({{true, 27}, {true, 27, {"iron-plate", "iron-plate", "coal", "coal"}, 2}},
+          {{plans[1].wide, plans[1].machines}, {plans[2].wide, plans[2].machines, plans[2].lanes, plans[2].input_inserters}})
+      end)
+
+      it("builds both plain at a rate the plain design makes", function()
+        local plans = planner.plan_chain{rate_per_minute = 90, lane_items_per_minute = 450, stages = {furnace{wide = true}, steel{wide = true}}}
+
+        assert.are.same({false, false, {"iron-plate", "coal"}}, {plans[1].wide, plans[2].wide, plans[2].lanes})
+      end)
+
+      it("leaves the steel furnaces and the iron furnaces before them plain when the stage that eats the steel eats more", function()
+        -- A widget takes 100 gears and a steel plate. Three widgets a minute are 600 plates for the gears, which only wide
+        -- furnaces make, so the tree is built wide, but not the steel furnaces: the widget does not take steel on both lanes.
+        local widget_recipe = {energy = 1, ingredients = {amount_of(100, "iron-gear-wheel"), amount_of(1, "steel-plate")}, products = {amount_of(1, "widget")}}
+        local widget = {product = "widget", recipe = widget_recipe, machine_speed = 1, inserters = assembler_inserters}
+        local gears = {stage = gear_assembler(), suppliers = {{stage = furnace{wide = true}, suppliers = {}}}}
+        local steel_chain = {stage = steel{wide = true}, suppliers = {{stage = furnace{wide = true}, suppliers = {}}}}
+
+        local plans = planner.plan_tree{rate_per_minute = 3, lane_items_per_minute = 450, root = {stage = widget, suppliers = {gears, steel_chain}}}
+
+        assert.are.same({true, false, false}, {
+          plans.suppliers[1].suppliers[1].plan.wide, plans.suppliers[2].plan.wide, plans.suppliers[2].suppliers[1].plan.wide,
+        }) -- the iron furnaces of the gears, the steel furnaces, the iron furnaces of the steel
+      end)
+
+      it("makes no more than the plain design when the steel furnaces cannot be built wide", function()
+        local unknown_size = {items_per_minute = 50.4, max_input = 1, max_output = 1}
+        local request = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace{wide = true}, steel{wide = true, inserters = unknown_size}}}
+
+        assert.are.equal(90, planner.max_rate(request))
+      end)
+    end)
+
     it("leaves the furnaces plain that feed a stage with a second ingredient: the lane is that ingredient's", function()
       local alloy_recipe = {energy = 1, ingredients = {amount_of(1, "iron-plate"), amount_of(1, "copper-plate")}, products = {amount_of(1, "alloy")}}
       local copper = furnace()

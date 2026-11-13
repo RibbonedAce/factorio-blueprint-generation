@@ -549,6 +549,51 @@ describe("belt tracer", function()
       assert.has_item_containing("the underground belt entrance at 4,2 meets no exit within reach", problems)
     end)
 
+    -- A furnace puts plates on a belt that runs south down x = 3, into the entrance of an underground belt (row 2) whose
+    -- exit is in row 5, and an inserter in x = 4 takes from the tile of the entrance or of the exit into an assembler.
+    local function inserter_beside_an_underground_belt(row)
+      return all_of(
+        machine("furnace", 0, 0), builders.inserter(2, 0, west), belts_from(3, 0, south, 2),
+        builders.underground(3, 2, south, "input"), builders.underground(3, 5, south, "output"),
+        builders.inserter(4, row, west), machine("assembler", 5, row))
+    end
+
+    it("lets an inserter take from the tile of an entrance, which holds what is behind it", function()
+      local problems = tracer.problems(inserter_beside_an_underground_belt(2), {machines = MACHINES, raw = {furnace = true}, product = "gear"})
+
+      assert.are.same({}, problems)
+    end)
+
+    it("lets an inserter take from the tile of an exit, which holds what its entrance does", function()
+      local problems = tracer.problems(inserter_beside_an_underground_belt(5), {machines = MACHINES, raw = {furnace = true}, product = "gear"})
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports an inserter beside a piece of an underground belt that holds nothing it eats", function()
+      local entities = all_of(
+        builders.underground(3, 2, south, "input"), builders.underground(3, 5, south, "output"),
+        builders.inserter(4, 5, west), machine("assembler", 5, 5))
+
+      local problems = tracer.problems(entities, {machines = MACHINES, raw = {}, product = "gear"})
+
+      assert.has_item_containing("the input inserter at 4,5 never sees plate", problems)
+    end)
+
+    it("does not take an inserter between two machines for one that takes from a belt", function()
+      local entities = all_of(machine("furnace", 0, 0), builders.inserter(2, 0, west), machine("assembler", 3, 0))
+
+      local problems = tracer.problems(entities, {machines = MACHINES, raw = {furnace = true}, product = "gear"})
+
+      local about_inputs = {}
+      for _, problem in ipairs(problems) do
+        if problem:find("never sees", 1, true) then
+          about_inputs[#about_inputs + 1] = problem
+        end
+      end
+      assert.are.same({}, about_inputs)
+    end)
+
     it("reports an exit that no entrance feeds", function()
       local entities = all_of(builders.underground(4, 5, south, "output"))
 

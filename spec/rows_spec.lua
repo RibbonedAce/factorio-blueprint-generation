@@ -888,6 +888,86 @@ describe("rows", function()
       end)
     end)
 
+    describe("iron furnaces and steel furnaces built wide, the steel furnaces with a belt of fuel of their own", function()
+      -- Four iron furnaces (i) built wide, four steel furnaces (s) after them and a chest assembler (T). The coal for the
+      -- steel furnaces comes down from its trunk straight into the column beside their inserters, where the belt of fuel
+      -- goes under, and the plates of the iron furnaces' winding belt detour through that column.
+      local MEDIUM = builders.medium_pole_names()
+      local iron = {
+        machine_count = 4, load = 4, machine = "iron-furnace", suppliers = {},
+        shape = {machine_size = 2, input_inserters = 2, output_inserters = 1, output_paired = true, powered_from_output = true, second_input_belt = true},
+        feed = {items = {{name = "iron-ore", amount = 300}, {name = "coal", amount = 20}}},
+        second_feed = {items = {{name = "iron-ore", amount = 100}}},
+      }
+      local steel = {
+        machine_count = 4, load = 4, machine = "steel-furnace", suppliers = {iron},
+        shape = {machine_size = 2, input_inserters = 2, output_inserters = 1, output_paired = true, powered_from_output = true, fuel_belt = true},
+        fuel_feed = {items = {{name = "coal", amount = 5}}},
+      }
+      local entities, inputs = build_pure(assemblers("chest-assembler", 1, 1, 1, {steel}), MEDIUM)
+      local glyphs = {["iron-furnace"] = {size = 2, glyph = "i"}, ["steel-furnace"] = {size = 2, glyph = "s"}, ["chest-assembler"] = {size = 3, glyph = "T"}}
+
+      it("brings the coal down straight into the entrance of the belt of fuel, which is woven with the winding belt of plates", function()
+        -- The coal comes down column 20 from its trunk (row 4), the iron ore down columns 12 and 13 from theirs (rows 10 and 7).
+        -- The steel furnaces start one furnace lower (row 14), the belt of their steel runs north up to the assembler's first row.
+        assert.are.same({
+          ">>>>>>v...........................",
+          ">>v...v...........................",
+          "..v...v...........................",
+          "..v...SS..........................",
+          "..v...v>>>>>>>>>>>>>v.............",
+          "..SS..v.............v.............",
+          "..v>>(v.)v..........v.............",
+          "..v...v..>>>>v......v.............",
+          "..v...>>>^...v......v.............",
+          "..v..........v......v.............",
+          "..>>>>>>>>>>vv......v.............",
+          "............vv....v.v.............",
+          "............vn}ii}>vn.....^}TTT}v.",
+          "............>v}ii+.>v.....^+TTT+v.",
+          "............v<}ii..v<}ss}>^.TTT.v.",
+          "............vu}ii}>vu}ss+.^.......",
+          "............vn}ii}v<n}ss.>^.......",
+          "............>v}ii+>>v}ss}^<.......",
+          "............v<}ii..v<}ss}>^.......",
+          "............vu}ii}>vu}ss+.^.......",
+          "...................vn}ss..^.......",
+          "...................>v}ss}>^.......",
+          ".........................^........",
+          "....................u.............",
+          "..................................",
+        }, picture.draw(entities, glyphs, 0, 0, 33, 24))
+      end)
+
+      it("passes the validator and the tracer: the steel furnaces see the plates and the coal, the iron furnaces the ore", function()
+        local catalog = builders.a_catalog{}
+        catalog["iron-furnace"] = {kind = "machine", width = 2, height = 2, needs_power = true}
+        catalog["steel-furnace"] = {kind = "machine", width = 2, height = 2, needs_power = true}
+        catalog["chest-assembler"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+        local machines = {
+          ["iron-furnace"] = {size = 2, eats = {"iron-ore"}, makes = "iron-plate"},
+          ["steel-furnace"] = {size = 2, eats = {"iron-plate", "coal"}, makes = "steel-plate"},
+          ["chest-assembler"] = {size = 3, eats = {"steel-plate"}, makes = "chest"},
+        }
+
+        local problems = validator.validate(entities, catalog)
+        for _, problem in ipairs(tracer.problems(entities, {
+          machines = machines, raw = {["iron-furnace"] = true}, product = "chest", supplies = inputs, underground_reach = 5,
+          raw_lanes = {["iron-furnace"] = {"iron-ore", "coal"}}, raw_second_lanes = {["iron-furnace"] = {"iron-ore"}},
+        })) do
+          problems[#problems + 1] = problem
+        end
+
+        assert.are.same({}, problems)
+      end)
+
+      it("is refused by the original design", function()
+        assert.has_error(function() rows.build(assemblers("chest-assembler", 1, 1, 1, {steel}), MEDIUM) end,
+          "rows: the original design cannot bring the second input belt of a column built wide")
+      end)
+
+    end)
+
     describe("more iron ore than one belt carries", function()
       -- Three columns of 22 furnaces take 440 ore a minute each. A trunk carries a lane of ore, 450 a minute, so each column
       -- gets a trunk of its own; a belt that comes in carries two lanes, 900, so one belt of iron ore feeds two of the

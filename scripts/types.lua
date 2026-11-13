@@ -151,6 +151,7 @@
 ---@field output_fast? boolean  whether those are fast inserters (plain when nil)
 ---@field output_paired? boolean  the machines go in twos and the output belt winds, whatever the size of the machine and the inserter (plain, for a furnace), so that machines side by side fill a lane each and the product rides both lanes, also when the belt feeds another column; needs one output inserter and at least two machines
 ---@field powered_from_output? boolean  the inserters of the input side stand within reach of the poles beside the output side (a medium pole reaches the input inserters of a 2x2 machine from there), so the input side may be full without rows of poles between the machines; the output side keeps a free tile for each machine
+---@field fuel_belt? boolean  the stage burns fuel and eats what the stage before it makes, which that stage puts on both lanes of the belt between them (it is built wide too): the fuel has a belt of its own, in a column beside the inserters (one column further east than usual) that goes under for two rows while the belt between the two stages detours through that column, so that two plain input inserters on every machine reach both (see `Builder:add_fuel_weave`); needs `output_paired` and `powered_from_output`
 ---@field second_input_belt? boolean  the column draws its two input belts itself, woven (belt a goes under for two rows in the column beside the inserters while belt b, one column west, comes into it and goes back; `input_inserters` is 2), since they come down from the band: for a stage fed raw items that takes its second belt from there; the first column of a chain only
 
 -- One column of machines in a chain.
@@ -198,11 +199,14 @@
 ---@field fuel_feeds bpgen.FuelFeed[]  the stages of the block that take fuel from the belt before them, left to right
 
 -- Where fuel has to arrive for a stage that burns it and eats what the stage before it makes: the belt between the two
--- stages runs south from `row`, and the fuel is side-loaded onto its free lane from the tile above it.
+-- stages runs south from `row`, and the fuel is side-loaded onto its free lane from the tile above it. A stage built wide
+-- has a belt of fuel of its own instead (`woven`): the fuel comes straight down into its first tile, in the column beside
+-- the stage's inserters, from `row`.
 ---@class bpgen.FuelFeed
 ---@field stage bpgen.StageLayout
----@field belt_column integer  tile column of the belt between the two stages, in the frame of the block
+---@field belt_column integer  tile column of the belt between the two stages, in the frame of the block (of the belt of fuel, when `woven`)
 ---@field row integer  tile row of the first tile of that belt, in the frame of the block
+---@field woven boolean  the fuel has a belt of its own, woven with the belt between the two stages (see `bpgen.Shape.fuel_belt`)
 
 -- The first tile of a belt of raw items, which runs south from there.
 ---@class bpgen.RawBelt
