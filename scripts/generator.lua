@@ -57,15 +57,32 @@ local function pole_name(force)
   return config.entities.pole
 end
 
+-- The belt, the splitter and the underground belt of the blueprint: the fast ones once the force has unlocked all three
+-- (nothing is known without a force) and the game has them, else the basic ones. All three or none: a basic splitter or
+-- underground belt in the line of a fast belt would carry half of what the belt does, and the lanes the planner counts
+-- would not arrive. The game unlocks them together (logistics 2).
+---@param force LuaForce|nil
+---@return string belt
+---@return string splitter
+---@return string underground
+local function belt_names(force)
+  local entities = config.entities
+  if force and can_build(force, entities.fast_belt) and can_build(force, entities.fast_splitter) and can_build(force, entities.fast_underground_belt) then
+    return entities.fast_belt, entities.fast_splitter, entities.fast_underground_belt
+  end
+  return entities.belt, entities.splitter, entities.underground_belt
+end
+
 -- The building blocks every column of the blueprint shares, but for the numbers of the pole (see `add_pole_distances`).
----@param force LuaForce|nil  whose research decides the pole
+---@param force LuaForce|nil  whose research decides the pole and the belts
 ---@return bpgen.SharedNames
 local function shared_names(force)
+  local belt, splitter, underground = belt_names(force)
   return {
-    belt = config.entities.belt, inserter = config.entities.inserter,
+    belt = belt, inserter = config.entities.inserter,
     long_inserter = config.entities.long_inserter, fast_inserter = config.entities.fast_inserter, pole = pole_name(force),
     lamp = config.entities.lamp,
-    splitter = config.entities.splitter, underground = config.entities.underground_belt,
+    splitter = splitter, underground = underground,
   }
 end
 

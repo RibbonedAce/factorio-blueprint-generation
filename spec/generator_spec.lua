@@ -1501,8 +1501,92 @@ describe("generator", function()
         },
         underground_distance = options.underground_distance,
         missing_entities = options.missing_entities,
+        fast_belts = options.fast_belts,
+        fast_underground_distance = options.fast_underground_distance,
       }
     end
+
+    describe("with the fast belts, once the force has unlocked the fast belt, the fast splitter and the fast underground belt", function()
+      local FAST = {"fast-transport-belt", "fast-splitter", "fast-underground-belt"}
+      local BASIC = {"transport-belt", "splitter", "underground-belt"}
+
+      -- How many of each of the belts, the splitters and the underground belts of the blueprint, by name.
+      local function belts_by_name(result)
+        local counts = {}
+        for _, name in ipairs({"transport-belt", "splitter", "underground-belt", "fast-transport-belt", "fast-splitter", "fast-underground-belt"}) do
+          counts[name] = count_named(result.entities, name)
+        end
+        return counts
+      end
+
+      it("builds it with the fast belt, splitter and underground belt, and none of the basic ones", function()
+        _G.prototypes = circuit_game{fast_belts = true}
+
+        local counts = belts_by_name(generator.generate("electronic-circuit", 50, fake_force{}))
+
+        assert.are.same({0, 0, 0, true, 1, 4}, {counts["transport-belt"], counts["splitter"], counts["underground-belt"],
+          counts["fast-transport-belt"] > 0, counts["fast-splitter"], counts["fast-underground-belt"]})
+      end)
+
+      for _, locked in ipairs({{"fast-transport-belt"}, {"fast-splitter"}, {"fast-underground-belt"}}) do
+        it("builds it with the basic ones when the force has not unlocked the " .. locked[1], function()
+          _G.prototypes = circuit_game{fast_belts = true}
+
+          local counts = belts_by_name(generator.generate("electronic-circuit", 50, fake_force{locked = locked}))
+
+          assert.are.same({0, 0, 0}, {counts["fast-transport-belt"], counts["fast-splitter"], counts["fast-underground-belt"]})
+        end)
+
+        it("builds it with the basic ones when the game has no " .. locked[1], function()
+          _G.prototypes = circuit_game{fast_belts = true, missing_entities = locked}
+
+          local counts = belts_by_name(generator.generate("electronic-circuit", 50, fake_force{}))
+
+          assert.are.same({0, 0, 0}, {counts["fast-transport-belt"], counts["fast-splitter"], counts["fast-underground-belt"]})
+        end)
+      end
+
+      it("builds it with the basic ones when no force is given", function()
+        _G.prototypes = circuit_game{fast_belts = true}
+
+        local counts = belts_by_name(generator.generate("electronic-circuit", 50))
+
+        assert.are.same({0, 0, 0}, {counts["fast-transport-belt"], counts["fast-splitter"], counts["fast-underground-belt"]})
+      end)
+
+      it("makes up to twice as many: the lanes of the fast belt carry 900 a minute, where the basic belt's carry 450", function()
+        _G.prototypes = circuit_game{fast_belts = true}
+
+        assert.are.same({{"blueprint-generation.max-rate", "300"}, {"blueprint-generation.max-rate", "150"}},
+          {generator.max_rate_message("electronic-circuit", fake_force{}), generator.max_rate_message("electronic-circuit", fake_force{locked = {"fast-splitter"}})})
+      end)
+
+      it("builds a blueprint that passes the validator at the rate only the fast belts make", function()
+        _G.prototypes = circuit_game{fast_belts = true}
+        local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+        catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+        local result = generator.generate("electronic-circuit", 300, fake_force{})
+
+        assert.are.same({}, validator.validate(result.entities, catalog))
+      end)
+
+      it("refuses a rate above that, naming the most", function()
+        _G.prototypes = circuit_game{fast_belts = true}
+
+        local result, message = generator.generate("electronic-circuit", 301, fake_force{})
+
+        assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "300"}}, {result, message})
+      end)
+
+      it("builds it when the fast underground belt spans exactly the 3 tiles the hops need", function()
+        _G.prototypes = circuit_game{fast_belts = true, fast_underground_distance = 3}
+
+        local counts = belts_by_name(generator.generate("electronic-circuit", 50, fake_force{}))
+
+        assert.are.equal(4, counts["fast-underground-belt"])
+      end)
+    end)
 
     it("builds it for a force that has researched the splitter and the underground belt", function()
       _G.prototypes = circuit_game()

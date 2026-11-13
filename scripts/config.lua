@@ -7,7 +7,7 @@
 -- once and hands that value to whoever asked for it.
 
 ---@class bpgen.Config
----@field entities {belt: string, inserter: string, long_inserter: string, fast_inserter: string, pole: string, medium_pole: string, lamp: string, splitter: string, underground_belt: string}
+---@field entities {belt: string, inserter: string, long_inserter: string, fast_inserter: string, pole: string, medium_pole: string, lamp: string, splitter: string, underground_belt: string, fast_belt: string, fast_splitter: string, fast_underground_belt: string}
 ---@field products table<string, true>  the items a player may ask for, by name
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
 ---@field default_product string  the item the window starts with; must be a key of `products`
@@ -27,6 +27,12 @@ local config = {
     -- merges the belts itself, so both have to be researched (see scripts/inputs.lua).
     splitter = "splitter",
     underground_belt = "underground-belt",
+    -- The belts of every blueprint once all three of these are researched (the game unlocks them together): a lane
+    -- carries twice what the basic belt's does. The three have to be as fast as one another: a basic splitter or underground
+    -- belt on a fast belt would carry half of it.
+    fast_belt = "fast-transport-belt",
+    fast_splitter = "fast-splitter",
+    fast_underground_belt = "fast-underground-belt",
   },
 
   -- The items a player can ask for. How each is made comes from the game's recipes:

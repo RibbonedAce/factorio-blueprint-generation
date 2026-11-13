@@ -191,6 +191,9 @@ function builders.a_catalog(options)
     [names.belt] = {kind = "belt", width = 1, height = 1},
     [names.splitter] = {kind = "belt", width = 2, height = 1, turns = true},
     [names.underground] = {kind = "belt", width = 1, height = 1},
+    ["fast-transport-belt"] = {kind = "belt", width = 1, height = 1},
+    ["fast-splitter"] = {kind = "belt", width = 2, height = 1, turns = true},
+    ["fast-underground-belt"] = {kind = "belt", width = 1, height = 1},
     [names.inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true},
     [names.fast_inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true},
     [names.long_inserter] = {kind = "inserter", width = 1, height = 1, needs_power = true, reach = 2},
@@ -290,6 +293,11 @@ end
 --                           entity that is not an inserter
 --   underground_distance    the most tiles the underground belt spans, default 5 (the basic one);
 --                           `false` makes it an entity without that field
+--   fast_belts              true gives the game the fast transport belt, splitter and underground belt, which a
+--                           force that has unlocked all three builds with; default false (the basic ones only)
+--   fast_belt_speed         the fast transport belt's speed, default 0.0625 (twice the basic one's);
+--                           `false` makes it an entity without a belt speed
+--   fast_underground_distance the most tiles the fast underground belt spans, default 7
 --   small_pole_supply_distance, medium_pole_supply_distance  how far the small and the medium electric pole
 --                           power, default 2.5 and 3.5; `false` makes the game not say
 --   small_pole_wire_distance, medium_pole_wire_distance  how long a wire they hold, default 7.5 and 9;
@@ -307,7 +315,7 @@ end
 -- form {filter = "fuel-category", ["fuel-category"] = name} combined with "or"
 -- (anything else is an error), and an empty list of filters gives every item,
 -- as the worst case of what the game might do.
----@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, fast_inserter_rotation_speed?: number|false, underground_distance?: number|false, small_pole_supply_distance?: number|false, small_pole_wire_distance?: number|false, medium_pole_supply_distance?: number|false, medium_pole_wire_distance?: number|false, missing_entities?: string[]}
+---@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, fast_belts?: boolean, fast_belt_speed?: number|false, fast_underground_distance?: number, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, fast_inserter_rotation_speed?: number|false, underground_distance?: number|false, small_pole_supply_distance?: number|false, small_pole_wire_distance?: number|false, medium_pole_supply_distance?: number|false, medium_pole_wire_distance?: number|false, missing_entities?: string[]}
 ---@return table  a stand-in for the game's `prototypes`
 function builders.fake_prototypes(options)
   options = options or {}
@@ -382,6 +390,11 @@ function builders.fake_prototypes(options)
   for name, machine in pairs(options.machines or {}) do
     machine.is_machine = true
     entities[name] = entity(name, machine)
+  end
+  if options.fast_belts then
+    entities["fast-transport-belt"] = entity("fast-transport-belt", {belt_speed = option(options.fast_belt_speed, 0.0625) or nil})
+    entities["fast-splitter"] = entity("fast-splitter")
+    entities["fast-underground-belt"] = entity("fast-underground-belt", {underground_distance = option(options.fast_underground_distance, 7)})
   end
   for _, name in ipairs(options.missing_entities or {}) do
     entities[name] = nil

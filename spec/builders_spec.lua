@@ -125,6 +125,32 @@ describe("builders", function()
       assert.is_nil(builders.fake_prototypes{underground_distance = false}.entity["underground-belt"].max_underground_distance)
     end)
 
+    it("has no fast belts unless it is told to", function()
+      local entities = builders.fake_prototypes{}.entity
+
+      assert.are.same({nil, nil, nil}, {entities["fast-transport-belt"], entities["fast-splitter"], entities["fast-underground-belt"]})
+    end)
+
+    it("has the fast belts when it is told to: a belt of twice the speed and an underground belt of 7 tiles", function()
+      local entities = builders.fake_prototypes{fast_belts = true}.entity
+
+      assert.are.same({0.0625, 7, true}, {entities["fast-transport-belt"].belt_speed, entities["fast-underground-belt"].max_underground_distance, entities["fast-splitter"] ~= nil})
+    end)
+
+    it("gives the fast belt the speed and the fast underground belt the span it is told", function()
+      local entities = builders.fake_prototypes{fast_belts = true, fast_belt_speed = 0.05, fast_underground_distance = 6}.entity
+
+      assert.are.same({0.05, 6}, {entities["fast-transport-belt"].belt_speed, entities["fast-underground-belt"].max_underground_distance})
+    end)
+
+    it("leaves the fast belt's speed out when it is told there is none", function()
+      assert.is_nil(builders.fake_prototypes{fast_belts = true, fast_belt_speed = false}.entity["fast-transport-belt"].belt_speed)
+    end)
+
+    it("can leave a fast belt out of the fast belts", function()
+      assert.is_nil(builders.fake_prototypes{fast_belts = true, missing_entities = {"fast-splitter"}}.entity["fast-splitter"])
+    end)
+
     it("has a fast inserter that swings at 0.04 unless it is told otherwise", function()
       assert.are.equal(0.04, builders.fake_prototypes{}.entity["fast-inserter"].get_inserter_rotation_speed())
     end)
