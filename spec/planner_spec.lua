@@ -1637,7 +1637,8 @@ describe("planner", function()
     describe("the paired winding belt of the root stage, which one fast output inserter per 3x3 machine fills in turns", function()
       -- Machines that eat 60 plates and make 120 parts a minute: one fast output inserter each (144 a minute), so a lane
       -- carries 3.75 machines' worth. The belt gives both lanes to the machines, in turns outer, inner, inner, outer, so a
-      -- lane gets half of them and one more at most: 2 x 3.75 - 1 = 6.5 machines' worth.
+      -- lane gets half of them, and one more for an odd number, the last (partial) machine's: 3 + 3 whole machines and 0.75
+      -- of the seventh, which is on the lane that has the fourth: 6.75 machines' worth.
       local function stage(product, input, output, extra)
         local recipe = {energy = 1, ingredients = {amount_of(input, extra and extra.eats or "ore")}, products = {amount_of(output, product)}}
         return {product = product, recipe = recipe, machine_speed = 1, inserters = limits}
@@ -1647,8 +1648,12 @@ describe("planner", function()
         return planner.max_tree_rate({rate_per_minute = 1, lane_items_per_minute = 450, root = {stage = root, suppliers = suppliers or {}}})
       end
 
-      it("carries two lanes' worth of machines less one when each machine has one fast output inserter", function()
-        assert.near(780, max_rate_of(stage("part", 1, 2)), 1e-6) -- 6.5 machines, each making 120
+      it("carries what the whole machines of a lane and the lane's share of the last make, when each has one fast output inserter", function()
+        assert.near(810, max_rate_of(stage("part", 1, 2)), 1e-6) -- 6.75 machines, each making 120
+      end)
+
+      it("carries twice the whole machines of a lane when a lane carries a whole number of them", function()
+        assert.near(900, max_rate_of(stage("part", 1, 1.5)), 1e-6) -- machines making 90 a minute: 5 on each lane, 10 machines
       end)
 
       it("carries one lane when one plain inserter moves what each machine makes", function()
@@ -1694,8 +1699,8 @@ describe("planner", function()
   describe("a furnace stage that may be built wide: a second input belt, an output belt that winds in twos", function()
     -- A furnace column makes 18.75 plates a minute a furnace, and a lane carries 450: 24 furnaces fill the lane of ore and the
     -- lane of plates. Built wide, the ore rides three lanes (the second belt carries it on both) and the plates two, which
-    -- the winding belt in twos carries for 2 * 24 - 1 = 47 furnaces (one lane may get one furnace more than the other):
-    -- 47 * 18.75 = 881.25 plates a minute.
+    -- the winding belt in twos carries for 2 * 24 = 48 furnaces (24 on each lane, which is a lane full): 48 * 18.75 = 900
+    -- plates a minute.
     local plate_recipe = {energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
     local gear_recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
     local furnace_inserters = {items_per_minute = 50.4, long_items_per_minute = 72, max_input = 1, max_output = 1, machine_size = 2}
@@ -1727,23 +1732,23 @@ describe("planner", function()
       assert.are.same({25, true, {"iron-ore", "coal", "iron-ore", "iron-ore"}, 2, 0}, {plan.machines, plan.wide, plan.lanes, plan.input_inserters, plan.long_inserters})
     end)
 
-    it("makes 881.25 plates a minute at the most, with 47 furnaces, where it made 450 with 24", function()
+    it("makes 900 plates a minute at the most, with 48 furnaces, where it made 450 with 24", function()
       local request = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace{wide = true}}}
       local plain = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace()}}
 
-      assert.are.same({881.25, 450}, {planner.max_rate(request), planner.max_rate(plain)})
+      assert.are.same({900, 450}, {planner.max_rate(request), planner.max_rate(plain)})
     end)
 
-    it("plans the most with 47 furnaces", function()
-      local plans = planner.plan_chain{rate_per_minute = 881.25, lane_items_per_minute = 450, stages = {furnace{wide = true}}}
+    it("plans the most with 48 furnaces", function()
+      local plans = planner.plan_chain{rate_per_minute = 900, lane_items_per_minute = 450, stages = {furnace{wide = true}}}
 
-      assert.are.same({47, true}, {plans[1].machines, plans[1].wide})
+      assert.are.same({48, true}, {plans[1].machines, plans[1].wide})
     end)
 
     it("refuses a rate above that, naming the most", function()
-      local plans, reason, most = planner.plan_chain{rate_per_minute = 882, lane_items_per_minute = 450, stages = {furnace{wide = true}}}
+      local plans, reason, most = planner.plan_chain{rate_per_minute = 901, lane_items_per_minute = 450, stages = {furnace{wide = true}}}
 
-      assert.are.same({nil, "rate-too-high", 881.25}, {plans, reason, most})
+      assert.are.same({nil, "rate-too-high", 900}, {plans, reason, most})
     end)
 
     it("does not build furnaces wide that are not asked to be, and refuses the rate", function()
@@ -1783,11 +1788,11 @@ describe("planner", function()
         {{plans[1].machines, plans[1].wide, plans[1].lanes}, {plans[2].machines, plans[2].wide, plans[2].lanes}})
     end)
 
-    it("makes more gears with wide furnaces than with plain ones: 440.625 a minute, where it made 225", function()
+    it("makes more gears with wide furnaces than with plain ones: 450 a minute, where it made 225", function()
       local wide = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace{wide = true}, gear_assembler()}}
       local plain = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace(), gear_assembler()}}
 
-      assert.are.same({440.625, 225}, {planner.max_rate(wide), planner.max_rate(plain)})
+      assert.are.same({450, 225}, {planner.max_rate(wide), planner.max_rate(plain)})
     end)
 
     it("leaves the furnaces of a chain plain at a rate the plain chain makes", function()
@@ -1807,8 +1812,8 @@ describe("planner", function()
 
     describe("steel furnaces after furnaces built wide, which take their fuel on a belt of their own", function()
       -- A steel furnace eats 5 plates every 16 s: 18.75 a minute, like a furnace makes, and makes 3.75 steel a minute. The
-      -- plates ride both lanes of the belt (881.25 a minute from 47 furnaces) and the fuel has a belt of its own, so 47
-      -- steel furnaces make 176.25 where the plain design, with the fuel on a lane of the plates' belt, made 90.
+      -- plates ride both lanes of the belt (900 a minute from 48 furnaces) and the fuel has a belt of its own, so 48
+      -- steel furnaces make 180 where the plain design, with the fuel on a lane of the plates' belt, made 90.
       local steel_recipe = {energy = 16, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "steel-plate")}}
       local function steel(options)
         options = options or {}
@@ -1818,11 +1823,11 @@ describe("planner", function()
         }
       end
 
-      it("makes 176.25 steel a minute at the most, with 47 steel furnaces, where it made 90", function()
+      it("makes 180 steel a minute at the most, with 48 steel furnaces, where it made 90", function()
         local wide = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace{wide = true}, steel{wide = true}}}
         local plain = {rate_per_minute = 1, lane_items_per_minute = 450, stages = {furnace(), steel()}}
 
-        assert.are.same({176.25, 90}, {planner.max_rate(wide), planner.max_rate(plain)})
+        assert.are.same({180, 90}, {planner.max_rate(wide), planner.max_rate(plain)})
       end)
 
       it("builds both wide, the steel furnaces with the plates on two lanes and the fuel on two of its own", function()

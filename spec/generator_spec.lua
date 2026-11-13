@@ -1697,10 +1697,10 @@ describe("generator", function()
         }
       end
 
-      it("allows 780 a minute, 6.5 machines' worth of 120, with the paired winding belt", function()
+      it("allows 810 a minute, 6.75 machines' worth of 120, with the paired winding belt", function()
         _G.prototypes = cable_game()
 
-        assert.are.same({"blueprint-generation.max-rate", "780"}, generator.max_rate_message("copper-cable", fake_force{}))
+        assert.are.same({"blueprint-generation.max-rate", "810"}, generator.max_rate_message("copper-cable", fake_force{}))
       end)
 
       it("allows 900 a minute, as it always did, with plain inserters, which wind the belt with two inserters on a machine", function()
@@ -2065,7 +2065,7 @@ describe("generator", function()
   describe("furnaces built wide, when the force has what they need and the rate asks for more than the plain design makes", function()
     -- A furnace makes 18.75 plates a minute and a lane carries 450, so 24 furnaces make the most a plain column does. Built
     -- wide (a second input belt woven with the first, poles beside the output side, the output belt winding in twos)
-    -- 47 furnaces make 881.25. 500 plates a minute are 26.67 furnaces: 27.
+    -- 48 furnaces make 900. 500 plates a minute are 26.67 furnaces: 27.
     local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
     local steel = a_recipe{energy = 16, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "steel-plate")}, category = "smelting"}
@@ -2106,7 +2106,7 @@ describe("generator", function()
       _G.prototypes = game()
       local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
 
-      local result = generator.generate("iron-plate", 881, fake_force{})
+      local result = generator.generate("iron-plate", 900, fake_force{})
 
       assert.are.same({}, validator.validate(result.entities, catalog))
     end)
@@ -2122,18 +2122,18 @@ describe("generator", function()
       assert.is_true(count_named(result.entities, "stone-furnace") > 24) -- 300 gears need 600 plates: 32 furnaces, more than a plain column makes
     end)
 
-    it("allows 881.25 plates a minute, 47 furnaces' worth", function()
+    it("allows 900 plates a minute, 48 furnaces' worth", function()
       _G.prototypes = game()
 
-      assert.are.same({"blueprint-generation.max-rate", "881.25"}, generator.max_rate_message("iron-plate", fake_force{}))
+      assert.are.same({"blueprint-generation.max-rate", "900"}, generator.max_rate_message("iron-plate", fake_force{}))
     end)
 
     it("refuses a rate above that", function()
       _G.prototypes = game()
 
-      local result, message = generator.generate("iron-plate", 882, fake_force{})
+      local result, message = generator.generate("iron-plate", 901, fake_force{})
 
-      assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "881.25"}}, {result, message})
+      assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "900"}}, {result, message})
     end)
 
     -- What the generator tells the layout about the furnaces: the stage layout `rows.build_pure` is given.
@@ -2175,10 +2175,10 @@ describe("generator", function()
       assert.are.same({"iron-ore 150.00"}, amounts(root.second_feed))
     end)
 
-    it("allows 176.25 steel plates a minute, 47 steel furnaces' worth, where the plain design allows 90", function()
+    it("allows 180 steel plates a minute, 48 steel furnaces' worth, where the plain design allows 90", function()
       _G.prototypes = game()
 
-      assert.are.same({{"blueprint-generation.max-rate", "176.25"}, {"blueprint-generation.max-rate", "90"}},
+      assert.are.same({{"blueprint-generation.max-rate", "180"}, {"blueprint-generation.max-rate", "90"}},
         {generator.max_rate_message("steel-plate", fake_force{}), generator.max_rate_message("steel-plate", fake_force{locked = {"medium-electric-pole"}})})
     end)
 

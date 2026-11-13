@@ -1770,7 +1770,7 @@ describe("layout", function()
       assert.are.equal(8, height_of_four_furnaces_before_an_assembler(plain))
     end)
 
-    for _, furnace_count in ipairs({1, 2, 3, 4, 5, 8, 11, 24, 47}) do
+    for _, furnace_count in ipairs({1, 2, 3, 4, 5, 8, 11, 24, 47, 48}) do
       it("powers every machine and inserter of " .. furnace_count .. " furnaces on their own, the poles in one network", function()
         local catalog = builders.a_catalog{}
         catalog[NAMES.machine] = {kind = "machine", width = 2, height = 2, needs_power = true}
@@ -1781,7 +1781,7 @@ describe("layout", function()
       end)
     end
 
-    for _, counts in ipairs({{2, 1}, {4, 1}, {5, 1}, {6, 2}, {7, 2}, {12, 3}, {13, 8}, {47, 8}}) do
+    for _, counts in ipairs({{2, 1}, {4, 1}, {5, 1}, {6, 2}, {7, 2}, {12, 3}, {13, 8}, {47, 8}, {48, 8}}) do
       it("passes the validator for " .. counts[1] .. " furnaces and " .. counts[2] .. " assemblers", function()
         local catalog = builders.a_catalog{}
         catalog[NAMES.machine] = {kind = "machine", width = 2, height = 2, needs_power = true}
@@ -2037,7 +2037,7 @@ describe("layout", function()
         end)
       end
 
-      for _, furnace_count in ipairs({1, 2, 3, 4, 5, 12, 25, 47}) do
+      for _, furnace_count in ipairs({1, 2, 3, 4, 5, 12, 25, 47, 48}) do
         it("powers every machine and inserter of " .. furnace_count .. " iron furnaces and as many steel furnaces, the poles in one network", function()
           local catalog = builders.a_catalog{}
           catalog[NAMES.machine] = {kind = "machine", width = 2, height = 2, needs_power = true}

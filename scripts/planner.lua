@@ -407,8 +407,12 @@ end
 -- An output belt that does not wind carries everything on its one lane, whatever
 -- the inserters. With the paired winding belt every machine has one inserter, which
 -- fills one lane, and machines alternate lanes (outer, inner, inner, outer, ...): a lane
--- gets half the machines, and one more at most. So the belt carries twice the machines'
--- worth of one lane, less that one (and never less than a plain belt does).
+-- gets half the machines, and the lane that gets one more for an odd number is the one the last
+-- machine is on, which is the only one that may run for part of the time. A lane that carries L
+-- machines' worth (a fraction) takes floor(L) whole machines and, when it has the last one, the rest of L.
+-- So an even number of machines is at most twice floor(L) and an odd number floor(L) + L, which is
+-- the most the belt carries, in machines' worth: 48 for L = 24 (24 machines on each lane), and never
+-- less than a plain belt does.
 ---@param stage bpgen.StageContext
 ---@return number
 local function output_machines_worth(stage)
@@ -419,7 +423,7 @@ local function output_machines_worth(stage)
     lane_flow_per_machine = stage.per_machine.output_fast and limits.fast_items_per_minute or limits.items_per_minute
   elseif winding == "paired" then
     local one_lane = stage.lane_items_per_minute / lane_flow_per_machine
-    return math.max(one_lane, 2 * one_lane - 1)
+    return math.floor(one_lane + EPSILON) + one_lane
   end
   return stage.lane_items_per_minute / lane_flow_per_machine
 end
