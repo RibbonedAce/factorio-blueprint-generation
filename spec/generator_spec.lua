@@ -18,6 +18,7 @@
 
 local builders = require("spec.support.builders")
 local generator = require("scripts.generator")
+local config = require("scripts.config")
 local validator = require("spec.support.blueprint_validator")
 local grid = require("scripts.grid")
 
@@ -1543,19 +1544,6 @@ describe("generator", function()
       assert.are.same({3, 0}, assemblers(result))
     end)
 
-    it("stops with a message when it does not take the room of the assembling machine 1", function()
-      local machines = {
-        ["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3},
-        ["assembling-machine-2"] = a_machine{crafting_speed = 0.75, size = 4},
-      }
-      _G.prototypes = fake_prototypes{furnace_speed = 1, machines = machines, recipes = {["iron-plate"] = plate, ["pipe"] = slow_pipe}}
-
-      local ok, message = pcall(generator.generate, "pipe", 30, fake_force{})
-
-      assert.is_false(ok)
-      assert.is_truthy(tostring(message):find("assembling-machine-2 does not take the room of assembling-machine-1", 1, true))
-    end)
-
     it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
       _G.prototypes = pipe_game(true)
       local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
@@ -1575,6 +1563,96 @@ describe("generator", function()
     end)
   end)
 
+  describe("the tiers of a building: the last that the force has unlocked builds", function()
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local slow_pipe = a_recipe{energy = 3, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "pipe")}}
+
+    -- The game has the assembling machines 1, 2 and a 3, which the config gets as a third tier for the test.
+    local function three_assemblers(size_of_3)
+      local machines = {
+        ["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3},
+        ["assembling-machine-2"] = a_machine{crafting_speed = 0.75, size = 3},
+        ["assembling-machine-3"] = a_machine{crafting_speed = 1.25, size = size_of_3 or 3},
+      }
+      return fake_prototypes{furnace_speed = 1, machines = machines, recipes = {["iron-plate"] = plate, ["pipe"] = slow_pipe}}
+    end
+
+    -- Which of the assembling machines the blueprint is built with.
+    local function assemblers(result)
+      return {count_named(result.entities, "assembling-machine-1") > 0, count_named(result.entities, "assembling-machine-2") > 0,
+        count_named(result.entities, "assembling-machine-3") > 0}
+    end
+
+    before_each(function()
+      table.insert(config.machines.crafting.tiers, "assembling-machine-3")
+    end)
+
+    after_each(function()
+      table.remove(config.machines.crafting.tiers)
+    end)
+
+    it("builds with the third tier when the force has unlocked all of them", function()
+      _G.prototypes = three_assemblers()
+
+      local result = generator.generate("pipe", 30, fake_force{})
+
+      assert.are.same({false, false, true}, assemblers(result))
+    end)
+
+    it("builds with the second tier when the third is locked", function()
+      _G.prototypes = three_assemblers()
+
+      local result = generator.generate("pipe", 30, fake_force{locked = {"assembling-machine-3"}})
+
+      assert.are.same({false, true, false}, assemblers(result))
+    end)
+
+    it("builds with the first tier when the second and the third are locked", function()
+      _G.prototypes = three_assemblers()
+
+      local result = generator.generate("pipe", 30, fake_force{locked = {"assembling-machine-2", "assembling-machine-3"}})
+
+      assert.are.same({true, false, false}, assemblers(result))
+    end)
+
+    it("builds with the third tier when only the second is locked: the best the force has unlocked", function()
+      _G.prototypes = three_assemblers()
+
+      local result = generator.generate("pipe", 30, fake_force{locked = {"assembling-machine-2"}})
+
+      assert.are.same({false, false, true}, assemblers(result))
+    end)
+
+    it("builds with a machine tier of another size than the first: the size is the game's to say", function()
+      _G.prototypes = three_assemblers(2)
+
+      local result = generator.generate("pipe", 30, fake_force{})
+
+      assert.are.same({false, false, true}, assemblers(result))
+    end)
+
+    it("builds with a pole tier of another size than the first", function()
+      _G.prototypes = three_assemblers()
+      _G.prototypes.entity["medium-electric-pole"].tile_width = 3
+
+      local result = generator.generate("pipe", 30, fake_force{})
+
+      assert.is_true(count_named(result.entities, "medium-electric-pole") > 0)
+    end)
+
+    it("builds with a belt tier whose pieces are of another size than the first's", function()
+      _G.prototypes = fake_prototypes{
+        furnace_speed = 1, fast_belts = true, machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["pipe"] = slow_pipe},
+      }
+      _G.prototypes.entity["fast-splitter"].tile_width = 2
+
+      local result = generator.generate("pipe", 30, fake_force{})
+
+      assert.is_true(count_named(result.entities, "fast-transport-belt") > 0)
+    end)
+  end)
+
   describe("the steel furnace, once the force has unlocked it", function()
     -- A stone furnace makes 18.75 plates a minute from 3.2 s; the steel furnace, at twice the speed, 37.5.
     local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
@@ -1587,8 +1665,8 @@ describe("generator", function()
       return fake_prototypes{furnace_speed = 1, machines = machines, recipes = {["iron-plate"] = plate}}
     end
 
-    local function a_steel_furnace(size)
-      return a_machine{type = "furnace", crafting_speed = 2, size = size or 2, burns = {"chemical"}}
+    local function a_steel_furnace()
+      return a_machine{type = "furnace", crafting_speed = 2, size = 2, burns = {"chemical"}}
     end
 
     -- How many stone furnaces and steel furnaces the blueprint has.
@@ -1652,22 +1730,6 @@ describe("generator", function()
       assert.are.same({}, validator.validate(result.entities, catalog))
     end)
 
-    it("stops with a message when the steel furnace does not take the room of the stone furnace", function()
-      _G.prototypes = plate_game(a_steel_furnace(3))
-
-      local ok, message = pcall(generator.generate, "iron-plate", 75, fake_force{})
-
-      assert.is_false(ok)
-      assert.is_truthy(tostring(message):find("steel-furnace does not take the room of stone-furnace", 1, true))
-    end)
-
-    it("does not look at the size of an upgrade the force has not unlocked", function()
-      _G.prototypes = plate_game(a_steel_furnace(3))
-
-      local result = generator.generate("iron-plate", 75, fake_force{locked = {"steel-furnace"}})
-
-      assert.are.same({4, 0}, furnaces(result))
-    end)
   end)
 
   describe("the design that brings in one belt of each material", function()

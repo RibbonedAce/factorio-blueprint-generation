@@ -10,7 +10,7 @@
 ---@class bpgen.SharedNames  prototype names every column of the layout builds with, and the numbers of its pole
 ---@field belt string
 ---@field inserter string
----@field pole string  the pole of the blueprint: the medium electric pole once the force has unlocked it, else the small one
+---@field pole string  the pole of the blueprint: the best tier of the config's poles that the force has unlocked (the medium electric pole, else the small one)
 ---@field pole_supply_distance number  how far from its centre that pole powers, in tiles, as the game says (2.5 for a small pole, 3.5 for a medium one)
 ---@field pole_wire_distance number  the longest wire that pole holds, in tiles, as the game says (7.5 for a small pole, 9 for a medium one)
 ---@field long_inserter? string  the long-handed inserter, for a machine that takes from a second input belt
@@ -31,10 +31,14 @@
 ---@field machine string
 ---@field recipe? string  the recipe to set on the machines: an assembling machine has to be told, a furnace picks its own
 
----@class bpgen.MachineChoice  the machine that makes the recipes of one category (see config.lua)
----@field machine string  machine prototype name
----@field fuel? string  item the machine burns; nil for a machine that burns nothing (an electric one)
----@field upgrade? string  machine prototype name that replaces `machine` when the force has unlocked it and the game has it; nil: none
+---@class bpgen.MachineChoice  the machines that make the recipes of one category (see config.lua)
+---@field tiers string[]  machine prototype names, from the one every blueprint can count on to the best: the last one the force has unlocked builds (see `generator.best_tier`)
+---@field fuel? string  item the machines burn; nil for machines that burn nothing (electric ones)
+
+---@class bpgen.BeltTier  a belt, a splitter and an underground belt that are as fast as one another (see config.lua)
+---@field belt string
+---@field splitter string
+---@field underground string
 
 ---@class bpgen.Production  one way to make an item: its recipe and the machine the config picks for it
 ---@field recipe bpgen.Recipe

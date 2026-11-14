@@ -46,43 +46,64 @@ local function can_build(force, name)
   return recipe ~= nil and recipe.enabled and prototypes.entity[name] ~= nil
 end
 
--- The pole the blueprint is built with: the medium electric pole once the force has unlocked it (nothing is known
--- without a force) and the game has it, else the small one, which every blueprint can count on.
----@param force LuaForce|nil
----@return string
-local function pole_name(force)
-  if force and can_build(force, config.entities.medium_pole) then
-    return config.entities.medium_pole
+-- The prototype names of a tier of a building: the name itself for a building of one piece (a pole, a machine), the
+-- names of its pieces for one of several (a belt, a splitter and an underground belt).
+---@param tier string|table<string, string>
+---@return string[]
+local function names_of(tier)
+  if type(tier) == "string" then
+    return {tier}
   end
-  return config.entities.pole
+  local names = {}
+  for _, name in pairs(tier) do
+    names[#names + 1] = name
+  end
+  return names
 end
 
--- The belt, the splitter and the underground belt of the blueprint: the fast ones once the force has unlocked all three
--- (nothing is known without a force) and the game has them, else the basic ones. All three or none: a basic splitter or
--- underground belt in the line of a fast belt would carry half of what the belt does, and the lanes the planner counts
--- would not arrive. The game unlocks them together (logistics 2).
----@param force LuaForce|nil
----@return string belt
----@return string splitter
----@return string underground
-local function belt_names(force)
-  local entities = config.entities
-  if force and can_build(force, entities.fast_belt) and can_build(force, entities.fast_splitter) and can_build(force, entities.fast_underground_belt) then
-    return entities.fast_belt, entities.fast_splitter, entities.fast_underground_belt
+-- Whether the force can build every piece of a tier.
+---@param force LuaForce
+---@param tier string|table<string, string>
+---@return boolean
+local function can_build_tier(force, tier)
+  for _, name in ipairs(names_of(tier)) do
+    if not can_build(force, name) then
+      return false
+    end
   end
-  return entities.belt, entities.splitter, entities.underground_belt
+  return true
+end
+
+-- The tier a blueprint is built with: the last of `tiers`, which go from the one every blueprint can count on to the
+-- best, that the force has unlocked and the game has (every piece of it). Nothing is known without a force, which gets the
+-- first. A tier is not held to the size or the fuel of the first: what a better building needs of the layout is for the
+-- planner and the layouts to read from the game.
+---@generic T: string|table<string, string>
+---@param force LuaForce|nil
+---@param tiers T[]
+---@return T
+local function best_tier(force, tiers)
+  if force then
+    for index = #tiers, 2, -1 do
+      if can_build_tier(force, tiers[index]) then
+        return tiers[index]
+      end
+    end
+  end
+  return tiers[1]
 end
 
 -- The building blocks every column of the blueprint shares, but for the numbers of the pole (see `add_pole_distances`).
 ---@param force LuaForce|nil  whose research decides the pole and the belts
 ---@return bpgen.SharedNames
 local function shared_names(force)
-  local belt, splitter, underground = belt_names(force)
+  local belts = best_tier(force, config.entities.belts)
   return {
-    belt = belt, inserter = config.entities.inserter,
-    long_inserter = config.entities.long_inserter, fast_inserter = config.entities.fast_inserter, pole = pole_name(force),
+    belt = belts.belt, inserter = config.entities.inserter,
+    long_inserter = config.entities.long_inserter, fast_inserter = config.entities.fast_inserter,
+    pole = best_tier(force, config.entities.poles),
     lamp = config.entities.lamp,
-    splitter = splitter, underground = underground,
+    splitter = belts.splitter, underground = belts.underground,
   }
 end
 
@@ -202,23 +223,6 @@ local function candidate_recipes(item_name)
   return found
 end
 
--- The machine a choice builds with: its upgrade once the force has unlocked it (nothing is known without a
--- force) and the game has it, else the machine the config names. The upgrade has to take the same room as the machine
--- it replaces: the layouts are drawn for that size (a 2 x 2 furnace, a 3 x 3 assembler), so another size stops with a
--- message instead of a blueprint that was never designed.
----@param choice bpgen.MachineChoice
----@param force LuaForce|nil
----@return string
-local function machine_of(choice, force)
-  if not (force and choice.upgrade and can_build(force, choice.upgrade)) then
-    return choice.machine
-  end
-  local base, upgrade = prototypes.entity[choice.machine], prototypes.entity[choice.upgrade]
-  assert(not base or (base.tile_width == upgrade.tile_width and base.tile_height == upgrade.tile_height),
-    "generator: " .. choice.upgrade .. " does not take the room of " .. choice.machine .. ", which the layouts are drawn for")
-  return choice.upgrade
-end
-
 ---@param candidate bpgen.Candidate
 ---@param force LuaForce|nil  whose research decides the machine
 ---@return bpgen.Production|nil
@@ -226,7 +230,7 @@ end
 local function production_of(candidate, force)
   local recipe = read_recipe(candidate.prototype)
   if recipe then
-    return {recipe = recipe, machine = machine_of(candidate.choice, force), fuel = candidate.choice.fuel}
+    return {recipe = recipe, machine = best_tier(force, candidate.choice.tiers), fuel = candidate.choice.fuel}
   end
   return nil, "unsupported"
 end
