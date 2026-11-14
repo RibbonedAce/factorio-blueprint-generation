@@ -259,10 +259,12 @@ end
 --     a_machine{crafting_speed = 0.5, size = 3}
 --     a_machine{crafting_speed = 1, size = 2, burns = {"chemical"}}
 -- `energy_usage` is what the machine uses while it crafts, in joules per tick; the default is 1500 (90 kW).
----@param options {crafting_speed: number|false, size: integer, height?: integer, burns?: string[], heat?: boolean, energy_usage?: number}  `height` defaults to `size`; give it for a machine that is not square
+-- `type` is the prototype type, "assembling-machine" unless given; a furnace is "furnace" (it picks its own recipe).
+---@param options {crafting_speed: number|false, size: integer, height?: integer, burns?: string[], heat?: boolean, energy_usage?: number, type?: string}  `height` defaults to `size`; give it for a machine that is not square
 ---@return table
 function builders.a_machine(options)
   return {
+    type = options.type,
     crafting_speed = options.crafting_speed,
     width = options.size,
     height = options.height or options.size,

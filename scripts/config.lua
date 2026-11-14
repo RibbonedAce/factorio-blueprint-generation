@@ -127,7 +127,7 @@ local config = {
   -- its place once the force has unlocked it (and it exists in the game): same size, faster. Without
   -- an upgrade, or without a force, `machine` builds.
   machines = {
-    smelting = {machine = "stone-furnace", fuel = "coal"},
+    smelting = {machine = "stone-furnace", fuel = "coal", upgrade = "steel-furnace"}, -- the steel furnace burns the same fuel, at twice the speed, in the same 2 x 2 tiles
     crafting = {machine = "assembling-machine-1", upgrade = "assembling-machine-2"}, -- electric: no fuel
     ["advanced-crafting"] = {machine = "assembling-machine-1", upgrade = "assembling-machine-2"}, -- engine units: the assembling machines make this category too
   },

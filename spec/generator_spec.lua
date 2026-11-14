@@ -1543,6 +1543,19 @@ describe("generator", function()
       assert.are.same({3, 0}, assemblers(result))
     end)
 
+    it("stops with a message when it does not take the room of the assembling machine 1", function()
+      local machines = {
+        ["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3},
+        ["assembling-machine-2"] = a_machine{crafting_speed = 0.75, size = 4},
+      }
+      _G.prototypes = fake_prototypes{furnace_speed = 1, machines = machines, recipes = {["iron-plate"] = plate, ["pipe"] = slow_pipe}}
+
+      local ok, message = pcall(generator.generate, "pipe", 30, fake_force{})
+
+      assert.is_false(ok)
+      assert.is_truthy(tostring(message):find("assembling-machine-2 does not take the room of assembling-machine-1", 1, true))
+    end)
+
     it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
       _G.prototypes = pipe_game(true)
       local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
@@ -1559,6 +1572,101 @@ describe("generator", function()
       local with, without = generator.generate("pipe", 30, fake_force{}), generator.generate("pipe", 30, fake_force{locked = {"assembling-machine-2"}})
 
       assert.are.equal(count_named(without.entities, "stone-furnace"), count_named(with.entities, "stone-furnace"))
+    end)
+  end)
+
+  describe("the steel furnace, once the force has unlocked it", function()
+    -- A stone furnace makes 18.75 plates a minute from 3.2 s; the steel furnace, at twice the speed, 37.5.
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+
+    local function plate_game(steel_furnace)
+      local machines = {}
+      if steel_furnace then
+        machines["steel-furnace"] = steel_furnace
+      end
+      return fake_prototypes{furnace_speed = 1, machines = machines, recipes = {["iron-plate"] = plate}}
+    end
+
+    local function a_steel_furnace(size)
+      return a_machine{type = "furnace", crafting_speed = 2, size = size or 2, burns = {"chemical"}}
+    end
+
+    -- How many stone furnaces and steel furnaces the blueprint has.
+    local function furnaces(result)
+      return {count_named(result.entities, "stone-furnace"), count_named(result.entities, "steel-furnace")}
+    end
+
+    it("builds with it, and with half as many furnaces as the stone furnace takes", function()
+      _G.prototypes = plate_game(a_steel_furnace())
+
+      local result = generator.generate("iron-plate", 75, fake_force{})
+
+      assert.are.same({0, 2}, furnaces(result)) -- 75 / 37.5; the stone furnaces would be 4
+    end)
+
+    it("leaves the recipe to the furnace, which picks its own", function()
+      _G.prototypes = plate_game(a_steel_furnace())
+
+      local result = generator.generate("iron-plate", 75, fake_force{})
+
+      local recipes = {}
+      for _, entity in ipairs(result.entities) do
+        if entity.name == "steel-furnace" then
+          recipes[#recipes + 1] = entity.recipe or "none"
+        end
+      end
+      assert.are.same({"none", "none"}, recipes)
+    end)
+
+    it("builds with the stone furnace when the force has not unlocked it", function()
+      _G.prototypes = plate_game(a_steel_furnace())
+
+      local result = generator.generate("iron-plate", 75, fake_force{locked = {"steel-furnace"}})
+
+      assert.are.same({4, 0}, furnaces(result))
+    end)
+
+    it("builds with the stone furnace when the game has no steel furnace", function()
+      _G.prototypes = plate_game(nil)
+
+      local result = generator.generate("iron-plate", 75, fake_force{})
+
+      assert.are.same({4, 0}, furnaces(result))
+    end)
+
+    it("builds with the stone furnace when no force is given", function()
+      _G.prototypes = plate_game(a_steel_furnace())
+
+      local result = generator.generate("iron-plate", 75)
+
+      assert.are.same({4, 0}, furnaces(result))
+    end)
+
+    it("builds a blueprint that passes the validator, with every furnace fed, emptied and powered", function()
+      _G.prototypes = plate_game(a_steel_furnace())
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["steel-furnace"] = {kind = "machine", width = 2, height = 2, needs_power = false}
+
+      local result = generator.generate("iron-plate", 75, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("stops with a message when the steel furnace does not take the room of the stone furnace", function()
+      _G.prototypes = plate_game(a_steel_furnace(3))
+
+      local ok, message = pcall(generator.generate, "iron-plate", 75, fake_force{})
+
+      assert.is_false(ok)
+      assert.is_truthy(tostring(message):find("steel-furnace does not take the room of stone-furnace", 1, true))
+    end)
+
+    it("does not look at the size of an upgrade the force has not unlocked", function()
+      _G.prototypes = plate_game(a_steel_furnace(3))
+
+      local result = generator.generate("iron-plate", 75, fake_force{locked = {"steel-furnace"}})
+
+      assert.are.same({4, 0}, furnaces(result))
     end)
   end)
 

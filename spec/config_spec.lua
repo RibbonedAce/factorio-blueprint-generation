@@ -7,10 +7,10 @@ local config = require("scripts.config")
 
 describe("config", function()
   describe("the machines", function()
-    it("smelts in a stone furnace burning coal", function()
+    it("smelts in a stone furnace burning coal, and in a steel furnace once it is unlocked", function()
       local choice = config.machines.smelting
 
-      assert.are.same({machine = "stone-furnace", fuel = "coal"}, choice)
+      assert.are.same({machine = "stone-furnace", fuel = "coal", upgrade = "steel-furnace"}, choice)
     end)
 
     it("crafts in a basic assembling machine, which burns nothing, and in assembling machine 2 once it is unlocked", function()

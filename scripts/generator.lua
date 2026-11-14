@@ -203,15 +203,20 @@ local function candidate_recipes(item_name)
 end
 
 -- The machine a choice builds with: its upgrade once the force has unlocked it (nothing is known without a
--- force) and the game has it, else the machine the config names.
+-- force) and the game has it, else the machine the config names. The upgrade has to take the same room as the machine
+-- it replaces: the layouts are drawn for that size (a 2 x 2 furnace, a 3 x 3 assembler), so another size stops with a
+-- message instead of a blueprint that was never designed.
 ---@param choice bpgen.MachineChoice
 ---@param force LuaForce|nil
 ---@return string
 local function machine_of(choice, force)
-  if force and choice.upgrade and can_build(force, choice.upgrade) then
-    return choice.upgrade
+  if not (force and choice.upgrade and can_build(force, choice.upgrade)) then
+    return choice.machine
   end
-  return choice.machine
+  local base, upgrade = prototypes.entity[choice.machine], prototypes.entity[choice.upgrade]
+  assert(not base or (base.tile_width == upgrade.tile_width and base.tile_height == upgrade.tile_height),
+    "generator: " .. choice.upgrade .. " does not take the room of " .. choice.machine .. ", which the layouts are drawn for")
+  return choice.upgrade
 end
 
 ---@param candidate bpgen.Candidate
