@@ -202,31 +202,45 @@ local function candidate_recipes(item_name)
   return found
 end
 
+-- The machine a choice builds with: its upgrade once the force has unlocked it (nothing is known without a
+-- force) and the game has it, else the machine the config names.
+---@param choice bpgen.MachineChoice
+---@param force LuaForce|nil
+---@return string
+local function machine_of(choice, force)
+  if force and choice.upgrade and can_build(force, choice.upgrade) then
+    return choice.upgrade
+  end
+  return choice.machine
+end
+
 ---@param candidate bpgen.Candidate
+---@param force LuaForce|nil  whose research decides the machine
 ---@return bpgen.Production|nil
 ---@return "unsupported"|nil reason
-local function production_of(candidate)
+local function production_of(candidate, force)
   local recipe = read_recipe(candidate.prototype)
   if recipe then
-    return {recipe = recipe, machine = candidate.choice.machine, fuel = candidate.choice.fuel}
+    return {recipe = recipe, machine = machine_of(candidate.choice, force), fuel = candidate.choice.fuel}
   end
   return nil, "unsupported"
 end
 
--- How the game makes an item, in the shape `chain.resolve` asks for (see `bpgen.RecipeLookup`).
----@param item_name string
----@return bpgen.Production|nil
----@return bpgen.ChainReason|nil reason
-local function lookup_production(item_name)
-  local candidates = candidate_recipes(item_name)
-  local only = candidates[1]
-  if only and #candidates == 1 then
-    return production_of(only)
+-- How the game makes an item for a force, in the shape `chain.resolve` asks for (see `bpgen.RecipeLookup`).
+---@param force LuaForce|nil
+---@return bpgen.RecipeLookup
+local function production_lookup(force)
+  return function(item_name)
+    local candidates = candidate_recipes(item_name)
+    local only = candidates[1]
+    if only and #candidates == 1 then
+      return production_of(only, force)
+    end
+    if #candidates == 0 then
+      return nil, "no-recipe"
+    end
+    return nil, "ambiguous"
   end
-  if #candidates == 0 then
-    return nil, "no-recipe"
-  end
-  return nil, "ambiguous"
 end
 
 -- How many of `fuel` a machine burns in a minute of crafting: its energy use divided by what
@@ -353,10 +367,11 @@ end
 -- the player when the item cannot be made from steps we can build or the game lacks
 -- a machine.
 ---@param item_name string
+---@param force LuaForce|nil  whose research decides the machines
 ---@return bpgen.StageData|nil
 ---@return LocalisedString|nil error_message
-local function read_root(item_name)
-  local stage, reason, culprit = chain.resolve(item_name, lookup_production)
+local function read_root(item_name, force)
+  local stage, reason, culprit = chain.resolve(item_name, production_lookup(force))
   if not stage then
     ---@cast reason bpgen.ChainReason -- there is always a reason when there is no step
     ---@cast culprit string
@@ -404,7 +419,7 @@ local function read_job(item_name, rate_per_minute, force)
     return nil, messages.missing_prototype()
   end
   add_pole_distances(names)
-  local root, problem = read_root(item_name)
+  local root, problem = read_root(item_name, force)
   if not root then
     return nil, problem
   end

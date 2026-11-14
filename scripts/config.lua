@@ -123,11 +123,13 @@ local config = {
   -- The machine that makes the recipes of each category, and the item it burns
   -- (leave `fuel` out for an electric machine). A recipe whose categories are not
   -- listed here cannot be made. Only a step fed raw items can burn fuel, since the fuel
-  -- rides on the belt that carries the raw items.
+  -- rides on the belt that carries the raw items. `upgrade` is the machine that takes
+  -- its place once the force has unlocked it (and it exists in the game): same size, faster. Without
+  -- an upgrade, or without a force, `machine` builds.
   machines = {
     smelting = {machine = "stone-furnace", fuel = "coal"},
-    crafting = {machine = "assembling-machine-1"}, -- electric: no fuel
-    ["advanced-crafting"] = {machine = "assembling-machine-1"}, -- engine units: assembling machine 1 makes this category too
+    crafting = {machine = "assembling-machine-1", upgrade = "assembling-machine-2"}, -- electric: no fuel
+    ["advanced-crafting"] = {machine = "assembling-machine-1", upgrade = "assembling-machine-2"}, -- engine units: the assembling machines make this category too
   },
 
   -- The item already picked when the window opens.

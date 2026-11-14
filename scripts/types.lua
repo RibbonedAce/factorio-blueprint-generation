@@ -34,6 +34,7 @@
 ---@class bpgen.MachineChoice  the machine that makes the recipes of one category (see config.lua)
 ---@field machine string  machine prototype name
 ---@field fuel? string  item the machine burns; nil for a machine that burns nothing (an electric one)
+---@field upgrade? string  machine prototype name that replaces `machine` when the force has unlocked it and the game has it; nil: none
 
 ---@class bpgen.Production  one way to make an item: its recipe and the machine the config picks for it
 ---@field recipe bpgen.Recipe

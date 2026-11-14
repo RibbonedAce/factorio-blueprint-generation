@@ -13,10 +13,16 @@ describe("config", function()
       assert.are.same({machine = "stone-furnace", fuel = "coal"}, choice)
     end)
 
-    it("crafts in a basic assembling machine, which burns nothing", function()
+    it("crafts in a basic assembling machine, which burns nothing, and in assembling machine 2 once it is unlocked", function()
       local choice = config.machines.crafting
 
-      assert.are.same({machine = "assembling-machine-1"}, choice)
+      assert.are.same({machine = "assembling-machine-1", upgrade = "assembling-machine-2"}, choice)
+    end)
+
+    it("crafts the advanced category in the same machines", function()
+      local choice = config.machines["advanced-crafting"]
+
+      assert.are.same({machine = "assembling-machine-1", upgrade = "assembling-machine-2"}, choice)
     end)
   end)
 

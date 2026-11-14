@@ -1477,6 +1477,91 @@ describe("generator", function()
     end)
   end)
 
+  describe("the assembling machine 2, once the force has unlocked it", function()
+    -- A recipe that takes 3 s a craft, so the machine's speed decides how many there are: 10 a minute from an
+    -- assembling machine 1 (speed 0.5), 15 from an assembling machine 2 (0.75). One plate in, one pipe out,
+    -- which the inserters keep up with in either.
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local slow_pipe = a_recipe{energy = 3, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "pipe")}}
+
+    local function pipe_game(with_assembler_2)
+      local machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}}
+      if with_assembler_2 then
+        machines["assembling-machine-2"] = a_machine{crafting_speed = 0.75, size = 3}
+      end
+      return fake_prototypes{furnace_speed = 1, machines = machines, recipes = {["iron-plate"] = plate, ["pipe"] = slow_pipe}}
+    end
+
+    -- How many assembling machines 1 and 2 the blueprint has.
+    local function assemblers(result)
+      return {count_named(result.entities, "assembling-machine-1"), count_named(result.entities, "assembling-machine-2")}
+    end
+
+    it("builds with it, and with fewer machines than the assembling machine 1 takes", function()
+      _G.prototypes = pipe_game(true)
+
+      local result = generator.generate("pipe", 30, fake_force{})
+
+      assert.are.same({0, 2}, assemblers(result))
+    end)
+
+    it("sets the recipe on it", function()
+      _G.prototypes = pipe_game(true)
+
+      local result = generator.generate("pipe", 30, fake_force{})
+
+      local recipes = {}
+      for _, entity in ipairs(result.entities) do
+        if entity.name == "assembling-machine-2" then
+          recipes[#recipes + 1] = entity.recipe
+        end
+      end
+      assert.are.same({"pipe", "pipe"}, recipes)
+    end)
+
+    it("builds with the assembling machine 1 when the force has not unlocked it", function()
+      _G.prototypes = pipe_game(true)
+
+      local result = generator.generate("pipe", 30, fake_force{locked = {"assembling-machine-2"}})
+
+      assert.are.same({3, 0}, assemblers(result))
+    end)
+
+    it("builds with the assembling machine 1 when the game has no assembling machine 2", function()
+      _G.prototypes = pipe_game(false)
+
+      local result = generator.generate("pipe", 30, fake_force{})
+
+      assert.are.same({3, 0}, assemblers(result))
+    end)
+
+    it("builds with the assembling machine 1 when no force is given", function()
+      _G.prototypes = pipe_game(true)
+
+      local result = generator.generate("pipe", 30)
+
+      assert.are.same({3, 0}, assemblers(result))
+    end)
+
+    it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
+      _G.prototypes = pipe_game(true)
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-2"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("pipe", 30, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("builds the machines of the other steps the same, so the furnaces of the plates do not change", function()
+      _G.prototypes = pipe_game(true)
+
+      local with, without = generator.generate("pipe", 30, fake_force{}), generator.generate("pipe", 30, fake_force{locked = {"assembling-machine-2"}})
+
+      assert.are.equal(count_named(without.entities, "stone-furnace"), count_named(with.entities, "stone-furnace"))
+    end)
+  end)
+
   describe("the design that brings in one belt of each material", function()
     -- Iron plates and copper cables to circuits, as above: two ores and the coal for the furnaces, so three belts come in
     -- and the blueprint has one splitter (the coal feeds both trunks) and four underground belts (the two ore feeders
