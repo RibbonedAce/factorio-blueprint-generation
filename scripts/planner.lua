@@ -401,9 +401,12 @@ end
 -- How many machines' worth of product the output belt can take. With one output
 -- inserter per machine the product is on one lane, which carries all of it. With
 -- two, the winding belt (only the last stage's output belt winds) gives each
--- inserter a lane, but the first inserter takes all it can, so a lane can get
--- everything one inserter moves from every machine. (That is also why the two
--- lanes together never overfill: no machine makes more than two inserters move.)
+-- inserter a lane, and the two lanes together carry all of it: an inserter that finds
+-- its lane full waits, and the machine's other inserter, on the other lane, takes the rest
+-- (owner, 2026-11-13; the game has not shown it), so the belt takes two lanes' worth, whichever of the lanes
+-- fills first. (A machine whose outer lane is full is then held to what its one other
+-- inserter moves, so near the most the belt carries the machines may make a little less than their full speed:
+-- not counted.)
 -- An output belt that does not wind carries everything on its one lane, whatever
 -- the inserters. With the paired winding belt every machine has one inserter, which
 -- fills one lane, and machines alternate lanes (outer, inner, inner, outer, ...): a lane
@@ -416,16 +419,14 @@ end
 ---@param stage bpgen.StageContext
 ---@return number
 local function output_machines_worth(stage)
-  local lane_flow_per_machine = stage.per_machine.output
+  local one_lane = stage.lane_items_per_minute / stage.per_machine.output
   local winding = output_winding(stage)
   if winding == "double" then
-    local limits = stage.request.inserters --[[@as bpgen.InserterLimits]] -- a belt only winds when there are limits
-    lane_flow_per_machine = stage.per_machine.output_fast and limits.fast_items_per_minute or limits.items_per_minute
+    return 2 * one_lane
   elseif winding == "paired" then
-    local one_lane = stage.lane_items_per_minute / lane_flow_per_machine
     return math.floor(one_lane + EPSILON) + one_lane
   end
-  return stage.lane_items_per_minute / lane_flow_per_machine
+  return one_lane
 end
 
 -- How many machines' worth of work the belts of one column can carry before a lane

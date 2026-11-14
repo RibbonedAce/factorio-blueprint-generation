@@ -668,18 +668,30 @@ describe("planner", function()
       assert.are.equal(2, plan.output_inserters) -- 120 a minute needs two inserters of 100
     end)
 
-    it("limits the rate by what one inserter puts on a lane when two inserters empty each machine", function()
+    it("limits the rate by what the two lanes carry together when two inserters empty each machine", function()
       local recipe = {energy = 1, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(2, "iron-gear-wheel")}}
 
       local plan, reason, max_rate = planner.plan{
-        product = "iron-gear-wheel", rate_per_minute = 541, recipe = recipe,
+        product = "iron-gear-wheel", rate_per_minute = 901, recipe = recipe,
         machine_speed = 1, lane_items_per_minute = 450,
         inserters = {items_per_minute = 100, max_input = 2, max_output = 2},
       }
 
       assert.is_nil(plan)
       assert.are.equal("rate-too-high", reason)
-      assert.near(540, max_rate, 1e-6) -- 450 / 100 = 4.5 machines' worth x 120; the two lanes could take 7.5 (900 / 120)
+      assert.near(900, max_rate, 1e-6) -- 2 x 450 / 120 = 7.5 machines' worth x 120, whichever lane fills first
+    end)
+
+    it("takes a rate that one lane cannot carry when two inserters empty each machine, as the second lane takes the rest", function()
+      local recipe = {energy = 1, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(2, "iron-gear-wheel")}}
+
+      local plan = planner.plan{
+        product = "iron-gear-wheel", rate_per_minute = 541, recipe = recipe,
+        machine_speed = 1, lane_items_per_minute = 450,
+        inserters = {items_per_minute = 100, max_input = 2, max_output = 2},
+      }
+
+      assert.are.equal(5, plan.machines) -- 541 / 120 = 4.5; the lane of one inserter's 100 each would have stopped at 540
     end)
 
     it("keeps the product on one lane when three inserters empty each machine, which the belt cannot wind for", function()
@@ -781,7 +793,7 @@ describe("planner", function()
 
       assert.is_nil(plans)
       assert.are.equal("rate-too-high", reason)
-      assert.near(535.7142857, max_rate, 1e-6) -- one inserter puts 50.4 on a lane: 450 / 50.4 = 8.93 machines' worth of 60 gears
+      assert.near(900, max_rate, 1e-6) -- the two lanes carry 2 x 450 / 60 = 15 machines' worth of 60 gears
     end)
 
     it("refuses a later stage that eats something other than the stage before it makes", function()
@@ -1661,7 +1673,7 @@ describe("planner", function()
       end)
 
       it("winds the belt the other way, a lane for each of two fast inserters, when a machine makes more than one moves", function()
-        assert.near(562.5, max_rate_of(stage("part", 1, 3)), 1e-6) -- 180 a minute: two fast inserters; 450 / 144 machines' worth, each making 180
+        assert.near(900, max_rate_of(stage("part", 1, 3)), 1e-6) -- 180 a minute: two fast inserters; 2 x 450 / 180 = 5 machines' worth, each making 180
       end)
 
       it("does not pair the belt of a stage that feeds another, which carries one lane", function()
@@ -1686,8 +1698,8 @@ describe("planner", function()
         return planner.max_tree_rate(request)
       end
 
-      it("winds when a side is not full: a lane gets what one of the two fast inserters moves from every machine", function()
-        assert.near(562.5, max_rate_with(1), 1e-6) -- 450 / 144 machines' worth, each making 180
+      it("winds when a side is not full: the two lanes carry what the machines make together", function()
+        assert.near(900, max_rate_with(1), 1e-6) -- 2 x 450 / 180 = 5 machines' worth, each making 180
       end)
 
       it("does not wind when the input side is full, which takes a row of poles: the product rides one lane", function()
