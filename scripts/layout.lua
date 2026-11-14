@@ -36,7 +36,10 @@
 -- While a side has a free tile beside the machine (fewer inserters than rows), the poles go there: under the
 -- inserters of a machine whose inserters are in its top rows, above those of one whose inserters are in its bottom
 -- rows. The machines go from the top down, each with a pole unless a pole above it reaches its inserters, which a
--- small pole does for two rows each way and a medium pole for three (see `Builder:side_pole_plan`). When a side is full, no tile is free, so the
+-- small pole does for two rows each way and a medium pole for three (see `Builder:side_pole_plan`). When the pole reaches
+-- the input inserters from the output side (a medium pole does for a 2x2 machine: they are 3 tiles away), the poles stand
+-- on the output side alone and power the input inserters, the machine and the output inserters, which takes half the
+-- poles (`Shape.powered_from_output`). When a side is full, no tile is free, so the
 -- machines are separated by a row of poles instead (a "pole row"), with one more
 -- row of poles above the first machine and below the last. A 3x3 machine with
 -- three inserters in, two out, drawn the same way:

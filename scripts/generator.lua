@@ -817,20 +817,26 @@ end
 -- The size of a step's machines and how many inserters each has, as the layout wants it: a step built wide has its second
 -- input belt, its poles beside the output side and its output belt winding for machines in twos. A step built wide that is
 -- fed by another one (steel plate from iron plate) has a belt of fuel of its own, woven with the belt before it, instead.
+-- The poles of a column stand beside the output side alone when one there reaches the input inserters (a medium pole
+-- does for a 2 x 2 machine: they are 3 tiles away) and so also powers the machine and the output inserters, which
+-- takes half the poles; a column built wide needs it, as its input side is full (it is only built wide when the pole
+-- reaches, see `may_be_wide`).
 ---@param step bpgen.PlannedStage
+---@param pole_reach integer  how many tiles away from its own a pole of the blueprint powers (`layout.pole_reach`)
 ---@return bpgen.Shape
-local function shape_of(step)
+local function shape_of(step, pole_reach)
   local wide = step.plan.wide
   local fuel_belt = wide and #step.suppliers > 0
+  local machine_size = machine_size_of(step.stage)
   return {
-    machine_size = machine_size_of(step.stage),
+    machine_size = machine_size,
     input_inserters = step.plan.input_inserters,
     input_fast = step.plan.input_fast,
     long_inserters = step.plan.long_inserters,
     output_inserters = step.plan.output_inserters,
     output_fast = step.plan.output_fast,
     output_paired = wide,
-    powered_from_output = wide,
+    powered_from_output = pole_reach > machine_size,
     second_input_belt = wide and not fuel_belt,
     fuel_belt = fuel_belt,
   }
@@ -842,11 +848,12 @@ end
 -- raw items also says what it takes of them (`feed`), which `rows.build_pure` uses.
 ---@param step bpgen.PlannedStage  with its `demand`
 ---@param lane number  what one lane of a belt carries a minute
+---@param pole_reach integer  how many tiles away from its own a pole of the blueprint powers (`layout.pole_reach`)
 ---@return bpgen.StageLayout
-local function layout_stage(step, lane)
+local function layout_stage(step, lane, pole_reach)
   local suppliers = {}
   for index, supplier in ipairs(step.suppliers) do
-    suppliers[index] = layout_stage(supplier, lane)
+    suppliers[index] = layout_stage(supplier, lane, pole_reach)
     suppliers[index].belt = rides_belt_b(step.plan, supplier.stage.item) and "b" or "a"
   end
   local raw_item = step.stage.raw_item
@@ -859,7 +866,7 @@ local function layout_stage(step, lane)
     load = step.plan.load,
     machine = step.stage.machine,
     recipe = recipe_to_set(step.stage),
-    shape = shape_of(step),
+    shape = shape_of(step, pole_reach),
     suppliers = suppliers,
     feed = feed,
     second_feed = second_feed,
@@ -876,7 +883,7 @@ end
 ---@return string[]|nil belts
 ---@return bpgen.StageLayout root  what the blueprint was laid out from
 local function build_entities(job, planned)
-  local root = layout_stage(planned, planner.lane_items_per_minute(job.belt_speed))
+  local root = layout_stage(planned, planner.lane_items_per_minute(job.belt_speed), layout.pole_reach(job.names.pole_supply_distance))
   if not job.inputs then
     return (rows.build(root, job.names)), nil, root
   end

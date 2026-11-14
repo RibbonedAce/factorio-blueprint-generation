@@ -2576,12 +2576,64 @@ describe("generator", function()
       }
     end
 
-    it("builds with 8 medium poles, where small poles take 10, and no small pole", function()
+    -- What the generator tells the layout about the stages of a blueprint: the root stage the layout is given.
+    local function layout_given(item, rate, force)
+      local rows = require("scripts.rows")
+      local build, build_pure, given = rows.build, rows.build_pure, nil
+      rows.build = function(root, names)
+        given = root
+        return build(root, names)
+      end
+      rows.build_pure = function(root, names, options)
+        given = root
+        return build_pure(root, names, options)
+      end
+      local ok, problem = pcall(generator.generate, item, rate, force)
+      rows.build, rows.build_pure = build, build_pure
+      assert(ok, problem)
+      return given
+    end
+
+    it("has the poles of the furnaces beside their output side alone, where the pole reaches their input inserters", function()
+      _G.prototypes = gear_game()
+
+      local assembler = layout_given("iron-gear-wheel", 60, fake_force{})
+      local furnaces = assembler.suppliers[1]
+
+      assert.are.same({true, false}, {furnaces.shape.powered_from_output, assembler.shape.powered_from_output}) -- 3 tiles reach a 2 x 2 machine's input side, not a 3 x 3 one's
+    end)
+
+    it("has the poles of the furnaces beside both sides when the small pole is all there is", function()
+      _G.prototypes = gear_game()
+
+      local assembler = layout_given("iron-gear-wheel", 60, fake_force{locked = {"medium-electric-pole"}})
+
+      assert.is_false(assembler.suppliers[1].shape.powered_from_output)
+    end)
+
+    it("has the poles of the furnaces beside both sides when the medium pole of the game powers only 2.5 tiles", function()
+      _G.prototypes = gear_game({medium_pole_supply_distance = 2.5, medium_pole_wire_distance = 7.5})
+
+      local assembler = layout_given("iron-gear-wheel", 60, fake_force{})
+
+      assert.is_false(assembler.suppliers[1].shape.powered_from_output)
+    end)
+
+    it("has the poles of the furnaces beside their output side alone in the original design too, once the medium pole is unlocked", function()
+      _G.prototypes = gear_game()
+
+      local assembler = layout_given("iron-gear-wheel", 60, fake_force{locked = {"splitter"}})
+
+      assert.is_true(assembler.suppliers[1].shape.powered_from_output)
+    end)
+
+    it("builds with 6 medium poles, where small poles take 10, and no small pole", function()
       _G.prototypes = gear_game()
 
       local result = generator.generate("iron-gear-wheel", 60, fake_force{})
 
-      assert.are.same({8, 0}, {count_named(result.entities, "medium-electric-pole"), count_named(result.entities, "small-electric-pole")})
+      -- 4 beside the output side of the 7 furnaces, which reach the input inserters too (3 tiles away), and 2 for the assembler
+      assert.are.same({6, 0}, {count_named(result.entities, "medium-electric-pole"), count_named(result.entities, "small-electric-pole")})
     end)
 
     it("builds a blueprint that passes the validator, every inserter, machine and lamp powered and the poles wired", function()
