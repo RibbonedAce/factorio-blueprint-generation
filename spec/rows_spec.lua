@@ -225,8 +225,8 @@ describe("rows", function()
       assert.are.same({north}, belt_directions(entities, 12))
     end)
 
-    it("turns the second product east into the side of belt a, in the row under the final column", function()
-      assert.are.equal(east, entity_at(entities, NAMES.belt, 11, 3, 1).direction)
+    it("brings the second product down into the side of the arc of the first, which carries on to belt a", function()
+      assert.are.equal(south, entity_at(entities, NAMES.belt, 11, 3, 1).direction)
     end)
 
     it("sends the first product through the lane gadget, a stub behind the tile its belt side-loads", function()
@@ -288,7 +288,7 @@ describe("rows", function()
     local entities = rows.build(root, NAMES)
 
     it("runs the arc of the first product, which has the gadget, deeper than the arc of the second", function()
-      assert.are.equal(east, entity_at(entities, NAMES.belt, 17, 3, 1).direction) -- the iron plates, into belt a
+      assert.are.equal(south, entity_at(entities, NAMES.belt, 17, 3, 1).direction) -- the cables, down into the arc of the iron plates
       assert.are.same({"12,4 east", "13,4 east"}, belts_in(entities, 12, 4, 13, 4)) -- the stub and the tile the cables side-load
       assert.are.equal(north, entity_at(entities, NAMES.belt, 13, 5, 1).direction)
     end)
@@ -331,7 +331,7 @@ describe("rows", function()
     end)
 
     it("runs the arc of a column deeper than the arcs of the columns east of it", function()
-      assert.are.equal(east, entity_at(entities, NAMES.belt, 24, 3, 1).direction) -- the bricks, into belt a
+      assert.are.equal(south, entity_at(entities, NAMES.belt, 24, 3, 1).direction) -- the bricks, down into the arc of the circuit
       assert.are.equal(east, entity_at(entities, NAMES.belt, 24, 4, 1).direction) -- the circuit, under them
     end)
   end)
@@ -418,10 +418,10 @@ describe("rows", function()
         assert.are.equal("input", entity_at(entities, NAMES.underground, 26, 6, 1).type)
       end)
 
-      it("turns the head of belt b through the gadget and the second product of belt b in from the west", function()
+      it("turns the head of belt b through the gadget and brings the second product of belt b down into the side of its arc", function()
         assert.are.same({"17,9 east", "18,9 east", "19,9 north"}, belts_in(entities, 17, 9, 19, 9))
         assert.are.equal(east, entity_at(entities, NAMES.belt, 23, 8, 1).direction) -- the cables, into the head of belt b
-        assert.are.equal(east, entity_at(entities, NAMES.belt, 23, 7, 1).direction) -- the bricks, into the side of belt b
+        assert.are.equal(south, entity_at(entities, NAMES.belt, 23, 7, 1).direction) -- the bricks, down into the side of the arc of the cables
       end)
 
       it("gives a product that has its belt to itself no gadget, and runs it under the arcs of belt b", function()
@@ -565,10 +565,10 @@ describe("rows", function()
         assert.is_not_nil(entity_at(entities, NAMES.long_inserter, 26, 4, 1)) -- the second machine's, in its bottom rows 4 and 5, are long then plain
       end)
 
-      it("turns the head of belt b through the gadget and the second product of belt b in from the west", function()
+      it("turns the head of belt b through the gadget and brings the second product of belt b down into the side of its arc", function()
         assert.are.same({"17,8 east", "18,8 east", "19,8 north"}, belts_in(entities, 17, 8, 19, 8))
         assert.are.equal(east, entity_at(entities, NAMES.belt, 23, 7, 1).direction) -- the cables, into the head of belt b
-        assert.are.equal(east, entity_at(entities, NAMES.belt, 23, 6, 1).direction) -- the bricks, into the side of belt b
+        assert.are.equal(south, entity_at(entities, NAMES.belt, 23, 6, 1).direction) -- the bricks, down into the side of the arc of the cables
       end)
 
       it("gives a product that has its belt to itself no gadget, and runs it under the arcs of belt b", function()

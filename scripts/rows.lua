@@ -368,23 +368,45 @@ local function lowest_arc_row(child, final, columns)
   return lowest
 end
 
+-- Whether the product of `children[index]` goes down onto the arc of the head of its belt instead of running an arc of its
+-- own: it is the second product of a belt (the head stands right before it in the list, west of it, so no other arc lies
+-- between their rows) and has machines to come down from. Its items are side-loaded onto the lane of the arc that the head's
+-- gadget leaves free, the west lane of the belt that comes up, as they were when they joined at the final column.
+---@param children bpgen.Column[]
+---@param index integer
+---@return boolean
+local function joins_head(children, index)
+  local child, head = children[index], children[index - 1]
+  return not child.arc.head and child.kind ~= "raw" and head ~= nil and head.belt == child.belt
+end
+
 -- Gives the arcs of the columns that a final column eats their rows, from the east: an arc runs
--- deeper than the arcs of the columns east of it and than everything inside them. Returns the
+-- deeper than the arcs of the columns east of it and than everything inside them. The second product of a belt has no arc
+-- of its own: it comes down onto the arc of its head (`joins_head`), which runs a row below where its own arc would have, so
+-- that it does not pass right under the belts of the second's columns that end in their last row. Returns the
 -- first row below all the arcs of this final column and of the final columns inside it.
 ---@param final bpgen.Column
 ---@param columns bpgen.Column[]
 ---@return integer
 local function assign_arcs(final, columns)
-  local depths = {}
-  for index, child in ipairs(final.children) do
+  local children, depths = final.children, {}
+  for index, child in ipairs(children) do
     depths[index] = child.kind == "final" and assign_arcs(child, columns) or 0
   end
   local deepest = 0
-  for index = #final.children, 1, -1 do
-    local child = final.children[index]
-    local arc = child.arc
-    arc.row = math.max(deepest, lowest_arc_row(child, final, columns))
-    deepest = math.max(arc.row + arc.rows, depths[index], deepest)
+  for index = #children, 1, -1 do
+    local child = children[index]
+    local arc, second = child.arc, children[index + 1]
+    local joined = second and joins_head(children, index + 1)
+    if joins_head(children, index) then
+      deepest = math.max(deepest, depths[index])
+    else
+      arc.row = math.max(deepest, lowest_arc_row(child, final, columns), joined and lowest_arc_row(second, final, columns) + 1 or 0)
+      deepest = math.max(arc.row + arc.rows, depths[index], deepest, joined and depths[index + 1] or 0)
+      if joined then
+        second.arc.row, second.arc.rows, second.arc.joins = arc.row, 0, true
+      end
+    end
   end
   return deepest
 end
@@ -493,6 +515,8 @@ local function add_arc(entities, belt_name, child, target)
     add_run(entities, belt_name, x, output_start(child), arc.row, south)
     add_gadget(entities, belt_name, x, arc.row)
     add_across(entities, belt_name, x + 3, target - 1, arc.row)
+  elseif arc.joins then
+    add_run(entities, belt_name, x, output_start(child), arc.row - 1, south) -- the last tile feeds the side of the head's arc
   else
     add_run(entities, belt_name, x, output_start(child), arc.row - 1, south)
     add_across(entities, belt_name, x, target - 1, arc.row)
