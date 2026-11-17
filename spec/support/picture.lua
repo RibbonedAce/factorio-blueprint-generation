@@ -6,6 +6,7 @@
 --   S         a splitter, on both of its tiles (the way it faces shows in the shape: side by side or one above the other)
 --   ( )       the entrance and the exit of an underground belt that runs east
 --   n u       the entrance and the exit of one that runs south
+--   N U       the entrance and the exit of one that runs north
 --   }         an inserter, fast or long-handed or not
 --   +         a pole
 --   letters   the machines, as `machines` says: {[entity name] = {size = 2, glyph = "i"}}
@@ -21,8 +22,8 @@ local NAMES = builders.NAMES
 local north, east, south, west = defines.direction.north, defines.direction.east, defines.direction.south, defines.direction.west
 
 local BELTS = {[north] = "^", [east] = ">", [south] = "v", [west] = "<"}
-local ENTRANCES = {[east] = "(", [south] = "n"}
-local EXITS = {[east] = ")", [south] = "u"}
+local ENTRANCES = {[east] = "(", [south] = "n", [north] = "N"}
+local EXITS = {[east] = ")", [south] = "u", [north] = "U"}
 
 -- What each kind of entity is drawn as, by name.
 local GLYPHS = {

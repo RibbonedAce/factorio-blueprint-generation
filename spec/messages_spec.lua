@@ -47,6 +47,7 @@ local function every_message()
     unsupported_energy = messages.unsupported_energy(),
     chain_fuel = messages.chain_fuel("iron-plate"),
     fuel_needs_inputs = messages.fuel_needs_inputs("steel-plate"),
+    belts_need_weave = messages.belts_need_weave("inserter"),
     fuel_mismatch = messages.fuel_mismatch({"entity-name.stone-furnace"}),
     locked = messages.locked("iron-plate"),
     rate_too_high = messages.rate_too_high(450),

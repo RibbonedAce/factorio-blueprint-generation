@@ -356,20 +356,56 @@ describe("chain", function()
       assert.are.equal("copper-plate", item)
     end)
 
-    it("reports the item when five of its ingredients are made from others", function()
+    it("reports the item when seven of its ingredients are made from others, more than the lanes of three belts hold", function()
       local lookup = lookup_in{
-        ["thing"] = production{"iron-plate", "copper-plate", "stone-brick", "steel", "glass"},
+        ["thing"] = production{"iron-plate", "copper-plate", "stone-brick", "steel", "glass", "wire", "rod"},
         ["iron-plate"] = production{"iron-ore"},
         ["copper-plate"] = production{"copper-ore"},
         ["stone-brick"] = production{"stone"},
         ["steel"] = production{"iron-plate"},
         ["glass"] = production{"sand"},
+        ["wire"] = production{"copper-plate"},
+        ["rod"] = production{"iron-plate"},
       }
 
       local stage, reason, item = chain.resolve("thing", lookup)
 
       assert.is_nil(stage)
       assert.are.equal("several-crafted", reason)
+      assert.are.equal("thing", item)
+    end)
+
+    it("takes an item that has six ingredients made from others: they fill the lanes of three belts", function()
+      local lookup = lookup_in{
+        ["thing"] = production{"iron-plate", "copper-plate", "stone-brick", "steel", "glass", "wire"},
+        ["iron-plate"] = production{"iron-ore"},
+        ["copper-plate"] = production{"copper-ore"},
+        ["stone-brick"] = production{"stone"},
+        ["steel"] = production{"iron-plate"},
+        ["glass"] = production{"sand"},
+        ["wire"] = production{"copper-plate"},
+      }
+
+      local stage = chain.resolve("thing", lookup)
+
+      assert.are.equal(6, #stage.suppliers)
+    end)
+
+    it("reports the item when it has six made ingredients and a raw one, seven in all, more than the lanes of three belts hold", function()
+      local lookup = lookup_in{
+        ["thing"] = production{"iron-plate", "copper-plate", "stone-brick", "steel", "glass", "wire", "wood"},
+        ["iron-plate"] = production{"iron-ore"},
+        ["copper-plate"] = production{"copper-ore"},
+        ["stone-brick"] = production{"stone"},
+        ["steel"] = production{"iron-plate"},
+        ["glass"] = production{"sand"},
+        ["wire"] = production{"copper-plate"},
+      }
+
+      local stage, reason, item = chain.resolve("thing", lookup)
+
+      assert.is_nil(stage)
+      assert.are.equal("extra-ingredient", reason)
       assert.are.equal("thing", item)
     end)
 

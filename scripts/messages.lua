@@ -158,6 +158,15 @@ function messages.fuel_needs_inputs(item_name)
   return text("error-fuel-needs-inputs", messages.item(item_name))
 end
 
+-- Why a step with more ingredients than two belts carry cannot be made: its machines take them from three woven belts, which
+-- need the splitters and underground belts of the blueprint that brings in one belt of each material, and a pole that reaches
+-- the inserters beside three belts (the medium electric pole).
+---@param item_name string  the item the step makes
+---@return LocalisedString
+function messages.belts_need_weave(item_name)
+  return text("error-belts-need-weave", messages.item(item_name))
+end
+
 ---@param max_rate number  the most one blueprint can make a minute
 ---@return LocalisedString
 function messages.rate_too_high(max_rate)

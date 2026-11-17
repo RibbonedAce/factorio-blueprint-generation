@@ -1371,6 +1371,20 @@ describe("layout", function()
       assert.is_nil(block.long_rows)
     end)
 
+    it("gives no rows for woven belts when the column takes from one belt", function()
+      local block = furnaces_and_assemblers{product_belt = false}
+
+      assert.is_nil(block.trunk_rows)
+    end)
+
+    it("gives no rows for woven belts when the column takes its second belt with long-handed inserters", function()
+      local stage = {machine_count = 2, machine = ASSEMBLER, shape = {machine_size = 3, input_inserters = 1, long_inserters = 1, output_inserters = 1}}
+
+      local block = layout.chain_block({stage}, NAMES, {product_belt = false})
+
+      assert.is_nil(block.trunk_rows)
+    end)
+
     it("lists the belt of the first column in the first row of its machines, one down when poles take the row above", function()
       local stage = {machine_count = 1, machine = ASSEMBLER, shape = {machine_size = 3, input_inserters = 3, output_inserters = 1}}
 
@@ -2097,5 +2111,340 @@ describe("layout", function()
         assert.are.same({math.max(lanes[1], lanes[2]), math.min(lanes[1], lanes[2])}, {math.ceil(furnace_count / 2), math.floor(furnace_count / 2)})
       end)
     end
+  end)
+
+  describe("woven input belts: 3 x 3 machines that take from two or three belts, with poles beside the belts", function()
+    -- The pattern is in scripts/weave.lua and drawn in spec/weave_spec.lua; here it stands in a column, drawn the way the belts
+    -- run (north, up from the arcs of the columns that make what the machines eat) with the machines and the output side.
+    -- The columns of the pictures are -5 to 5: -4 the trunk of belt c, -3 where it goes under, -2 the trunk of belt b, -1 the taps and the
+    -- poles, 0 the inner column, 1 the input inserters, 2 to 4 the machine, 5 the output inserters. ^ > are belts, ( ) the entrance and
+    -- the exit of an underground belt that goes east, N U of one that goes north.
+    local names = builders.medium_pole_names()
+    local MACHINE = NAMES.machine
+    local ABC, ABA, BBA = {a = 1, b = 1, c = 1}, {a = 2, b = 1}, {a = 1, b = 2}
+
+    local function shape_of(counts, fast)
+      local total = 0
+      for _, count in pairs(counts) do
+        total = total + count
+      end
+      return {machine_size = 3, input_inserters = total, input_belts = counts, input_fast = fast, output_inserters = 2}
+    end
+
+    -- A column of `count` machines that eats what other columns make (it has suppliers).
+    local function block_of(count, counts, fast)
+      return layout.chain_block({{machine_count = count, machine = MACHINE, shape = shape_of(counts, fast), suppliers = {}}}, names, {product_belt = true})
+    end
+
+    local function drawn(block, last_row)
+      return picture.draw(block.entities, {[MACHINE] = {size = 3, glyph = "M"}}, -5, 0, 5, last_row)
+    end
+
+    it("draws three belts with one inserter each for two machines: a b c on the rows of the first, c b a on those of the second", function()
+      local block = block_of(2, ABC)
+
+      assert.are.same({
+        "....+U}MMM}",
+        "....>>}MMM}",
+        "...SS>}MMM+",
+        ".>(^)^}MMM.",
+        ".^.^>>}MMM}",
+        ".SSSSN}MMM}",
+        "....+......",
+      }, drawn(block, 6))
+    end)
+
+    it("draws two belts with two inserters on belt a for two machines", function()
+      local block = block_of(2, ABA)
+
+      assert.are.same({
+        ".....U}MMM}",
+        "....>>}MMM}",
+        "...SSN}MMM+",
+        "...^+U}MMM.",
+        "...^>>}MMM}",
+        "...SSN}MMM}",
+        "...........",
+      }, drawn(block, 6))
+    end)
+
+    it("draws two belts with two inserters on belt b for two machines", function()
+      local block = block_of(2, BBA)
+
+      assert.are.same({
+        ".....>}MMM}",
+        "....>^}MMM}",
+        "...SS>}MMM+",
+        "...^+U}MMM.",
+        "...^.>}MMM}",
+        "...^>^}MMM}",
+        "...SSN.....",
+      }, drawn(block, 6))
+    end)
+
+    it("leaves out the inserters a machine does not need: one on each of two belts is the pattern with two on belt a, less one", function()
+      local block = block_of(2, {a = 1, b = 1})
+
+      assert.are.same({
+        ".....U.MMM}",
+        "....>>}MMM}",
+        "...SSN}MMM+",
+        "...^+U.MMM.",
+        "...^>>}MMM}",
+        "...SSN}MMM}",
+        "...........",
+      }, drawn(block, 6))
+    end)
+
+    it("packs the machines, which stand in the rows 0 to 2 and 3 to 5 with no row of poles between them", function()
+      local block = block_of(2, ABC)
+
+      local rows = {}
+      for _, machine in ipairs(entities_named(block.entities, MACHINE)) do
+        rows[#rows + 1] = machine.position.y
+      end
+      assert.are.same({1.5, 4.5}, rows)
+    end)
+
+    it("is one row taller than its machines for three belts, since a pole stands in the row below them", function()
+      local block = block_of(2, ABC)
+
+      assert.are.equal(7, block.height)
+    end)
+
+    it("is as tall as its machines for two belts with two inserters on belt a", function()
+      local block = block_of(2, ABA)
+
+      assert.are.equal(6, block.height)
+    end)
+
+    it("says where the belt that brings each belt must end: the row of its first tile, by belt", function()
+      local block = block_of(2, ABC)
+
+      assert.are.same({a = 5, b = 5, c = 5}, block.trunk_rows)
+    end)
+
+    it("says that belt a and belt b start one row lower where belt a comes up from a hop before the first row", function()
+      local block = block_of(2, BBA)
+
+      assert.are.same({a = 6, b = 6}, block.trunk_rows)
+    end)
+
+    it("has fast inserters on the input side when they are asked for", function()
+      local block = block_of(2, ABC, true)
+
+      assert.are.equal(6, count_named(block.entities, NAMES.fast_inserter))
+    end)
+
+    it("is refused for the small pole with three belts, whose poles do not reach the inserters in every row", function()
+      local stage = {machine_count = 2, machine = MACHINE, shape = shape_of(ABC), suppliers = {}}
+
+      assert.has_error(function() layout.chain_block({stage}, NAMES, {product_belt = true}) end)
+    end)
+
+    it("is drawn for the small pole with two belts: its poles are in the free tiles beside the belts, every third row", function()
+      local stage = {machine_count = 3, machine = MACHINE, shape = shape_of(ABA), suppliers = {}}
+
+      local block = layout.chain_block({stage}, NAMES, {product_belt = true})
+
+      assert.are.same({
+        "....+U}",
+        "....>>}",
+        "...SSN}",
+        "...^+U}",
+      }, picture.draw(block.entities, {[MACHINE] = {size = 3, glyph = "M"}}, -5, 0, 1, 3))
+    end)
+
+    describe("how many inserters and belts the pattern allows", function()
+      it("gives a 3 x 3 machine an inserter for every row of its input side", function()
+        assert.are.equal(3, layout.max_woven_inserters(3))
+      end)
+
+      it("gives a machine of another size none, since the pattern is drawn for 3 x 3 machines", function()
+        assert.is_nil(layout.max_woven_inserters(2))
+      end)
+
+      it("allows three belts when the poles reach three rows", function()
+        assert.are.equal(3, layout.most_woven_belts(3))
+      end)
+
+      it("allows no more than three belts when the poles reach further", function()
+        assert.are.equal(3, layout.most_woven_belts(4))
+      end)
+
+      it("allows two belts when the poles reach two rows", function()
+        assert.are.equal(2, layout.most_woven_belts(2))
+      end)
+
+      it("allows one belt, which is no weave, when the poles reach one row", function()
+        assert.are.equal(1, layout.most_woven_belts(1))
+      end)
+    end)
+
+    -- The names of the medium pole, with `change` put in them.
+    local function names_with(change)
+      local changed = {}
+      for key, value in pairs(names) do
+        changed[key] = value
+      end
+      for key, value in pairs(change) do
+        changed[key] = value
+      end
+      return changed
+    end
+
+    describe("refused with a weave of another kind", function()
+      local function stage_with(change)
+        local shape = shape_of(ABC)
+        for key, value in pairs(change) do
+          shape[key] = value
+        end
+        return {machine_count = 2, machine = MACHINE, shape = shape, suppliers = {}}
+      end
+
+      local REFUSAL = "layout: woven input belts do not go with another weave"
+
+      it("is refused for a column built wide, whose second input belt is woven already", function()
+        local stage = stage_with{second_input_belt = true}
+
+        assert.has_error(function() layout.chain_block({stage}, names, {product_belt = true}) end, REFUSAL)
+      end)
+
+      it("is refused for a column with a belt of fuel, which is woven with the belt before it", function()
+        local stage = stage_with{fuel_belt = true}
+
+        assert.has_error(function() layout.chain_block({stage}, names, {product_belt = true}) end, REFUSAL)
+      end)
+
+      it("is refused for a column whose poles stand beside the output side alone, which a pole that reaches 4 tiles allows", function()
+        local stage = stage_with{powered_from_output = true}
+
+        assert.has_error(function() layout.chain_block({stage}, names_with{pole_supply_distance = 4.5}, {product_belt = true}) end, REFUSAL)
+      end)
+
+      it("is refused for a column that has long-handed inserters too, which take from a belt of their own", function()
+        local stage = stage_with{long_inserters = 1}
+
+        assert.has_error(function() layout.chain_block({stage}, names, {product_belt = true}) end, "layout: woven input belts take no long-handed inserters")
+      end)
+    end)
+
+    describe("the wires between the poles: down each side, and from one side to the other where the poles stand closest", function()
+      -- Every wire as the tiles of the two poles it joins, "(column,row)--(column,row)", in alphabetical order.
+      local function wires_of(block)
+        local by_number, wires = {}, {}
+        for _, entity in ipairs(block.entities) do
+          by_number[entity.entity_number] = entity
+        end
+        local function tile_of(entity)
+          local tile = grid.top_left_tile(entity.position)
+          return "(" .. tile.x .. "," .. tile.y .. ")"
+        end
+        for _, entity in ipairs(block.entities) do
+          for _, wire in ipairs(entity.wires or {}) do
+            wires[#wires + 1] = tile_of(by_number[wire[1]]) .. "--" .. tile_of(by_number[wire[3]])
+          end
+        end
+        table.sort(wires)
+        return wires
+      end
+
+      it("joins the poles beside the belts at (-1, 3) to the first pole beside the output side, (5, 2), where several are as near", function()
+        local block = block_of(5, ABC)
+
+        assert.are.same({"(-1,3)--(-1,9)", "(-1,3)--(5,2)", "(-1,9)--(-1,15)", "(5,2)--(5,8)", "(5,8)--(5,14)"}, wires_of(block))
+      end)
+
+      it("joins the sides at the last pole beside the belts when that one is the nearest to a pole beside the output side", function()
+        local stage = {machine_count = 4, machine = MACHINE, shape = shape_of(BBA), suppliers = {}}
+
+        local block = layout.chain_block({stage}, NAMES, {product_belt = true})
+
+        assert.are.same({"(-1,0)--(-1,4)", "(-1,4)--(-1,9)", "(-1,9)--(5,9)", "(5,2)--(5,3)", "(5,3)--(5,8)", "(5,8)--(5,9)"}, wires_of(block))
+      end)
+
+      it("builds it when the wire reaches exactly as far as the nearest poles of the two sides are apart: six tiles across and one down", function()
+        local stage = {machine_count = 5, machine = MACHINE, shape = shape_of(ABC), suppliers = {}}
+
+        local block = layout.chain_block({stage}, names_with{pole_wire_distance = math.sqrt(37)}, {product_belt = true})
+
+        assert.are.equal(5, #entities_named(block.entities, MACHINE))
+      end)
+
+      it("is refused when the wire is shorter than that", function()
+        local stage = {machine_count = 5, machine = MACHINE, shape = shape_of(ABC), suppliers = {}}
+
+        assert.has_error(function() layout.chain_block({stage}, names_with{pole_wire_distance = 6}, {product_belt = true}) end,
+          "layout: the poles beside the woven belts are further from the poles beside the output side than a wire reaches")
+      end)
+    end)
+
+    describe("checked by the generic validator: every inserter and machine powered, the poles one network", function()
+      for _, case in ipairs({{"three belts", ABC}, {"two belts, two inserters on belt a", ABA}, {"two belts, two inserters on belt b", BBA}}) do
+        for count = 1, 5 do
+          it("passes for " .. count .. " machines with " .. case[1], function()
+            local block = block_of(count, case[2])
+            local catalog = builders.a_catalog{machine_size = 3, machine_needs_power = true}
+
+            assert.are.same({}, validator.validate(block.entities, catalog))
+          end)
+        end
+      end
+    end)
+
+    describe("checked by the belt tracer: what each inserter takes from, and that no lane carries two items", function()
+      -- The belts of the pattern come up from below: one belt tile under the first tile of each, with its own item on both lanes.
+      local function with_supplies(block)
+        local entities, supplies = block.entities, {}
+        for belt, column in pairs({a = 0, b = -2, c = -4}) do
+          local row = block.trunk_rows[belt]
+          if row then
+            entities[#entities + 1] = {name = NAMES.belt, position = grid.position(column, row + 1), direction = defines.direction.north, entity_number = #entities + 1}
+            supplies[#supplies + 1] = {x = column, y = row + 1, item = "item-" .. belt}
+          end
+        end
+        return entities, {machines = {[MACHINE] = {size = 3, eats = {"item-a", "item-b", "item-c"}, makes = "product"}}, raw = {[MACHINE] = true}, product = "product", supplies = supplies}
+      end
+
+      -- The item on the tile of the inner column in each row, from the top down: the belt the inserter there takes from.
+      local function items_by_row(block, last_row)
+        local entities, options = with_supplies(block)
+        local items = {}
+        for row = 0, last_row do
+          local lanes = tracer.lanes_at(entities, options, 0, row)
+          local left, right = next(lanes.left), next(lanes.right)
+          items[#items + 1] = left == right and left or "mixed"
+        end
+        return items
+      end
+
+      it("shows belt a b c in the rows of the first machine and c b a in the second's, for three belts", function()
+        local block = block_of(2, ABC)
+
+        assert.are.same({"item-a", "item-b", "item-c", "item-c", "item-b", "item-a"}, items_by_row(block, 5))
+      end)
+
+      it("shows belt a, b, a in the rows of every machine, for two belts with two inserters on belt a", function()
+        local block = block_of(2, ABA)
+
+        assert.are.same({"item-a", "item-b", "item-a", "item-a", "item-b", "item-a"}, items_by_row(block, 5))
+      end)
+
+      it("shows belt b, b, a in the rows of the first machine and a, b, b in the second's, for two belts with two inserters on belt b", function()
+        local block = block_of(2, BBA)
+
+        assert.are.same({"item-b", "item-b", "item-a", "item-a", "item-b", "item-b"}, items_by_row(block, 5))
+      end)
+
+      for _, case in ipairs({{"three belts", ABC}, {"two belts, two inserters on belt a", ABA}, {"two belts, two inserters on belt b", BBA}}) do
+        for count = 1, 5 do
+          it("finds nothing wrong with " .. count .. " machines with " .. case[1], function()
+            local entities, options = with_supplies(block_of(count, case[2]))
+
+            assert.are.same({}, tracer.problems(entities, options))
+          end)
+        end
+      end
+    end)
   end)
 end)

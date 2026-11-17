@@ -72,10 +72,11 @@ flowchart TD
   poles --> layout
   poles --> grid
   layout --> grid
+  layout --> weave
   inputs --> grid
 ```
 
-`chain`, `planner`, `feeds`, `messages` and `config` require nothing: they work on plain tables. `types.lua` is never required; it only feeds the editor.
+`chain`, `planner`, `feeds`, `messages`, `weave` and `config` require nothing: they work on plain tables. `types.lua` is never required; it only feeds the editor.
 
 ## 3. Class diagrams
 
@@ -128,8 +129,11 @@ classDiagram
   }
   class InserterLimits {
     items_per_minute
+    long_items_per_minute
     fast_items_per_minute
     max_input
+    max_woven_input
+    most_belts
     max_output
     machine_size
   }
@@ -158,6 +162,7 @@ classDiagram
     input_inserters
     input_fast
     long_inserters
+    belt_inserters
     output_inserters
     output_fast
     wide
@@ -169,6 +174,7 @@ classDiagram
   class Belts {
     a
     b
+    c
   }
   class PlanTree
   class PlannedStage
@@ -181,6 +187,7 @@ classDiagram
     item_name
     rate_per_minute
     belt_speed
+    long_inserter_rotation_speed
     fast_inserter_rotation_speed
     lamp_supply_distance
   }
@@ -221,6 +228,7 @@ classDiagram
     input_inserters
     input_fast
     long_inserters
+    input_belts
     output_inserters
     output_fast
     output_paired
@@ -267,6 +275,8 @@ classDiagram
   class Block {
     product_column
     height
+    long_rows
+    trunk_rows
   }
   class FuelFeed {
     belt_column
@@ -359,7 +369,11 @@ classDiagram
     bottom
     drop_x
     wide_input
+    woven
+    belts_used
+    has_belt_b
     x_b
+    x_c
   }
   class Arc {
     head
@@ -457,6 +471,7 @@ The order of the work in `rows.build_pure` is: columns are made (`Column`), the 
 | `scripts/planner.lua` | Belts, InputInserters, MachineRates, StageContext, Sizes |
 | `scripts/chain.lua` | MadeIngredient |
 | `scripts/layout.lua` | Geometry, Place, Poles, SharedBelt, Builder |
+| `scripts/weave.lua` | WeaveTile, WeavePlan |
 | `scripts/rows.lua` | Arc, Column, RawRun |
 | `scripts/inputs.lua` | Band |
 | `scripts/poles.lua` | PolePair |

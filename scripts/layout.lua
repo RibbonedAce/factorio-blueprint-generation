@@ -163,6 +163,7 @@
 --               [F F]     ^                  <- the belt starts here
 
 local grid = require("scripts.grid")
+local weave = require("scripts.weave")
 
 local layout = {}
 
@@ -194,10 +195,13 @@ function layout.pole_reach(supply_distance)
   return math.ceil(supply_distance - 0.5)
 end
 
--- The most inserters the input side of a machine gets, plain and long-handed together:
+-- The most inserters the input side of a machine gets when it takes from one belt, or from two when the second is reached
+-- by long-handed inserters (plain and long-handed together):
 -- one fewer than the machine is tall, so one tile beside the machine stays free for a
 -- pole. With every tile beside it taken by an inserter, the machines would have to be
--- spaced apart with a row of poles between them (see "pole row" below).
+-- spaced apart with a row of poles between them (see "pole row" below). (A machine that
+-- takes from woven belts gets as many as it is tall, since its poles stand beside the belts:
+-- `layout.max_woven_inserters`.)
 -- (Fast inserters take the same slots as plain ones: two on a side of a 3x3 machine, which a fast
 -- inserter serves nearly six plain ones' worth. A shape with an inserter on every tile, and rows of
 -- poles between the machines, is laid out but not asked for.)
@@ -223,13 +227,41 @@ function layout.supports_machine_size(machine_size)
   return SUPPORTED_MACHINE_SIZES[machine_size] == true
 end
 
+-- The most inserters the input side of a machine gets when it takes from two or three woven belts (see scripts/weave.lua):
+-- every row of a machine, since the poles stand beside the belts and not beside the machines. Nil for a machine the
+-- pattern is not drawn for.
+---@param machine_size integer
+---@return integer|nil
+function layout.max_woven_inserters(machine_size)
+  return machine_size == weave.MACHINE_SIZE and machine_size or nil
+end
+
+-- The most belts a column of machines can take from, woven (see scripts/weave.lua), when its pole powers the inserters
+-- `pole_reach` rows away: three belts with one inserter each leave few free tiles for poles, which only a pole that reaches
+-- three rows serves, and two belts get by with two. One means none: the pole cannot power the inserters beside woven belts.
+---@param pole_reach integer  how many rows each way the pole powers (see `layout.pole_reach`)
+---@return integer
+function layout.most_woven_belts(pole_reach)
+  if pole_reach >= 3 then
+    return 3
+  end
+  return pole_reach >= 2 and 2 or 1
+end
+
+-- The most tiles belt a goes under in the woven input belts: an underground belt has to span so many.
+layout.WEAVE_REACH = weave.REACH
+
+-- How many belts a column of machines takes from when they are not woven: the belt next to the machines (belt a), and one
+-- column further out (belt b), which long-handed inserters reach over belt a.
+layout.LONG_HANDED_BELTS = 2
+
 -- Where things go, worked out once from the shape.
 ---@class bpgen.Geometry
 ---@field size integer  machine size
 ---@field input_belt_column integer  where the belt that feeds the machines runs (the previous column's output belt, in a chain)
 ---@field input_inserter_column integer
 ---@field machine_column integer
----@field input_count integer  input inserters per machine
+---@field input_count integer  input inserters per machine that take from the input belt next to them
 ---@field input_fast boolean  whether those are fast inserters
 ---@field long_count integer  long-handed input inserters per machine, in the rows under the plain ones
 ---@field output_count integer  output inserters per machine
@@ -239,6 +271,8 @@ end
 ---@field output_winds boolean  the output belt winds, so that the output inserters fill a lane each and both lanes carry product (see `Builder:add_winding_output_belt`)
 ---@field has_pole_rows boolean  machines are separated by rows of poles
 ---@field powered_from_output boolean  the poles beside the output side power the inserters of the input side too (see `bpgen.Shape.powered_from_output`)
+---@field belt_counts? table<string, integer>  of a column that takes from two or three woven belts of its own (see `Shape.input_belts`), the inserters of a machine on each belt
+---@field weave boolean  the column draws its two or three input belts woven (see scripts/weave.lua), which come up from the south
 ---@field second_belt boolean  the column draws its two input belts woven, the second in the column west of the input belt (see `Builder:add_woven_input_belts`)
 ---@field fuel_weave boolean  the column's fuel has a belt of its own in the column east of the input belt, woven with it (see `Builder:add_fuel_weave`); the inserters and the machines stand one column further east
 ---@field first_row integer  tile row where the belts start, the first machine's top edge (1 or more with pole rows) unless the column has a belt of fuel, and the row every column of a chain starts on
@@ -247,11 +281,12 @@ end
 
 -- Whether the machines are separated by rows of poles: when an inserter takes every
 -- tile beside a machine on one side, no tile is free for a pole. A full input side does not
--- count when the poles beside the output side reach it (`Shape.powered_from_output`).
+-- count when the poles beside the output side reach it (`Shape.powered_from_output`), nor when the poles stand
+-- beside the woven belts (`Shape.input_belts`).
 ---@param shape bpgen.Shape
 ---@return boolean
 local function needs_pole_rows(shape)
-  local input = shape.powered_from_output and 0 or shape.input_inserters + (shape.long_inserters or 0)
+  local input = (shape.powered_from_output or shape.input_belts) and 0 or shape.input_inserters + (shape.long_inserters or 0)
   return math.max(input, shape.output_inserters) >= shape.machine_size
 end
 
@@ -327,6 +362,8 @@ local function geometry_of(shape, place, machine_count)
     output_winds = output_winds,
     has_pole_rows = has_pole_rows,
     powered_from_output = shape.powered_from_output == true,
+    belt_counts = shape.input_belts,
+    weave = shape.input_belts ~= nil,
     second_belt = shape.second_input_belt == true,
     fuel_weave = shape.fuel_belt == true,
     first_row = place.first_row,
@@ -365,6 +402,8 @@ end
 ---@field shared_belt? bpgen.SharedBelt  how the output belt runs, when the next column shares it
 ---@field winding_mirror? integer  while the winding belt that runs north is drawn: the sum of the rows a tile and its reflection are in (see `Builder:add_winding_tile`)
 ---@field pole_plan? {input: table<integer, integer>, output: table<integer, integer>}  the rows of the poles beside the machines, by machine number, once the machines are added (see `Builder:side_pole_plan`)
+---@field weave? bpgen.WeavePlan  of a column that takes from woven belts: the pattern for its machines (see scripts/weave.lua)
+---@field weave_pole_rows? integer[]  of such a column, the rows of the pattern where the poles beside the belts stand
 local Builder = {}
 Builder.__index = Builder
 
@@ -381,7 +420,7 @@ function Builder.new(machine_count, names, shape, entities, place)
   local pole_reach = layout.pole_reach(assert(names.pole_supply_distance, "layout: the names give no supply distance for the pole"))
   assert(not geometry.powered_from_output or pole_reach > geometry.size,
     "layout: the poles beside the output side do not reach the input inserters")
-  return setmetatable({
+  local builder = setmetatable({
     entities = entities,
     geometry = geometry,
     names = names,
@@ -393,6 +432,23 @@ function Builder.new(machine_count, names, shape, entities, place)
     load = place.load,
     takes_fuel = place.takes_fuel,
   }, Builder)
+  if geometry.weave then
+    builder:plan_weave()
+  end
+  return builder
+end
+
+-- Works out the pattern of the woven input belts of the column (see scripts/weave.lua) and where the poles beside them stand.
+-- The pattern is for 3 x 3 machines and for a column that draws its own input belts (the first of its block), with its
+-- poles beside the belts and not beside the output side.
+function Builder:plan_weave()
+  local geometry = self.geometry
+  assert(geometry.size == weave.MACHINE_SIZE, "layout: woven input belts are drawn for 3 x 3 machines")
+  assert(self.draws_input_belt, "layout: woven input belts come from outside the column, not from the column before it")
+  assert(geometry.long_count == 0, "layout: woven input belts take no long-handed inserters")
+  assert(not (geometry.powered_from_output or geometry.second_belt or geometry.fuel_weave), "layout: woven input belts do not go with another weave")
+  self.weave = weave.plan(geometry.belt_counts, self.machine_count)
+  self.weave_pole_rows = weave.pole_rows(self.weave, self.pole_reach)
 end
 
 -- Stores an entity and numbers it, because blueprints identify entities by number.
@@ -542,10 +598,15 @@ end
 -- end of its belt, which it needs behind its first stub (see `Builder:add_winding_output_belt`).
 ---@return integer
 function Builder:extent_end_row()
+  local extent = self:end_row()
   if self.geometry.output_winds and self:output_runs_north() then
-    return math.max(self:end_row(), self:output_belt_end_row() + 1)
+    extent = math.max(extent, self:output_belt_end_row() + 1)
   end
-  return self:end_row()
+  if self.geometry.weave then
+    local first = math.min(self.weave.first_row, self.weave_pole_rows[1] or 0) -- the rows before row 0 of the pattern are below the machines
+    extent = math.max(extent, self:weave_row(first) + 1)
+  end
+  return extent
 end
 
 ---@param column integer  tile column
@@ -817,6 +878,64 @@ function Builder:add_fuel_weave()
   end
 end
 
+-- The tile row of row `row` of the pattern of the woven input belts (see scripts/weave.lua), which counts from the first row
+-- the belts reach, in the way they run: here north, towards the first machine, since they come up from the arcs of the
+-- columns that make what the machines eat. Row 0 is the last row of the last machine.
+---@param row integer
+---@return integer
+function Builder:weave_row(row)
+  return self:end_row() - 1 - row
+end
+
+-- The tiles of the woven input belts, drawn the way the belts run: north, with the tiles that point into the inserter
+-- column pointing east. The belts that bring them come up to the first tile of each (`Builder:trunk_rows`).
+function Builder:add_input_weave()
+  local names, geometry = self.names, self.geometry
+  local splitter = assert(names.splitter, "layout: the names give no splitter for the woven input belts")
+  local underground = assert(names.underground, "layout: the names give no underground belt for the woven input belts")
+  local directions = defines.direction
+  for _, entry in ipairs(self.weave.tiles) do
+    local column, row = geometry.input_belt_column + entry.column, self:weave_row(entry.row)
+    local way = entry.way == "east" and directions.east or directions.north
+    if entry.kind == "belt" then
+      self:add_belt(column, row, way)
+    elseif entry.kind == "splitter" then
+      self:add({name = splitter, position = grid.position(column, row, 2, 1), direction = way})
+    else
+      self:add({name = underground, position = grid.position(column, row), direction = way, type = entry.kind == "entrance" and "input" or "output"})
+    end
+  end
+end
+
+-- The tile row of the first tile of each woven belt, where the belt that brings it must end, by belt ("a", "b" and "c").
+---@return table<string, integer>
+function Builder:trunk_rows()
+  local rows = {}
+  for belt, row in pairs(self.weave.starts) do
+    rows[belt] = self:weave_row(row)
+  end
+  return rows
+end
+
+-- The input inserters of a column that takes from woven belts: each in the row of the pattern that shows its belt.
+function Builder:add_weave_inserters()
+  local geometry = self.geometry
+  local name = self:inserter_name(geometry.input_fast)
+  for _, inserter in ipairs(self.weave.inserters) do
+    self:add({name = name, position = grid.position(geometry.input_inserter_column, self:weave_row(inserter.row)), direction = defines.direction.west})
+  end
+end
+
+-- The poles of a column that takes from woven belts: in the free tiles of the column beside the inner one, which reach the
+-- input inserters (two tiles away). The list of the input side goes from the top down.
+function Builder:add_weave_poles()
+  local column = self.geometry.input_belt_column + weave.TAPS
+  for index = #self.weave_pole_rows, 1, -1 do
+    local pole = self:add({name = self.names.pole, position = grid.position(column, self:weave_row(self.weave_pole_rows[index]))})
+    self.poles.input[#self.poles.input + 1] = pole
+  end
+end
+
 -- The output belt starts at the first machine's top row and runs south (down the
 -- page), unless the next column shares it and needs it to run north. It keeps the full
 -- height of the column, so the products have somewhere to go (and winds, for two output
@@ -837,7 +956,9 @@ end
 -- column's output belt is its input belt, and no output belt when whoever uses the block
 -- draws the product belt.
 function Builder:add_belts()
-  if self.geometry.fuel_weave then
+  if self.geometry.weave then
+    self:add_input_weave()
+  elseif self.geometry.fuel_weave then
     self:add_fuel_weave()
   elseif self.draws_input_belt and self.geometry.second_belt then
     self:add_woven_input_belts()
@@ -924,8 +1045,10 @@ function Builder:add_machine_row(index)
   local size = geometry.size
 
   self:add({name = self.names.machine, position = grid.position(geometry.machine_column, self:machine_top(index), size, size), recipe = self.names.recipe})
-  self:add_inserters(self:inserter_name(geometry.input_fast), geometry.input_inserter_column, self:plain_input_top(index), geometry.input_count)
-  self:add_inserters(self.names.long_inserter, geometry.input_inserter_column, self:long_input_top(index), geometry.long_count)
+  if not geometry.weave then
+    self:add_inserters(self:inserter_name(geometry.input_fast), geometry.input_inserter_column, self:plain_input_top(index), geometry.input_count)
+    self:add_inserters(self.names.long_inserter, geometry.input_inserter_column, self:long_input_top(index), geometry.long_count)
+  end
   self:add_inserters(self:inserter_name(geometry.output_fast), geometry.output_inserter_column, self:output_inserter_row(index), geometry.output_count)
 
   if not geometry.has_pole_rows then
@@ -948,19 +1071,44 @@ function Builder:add_machines()
   local geometry = self.geometry
   local from_output = geometry.powered_from_output
   self.pole_plan = {
-    input = from_output and {} or self:side_pole_plan(geometry.input_count + geometry.long_count),
+    input = (from_output or geometry.weave) and {} or self:side_pole_plan(geometry.input_count + geometry.long_count),
     output = self:side_pole_plan(geometry.output_count, from_output),
   }
   for index = 0, self.machine_count - 1 do
     self:add_machine_row(index)
+  end
+  if geometry.weave then
+    self:add_weave_inserters()
+    self:add_weave_poles()
   end
   if self.geometry.has_pole_rows then
     self:add_pole_rows()
   end
 end
 
+-- The poles of the two lists, one from each, that stand closest together, and how far apart that is.
+---@param first bpgen.Entity[]
+---@param second bpgen.Entity[]
+---@return bpgen.Entity from
+---@return bpgen.Entity to
+---@return number apart
+local function closest_poles(first, second)
+  local best_from, best_to, best_apart
+  for _, from in ipairs(first) do
+    for _, to in ipairs(second) do
+      local dx, dy = from.position.x - to.position.x, from.position.y - to.position.y
+      local apart = math.sqrt(dx * dx + dy * dy)
+      if not best_apart or apart < best_apart then
+        best_from, best_to, best_apart = from, to, apart
+      end
+    end
+  end
+  return best_from, best_to, best_apart
+end
+
 -- Chain the poles down each side, then join the two sides at the top (a column whose input side is powered from the
--- output side has poles on the output side only).
+-- output side has poles on the output side only). The sides of a column that takes from woven belts are six tiles apart, so
+-- they are joined where they stand closest.
 function Builder:wire_poles()
   local poles = self.poles
   for _, side in ipairs({poles.input, poles.output}) do
@@ -969,7 +1117,12 @@ function Builder:wire_poles()
     end
   end
   -- `layout.build` needs at least one machine, so there is a first pole on the output side.
-  if poles.input[1] then
+  if self.geometry.weave then
+    local from, to, apart = closest_poles(poles.input, poles.output)
+    local wire = self.names.pole_wire_distance
+    assert(not wire or apart <= wire, "layout: the poles beside the woven belts are further from the poles beside the output side than a wire reaches")
+    self:connect(from, to)
+  elseif poles.input[1] then
     self:connect(poles.input[1], poles.output[1])
   end
 end
@@ -1071,8 +1224,8 @@ local function columns_of(stages, names, entities, options)
   for index, stage in ipairs(stages) do
     local stage_names = {
       machine = stage.machine, recipe = stage.recipe, belt = names.belt, inserter = names.inserter,
-      long_inserter = names.long_inserter, fast_inserter = names.fast_inserter, underground = names.underground, pole = names.pole,
-      pole_supply_distance = names.pole_supply_distance, pole_wire_distance = names.pole_wire_distance,
+      long_inserter = names.long_inserter, fast_inserter = names.fast_inserter, underground = names.underground, splitter = names.splitter,
+      pole = names.pole, pole_supply_distance = names.pole_supply_distance, pole_wire_distance = names.pole_wire_distance,
     }
     local place = place_of(stage, index, #stages, origin, first_row, options)
     local builder = Builder.new(stage.machine_count, stage_names, stage.shape, entities, place)
@@ -1182,6 +1335,7 @@ function layout.chain_block(stages, names, options)
     product_column = last.geometry.output_belt_column,
     output_rows = {first = last:machine_top(0), last = last:last_output_row()},
     long_rows = first.geometry.long_count > 0 and {first = first:first_long_row(), last = first:last_long_row()} or nil,
+    trunk_rows = first.geometry.weave and first:trunk_rows() or nil,
     height = tallest_end_row(builders, stages[1].suppliers == nil or stages[1].feed ~= nil),
     raw_belts = raw_belts_of(stages[1], first),
     fuel_feeds = fuel_feeds_of(stages, builders),

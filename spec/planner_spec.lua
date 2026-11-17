@@ -1288,34 +1288,339 @@ describe("planner", function()
     end)
   end)
 
-  describe("plan_tree, for a recipe with three or four ingredients, which take a second input belt", function()
-    -- A gadget is made in an assembler of speed 0.5 in 0.5 s, so 60 times a minute: one machine eats 60 times the
-    -- amount of each ingredient a minute, at full speed. Each ingredient is made from its own ore by a furnace-like
-    -- machine (speed 1, 1 s: 60 a minute). A plain inserter moves 50.4 items a minute and a long-handed one 72; a
-    -- machine has two input slots. The plain inserters take from belt a, the long-handed ones from belt b.
-    local two_slots = {items_per_minute = 50.4, long_items_per_minute = 72, max_input = 2, max_output = 2}
+  -- A gadget is made in an assembler of speed 0.5 in 0.5 s, so 60 times a minute: one machine eats 60 times the
+  -- amount of each ingredient a minute, at full speed. Each ingredient is made from its own ore by a furnace-like
+  -- machine (speed 1, 1 s: 60 a minute). The next two groups of examples are about the gadget with three or more
+  -- ingredients, whose machines take from more than one input belt.
+  local function made_from_ore(product)
+    local recipe = {energy = 1, ingredients = {amount_of(1, product .. "-ore")}, products = {amount_of(1, product)}}
+    return {stage = {product = product, recipe = recipe, machine_speed = 1, fuel = "coal"}, suppliers = {}}
+  end
 
-    local function made_from_ore(product)
-      local recipe = {energy = 1, ingredients = {amount_of(1, product .. "-ore")}, products = {amount_of(1, product)}}
-      return {stage = {product = product, recipe = recipe, machine_speed = 1, fuel = "coal"}, suppliers = {}}
-    end
-
-    -- The request for gadgets from `ingredients`, each made by its own stage except the raw ones.
-    local function gadgets(rate, ingredients, inserters, raw)
-      local suppliers = {}
-      for _, ingredient in ipairs(ingredients) do
-        if not (raw and raw[ingredient.name]) then
-          suppliers[#suppliers + 1] = made_from_ore(ingredient.name)
-        end
+  -- The request for gadgets from `ingredients`, each made by its own stage except the raw ones.
+  local function gadgets(rate, ingredients, inserters, raw)
+    local suppliers = {}
+    for _, ingredient in ipairs(ingredients) do
+      if not (raw and raw[ingredient.name]) then
+        suppliers[#suppliers + 1] = made_from_ore(ingredient.name)
       end
-      local recipe = {energy = 0.5, ingredients = ingredients, products = {amount_of(1, "gadget")}}
-      return {
-        rate_per_minute = rate, lane_items_per_minute = 450,
-        root = {stage = {product = "gadget", recipe = recipe, machine_speed = 0.5, inserters = inserters}, suppliers = suppliers},
-      }
     end
+    local recipe = {energy = 0.5, ingredients = ingredients, products = {amount_of(1, "gadget")}}
+    return {
+      rate_per_minute = rate, lane_items_per_minute = 450,
+      root = {stage = {product = "gadget", recipe = recipe, machine_speed = 0.5, inserters = inserters}, suppliers = suppliers},
+    }
+  end
 
-    local circuit_gear_plate = {amount_of(1, "circuit"), amount_of(1, "gear"), amount_of(1, "plate")}
+  local circuit_gear_plate = {amount_of(1, "circuit"), amount_of(1, "gear"), amount_of(1, "plate")}
+
+  describe("plan_tree, for a recipe with three or more ingredients, which take woven input belts", function()
+    -- A plain inserter moves 50.4 items a minute. A machine has one input slot less than its size on a single belt, and as
+    -- many as its size when its belts are woven (see scripts/weave.lua), which the planner shares between the belts, at least
+    -- one each.
+    local three_slots = {items_per_minute = 50.4, max_input = 2, max_woven_input = 3, max_output = 2}
+
+    it("splits the ingredients between the belts so that the machine runs fastest, on as few belts as it takes", function()
+      -- Every item is 60 a minute for one machine, 180 in all, and three plain inserters move 151.2: 0.84 however the three
+      -- ingredients are split into two belts (two slots for the pair and one for the other, or one and two) or into three
+      -- belts of one slot each. So two belts, with the last ingredient of the recipe alone on belt b.
+      local plans = planner.plan_tree(gadgets(50.4, circuit_gear_plate, three_slots))
+
+      assert.are.same({a = {"circuit", "gear"}, b = {"plate"}}, plans.plan.belts)
+    end)
+
+    it("shares the three slots of its woven belts: two inserters on the belt of the two ingredients, one on the other", function()
+      local plans = planner.plan_tree(gadgets(50.4, circuit_gear_plate, three_slots))
+
+      assert.are.same({3, {a = 2, b = 1}}, {plans.plan.input_inserters, plans.plan.belt_inserters})
+    end)
+
+    it("builds the machines that the belts allow", function()
+      -- One machine runs at 0.84 of 60 crafts a minute: 50.4 gadgets a minute. 100 / 50.4 = 1.98.
+      local plans = planner.plan_tree(gadgets(100, circuit_gear_plate, three_slots))
+
+      assert.are.equal(2, plans.plan.machines)
+    end)
+
+    it("takes every ingredient on a lane of its own, in the recipe's order", function()
+      local plans = planner.plan_tree(gadgets(50.4, circuit_gear_plate, three_slots))
+
+      assert.are.same({"circuit", "gear", "plate"}, plans.plan.lanes)
+    end)
+
+    describe("the output belt of the root stage when the belts of the input side are woven", function()
+      -- A craft makes 3 gadgets from a circuit, a gear and a plate, 120 crafts a minute: 120 of each ingredient and 360 gadgets.
+      -- Three plain inserters on the input side move 151.2 and two on the output side 100.8, so the machine runs at 100.8 / 360
+      -- = 0.28: 33.6 of each ingredient (two inserters for the circuit and the gear on belt a, one for the plate on belt b: all
+      -- three slots) and 100.8 gadgets on two inserters. A side of woven belts takes no row of poles, the poles stand
+      -- beside the belts, so the output belt winds and the two lanes of 450 carry 900 gadgets a minute, not the 450 of one lane.
+      local limits = {items_per_minute = 50.4, max_input = 2, max_woven_input = 3, max_output = 2, machine_size = 3}
+
+      it("winds, so that the product rides both lanes", function()
+        local recipe = {
+          energy = 0.5, products = {amount_of(3, "gadget")},
+          ingredients = {amount_of(1, "circuit"), amount_of(1, "gear"), amount_of(1, "plate")},
+        }
+        local request = {
+          rate_per_minute = 1, lane_items_per_minute = 450,
+          root = {
+            stage = {product = "gadget", recipe = recipe, machine_speed = 1, inserters = limits},
+            suppliers = {made_from_ore("circuit"), made_from_ore("gear"), made_from_ore("plate")},
+          },
+        }
+
+        assert.near(900, planner.max_tree_rate(request), 1e-6)
+      end)
+    end)
+
+    describe("with fast inserters, which move 144 a minute", function()
+      local fast_three_slots = {items_per_minute = 50.4, fast_items_per_minute = 144, max_input = 2, max_woven_input = 3, max_output = 2}
+
+      it("puts two ingredients on belt a and the one that is eaten last on belt b", function()
+        -- Circuit and gear on belt a: 120 a minute, one fast inserter. Plate alone on belt b: 60 a minute, one more. All
+        -- of them fit, so the machine runs flat out, on as few belts as it takes (every other split is as fast, and a third
+        -- belt would be one more).
+        local plans = planner.plan_tree(gadgets(60, circuit_gear_plate, fast_three_slots))
+
+        assert.are.same({a = {"circuit", "gear"}, b = {"plate"}}, plans.plan.belts)
+      end)
+
+      it("runs the machine flat out, with one fast inserter on each belt", function()
+        local plans = planner.plan_tree(gadgets(60, circuit_gear_plate, fast_three_slots))
+
+        assert.are.same({1, 60, 2, true, {a = 1, b = 1}}, {plans.plan.machines, plans.plan.output_per_minute, plans.plan.input_inserters, plans.plan.input_fast, plans.plan.belt_inserters})
+      end)
+
+      it("uses plain inserters for a machine that needs no more, which let it make what they move", function()
+        -- 18 gadgets a minute is 0.3 of a machine: 36 circuits and gears on belt a and 18 plates on belt b, which one plain
+        -- inserter on each moves (50.4). They let a machine make 50.4 / 120 = 0.42 of its 60 crafts a minute: 25.2.
+        local plans = planner.plan_tree(gadgets(18, circuit_gear_plate, fast_three_slots))
+
+        assert.are.same({false, {a = 1, b = 1}}, {plans.plan.input_fast, plans.plan.belt_inserters})
+        assert.near(25.2, plans.plan.output_per_minute, 1e-9)
+      end)
+    end)
+
+    it("gives the two inserters to the belt of the ingredients that are eaten most when they are much heavier than the other", function()
+      -- 3 circuits, 5 gears and 9 plates a craft: 180, 300 and 540 a minute. The circuit and the plate on belt a (720) with
+      -- two plain inserters, the gear alone on belt b (300) with one: min(100.8 / 720, 50.4 / 300) = 0.14, 8.4 crafts a minute.
+      -- The best of the splits into two belts, and better than the 0.093 of one inserter for each of three belts.
+      local heavy = {amount_of(3, "circuit"), amount_of(5, "gear"), amount_of(9, "plate")}
+
+      local plans = planner.plan_tree(gadgets(30, heavy, three_slots))
+
+      assert.are.same({{a = {"circuit", "plate"}, b = {"gear"}}, {a = 2, b = 1}}, {plans.plan.belts, plans.plan.belt_inserters})
+      assert.are.equal(4, plans.plan.machines) -- 30 / 8.4 = 3.57
+    end)
+
+    it("puts a heavy first ingredient alone on belt b, with the lighter ones sharing belt a", function()
+      -- 9 plates a craft: 540 a minute, the gear and the circuit 60 each. The plate alone with two inserters: 100.8 / 540 =
+      -- 0.187, and the other two on one: 50.4 / 120 = 0.42, so 0.187. The plate with a light one on a belt with two inserters
+      -- is worse, 100.8 / 600 = 0.168. The plate alone is as fast on belt a as on belt b, and belt b gets the fewer ingredients.
+      local plate_first = {amount_of(9, "plate"), amount_of(1, "gear"), amount_of(1, "circuit")}
+
+      local plans = planner.plan_tree(gadgets(12, plate_first, three_slots))
+
+      assert.are.same({{a = {"gear", "circuit"}, b = {"plate"}}, {a = 1, b = 2}}, {plans.plan.belts, plans.plan.belt_inserters})
+    end)
+
+    it("puts a heavy first ingredient alone on belt b for five ingredients, with the pairs of the others on belts a and c", function()
+      -- 9 of the first ingredient a craft: 540 a minute, the others 60 each. With one inserter on each of three belts it is
+      -- 50.4 / 540 = 0.093 alone, and 50.4 / 600 = 0.084 with a light one. The heavy one alone is as fast on belt a or b (a
+      -- split with belt c before belt b is only the same split with the two letters swapped), and belt b gets the fewer
+      -- ingredients, the others in pairs on belts a and c, in the recipe's order.
+      local heavy_first = {amount_of(9, "one"), amount_of(1, "two"), amount_of(1, "three"), amount_of(1, "four"), amount_of(1, "five")}
+
+      local plans = planner.plan_tree(gadgets(5, heavy_first, three_slots))
+
+      assert.are.same({a = {"two", "three"}, b = {"one"}, c = {"four", "five"}}, plans.plan.belts)
+    end)
+
+    it("puts the fewest ingredients on belt b, the last ones in the recipe, when no inserter limits the machine", function()
+      local plans = planner.plan_tree(gadgets(60, circuit_gear_plate, nil))
+
+      assert.are.same({a = {"circuit", "gear"}, b = {"plate"}}, plans.plan.belts)
+      assert.are.same({2, {a = 1, b = 1}}, {plans.plan.input_inserters, plans.plan.belt_inserters})
+    end)
+
+    it("puts two ingredients on each belt when there are four, rather than a third belt that is no faster", function()
+      -- Two ingredients of 60 on a belt with one inserter: 50.4 / 120 = 0.42, and so with the pair on one belt and one slot for
+      -- each of three belts (a pair, and two of one), 0.42 too: two belts is fewer.
+      local four = {amount_of(1, "circuit"), amount_of(1, "gear"), amount_of(1, "plate"), amount_of(1, "stick")}
+
+      local plans = planner.plan_tree(gadgets(20, four, three_slots))
+
+      assert.are.same({a = {"circuit", "gear"}, b = {"plate", "stick"}}, plans.plan.belts)
+    end)
+
+    it("never puts more than two ingredients on belt a, even where one heavy ingredient alone would be faster", function()
+      -- 9 plates a craft: 540 a minute, the other three 60 each. The plate and a light one on a belt with two inserters:
+      -- 100.8 / 600 = 0.168, the other pair on a belt with one: 50.4 / 120 = 0.42, so 0.168. The plate alone on a belt would
+      -- leave the three lights for two belts, which hold two each, so three belts in all with one inserter each, and the plate
+      -- 50.4 / 540 = 0.093 at the most. The later ones in the recipe go on belt b.
+      local heavy_last = {amount_of(1, "gear"), amount_of(1, "circuit"), amount_of(1, "stick"), amount_of(9, "plate")}
+
+      local plans = planner.plan_tree(gadgets(5, heavy_last, three_slots))
+
+      assert.are.same({a = {"gear", "circuit"}, b = {"stick", "plate"}}, plans.plan.belts)
+    end)
+
+    it("never puts more than two ingredients on belt b, even where one heavy raw ingredient alone on belt a would be faster", function()
+      -- 9 wood a craft: 540 a minute, raw, so on belt a. Wood alone on belt a with three lights on belt b would need a third
+      -- belt, and run at 50.4 / 540 = 0.093 on one inserter. Wood and a light one on belt a with two inserters: 100.8 / 600 =
+      -- 0.168, the best left; the first light one in the recipe goes with the wood.
+      local wood_first = {amount_of(9, "wood"), amount_of(1, "gear"), amount_of(1, "circuit"), amount_of(1, "stick")}
+
+      local plans = planner.plan_tree(gadgets(5, wood_first, three_slots, {wood = true}))
+
+      assert.are.same({a = {"wood", "gear"}, b = {"circuit", "stick"}}, plans.plan.belts)
+    end)
+
+    it("gives a stage with two ingredients no belts to weave when no inserter limits the machine", function()
+      local plans = planner.plan_tree(gadgets(20, {amount_of(1, "plate"), amount_of(1, "cable")}, nil))
+
+      assert.is_nil(plans.plan.belt_inserters)
+    end)
+
+    it("keeps a raw ingredient on belt a, even where the speed would put it on belt b", function()
+      -- 9 wood a craft: 540 a minute. Alone on belt b it would be faster, but a raw belt can only be side-loaded onto
+      -- belt a. Wood alone on belt a with two inserters, gear and circuit on belt b with one: min(100.8 / 540, 50.4 / 120) =
+      -- 0.187, the best left: 11.2 gadgets a minute for a machine, so 12 a minute is a whole machine and a part.
+      local with_wood = {amount_of(9, "wood"), amount_of(1, "gear"), amount_of(1, "circuit")}
+
+      local plans = planner.plan_tree(gadgets(12, with_wood, three_slots, {wood = true}))
+
+      assert.are.same({{a = {"wood"}, b = {"gear", "circuit"}}, {a = 2, b = 1}}, {plans.plan.belts, plans.plan.belt_inserters})
+    end)
+
+    it("keeps the two ingredients of a stage on belt a", function()
+      local plans = planner.plan_tree(gadgets(20, {amount_of(1, "plate"), amount_of(1, "cable")}, three_slots))
+
+      assert.are.same({a = {"plate", "cable"}, b = {}}, plans.plan.belts)
+      assert.is_nil(plans.plan.belt_inserters)
+    end)
+
+    it("takes only the inserters a machine needs when it is used for a small share of its time", function()
+      -- The same recipe, but only 5 gadgets a minute: a tenth of a machine, which needs one inserter for belt a (a pair
+      -- of 10 a minute) and one for belt b (5 a minute) where it has three slots.
+      local plans = planner.plan_tree(gadgets(5, circuit_gear_plate, three_slots))
+
+      assert.are.same({2, {a = 1, b = 1}}, {plans.plan.input_inserters, plans.plan.belt_inserters})
+    end)
+
+    describe("five or six ingredients, which take a third belt", function()
+      local five = {amount_of(1, "one"), amount_of(1, "two"), amount_of(1, "three"), amount_of(1, "four"), amount_of(1, "five")}
+      local six = {amount_of(1, "one"), amount_of(1, "two"), amount_of(1, "three"), amount_of(1, "four"), amount_of(1, "five"), amount_of(1, "six")}
+
+      it("puts five ingredients on three belts, two on each of the first two, in the recipe's order", function()
+        -- Two ingredients of 60 on a belt with one inserter: 50.4 / 120 = 0.42, whichever way the five are split into belts
+        -- of two, two and one.
+        local plans = planner.plan_tree(gadgets(20, five, three_slots))
+
+        assert.are.same({a = {"one", "two"}, b = {"three", "four"}, c = {"five"}}, plans.plan.belts)
+      end)
+
+      it("puts six ingredients on three belts of two", function()
+        local plans = planner.plan_tree(gadgets(20, six, three_slots))
+
+        assert.are.same({a = {"one", "two"}, b = {"three", "four"}, c = {"five", "six"}}, plans.plan.belts)
+      end)
+
+      it("gives each belt one inserter, the three slots there are", function()
+        local plans = planner.plan_tree(gadgets(20, six, three_slots))
+
+        assert.are.same({3, {a = 1, b = 1, c = 1}}, {plans.plan.input_inserters, plans.plan.belt_inserters})
+      end)
+
+      it("builds the machines that three belts of two ingredients allow", function()
+        -- One machine runs at 50.4 / 120 = 0.42 of 60 crafts a minute: 25.2 gadgets a minute. 100 / 25.2 = 3.97.
+        local plans = planner.plan_tree(gadgets(100, six, three_slots))
+
+        assert.are.equal(4, plans.plan.machines)
+      end)
+
+      it("keeps the raw ingredient on belt a with five ingredients", function()
+        local plans = planner.plan_tree(gadgets(20, {amount_of(1, "wood"), amount_of(1, "two"), amount_of(1, "three"), amount_of(1, "four"), amount_of(1, "five")}, three_slots, {wood = true}))
+
+        assert.are.same({"wood", "two"}, plans.plan.belts.a)
+      end)
+
+      it("refuses seven ingredients, which three belts of two lanes do not hold", function()
+        local seven = {amount_of(1, "a1"), amount_of(1, "a2"), amount_of(1, "a3"), amount_of(1, "a4"), amount_of(1, "a5"), amount_of(1, "a6"), amount_of(1, "a7")}
+
+        local plans, reason = planner.plan_tree(gadgets(20, seven, three_slots))
+
+        assert.is_nil(plans)
+        assert.are.equal("unsupported-recipe", reason)
+      end)
+
+      it("refuses five ingredients when the limits allow two belts, whose four lanes do not hold them", function()
+        local two_belts = {items_per_minute = 50.4, max_input = 2, max_woven_input = 3, most_belts = 2, max_output = 2}
+
+        local plans, reason = planner.plan_tree(gadgets(20, five, two_belts))
+
+        assert.is_nil(plans)
+        assert.are.equal("unsupported-recipe", reason)
+      end)
+
+      it("still takes four ingredients on two belts when the limits allow two", function()
+        local two_belts = {items_per_minute = 50.4, max_input = 2, max_woven_input = 3, most_belts = 2, max_output = 2}
+        local four = {amount_of(1, "circuit"), amount_of(1, "gear"), amount_of(1, "plate"), amount_of(1, "stick")}
+
+        local plans = planner.plan_tree(gadgets(20, four, two_belts))
+
+        assert.are.same({a = {"circuit", "gear"}, b = {"plate", "stick"}}, plans.plan.belts)
+      end)
+    end)
+
+    it("gives belt b plain inserters, not long-handed ones, when the limits give slots for woven belts, whatever a long-handed inserter moves", function()
+      -- The circuit and the gear on belt a (120 a minute) get two plain inserters and the plate on belt b (60) one, 0.84 for
+      -- each (100.8 / 120, 50.4 / 60): all three slots hold plain inserters, and none is long-handed.
+      local with_long_figure = {items_per_minute = 50.4, long_items_per_minute = 72, max_input = 2, max_woven_input = 3, max_output = 2}
+
+      local plans = planner.plan_tree(gadgets(50.4, circuit_gear_plate, with_long_figure))
+
+      assert.are.same({3, 0, {a = 2, b = 1}}, {plans.plan.input_inserters, plans.plan.long_inserters, plans.plan.belt_inserters})
+    end)
+
+    it("refuses five ingredients when its machine has only two slots for woven belts, which three belts need three of", function()
+      local two_slots = {items_per_minute = 50.4, max_input = 2, max_woven_input = 2, max_output = 2}
+      local five = {amount_of(1, "one"), amount_of(1, "two"), amount_of(1, "three"), amount_of(1, "four"), amount_of(1, "five")}
+
+      local plans, reason = planner.plan_tree(gadgets(20, five, two_slots))
+
+      assert.is_nil(plans)
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
+    it("gives each of two belts one slot when its machine has two slots for woven belts", function()
+      -- Every split is 0.42: 50.4 / 120 for a pair on one inserter. 100 / (60 * 0.42) = 3.97 machines.
+      local two_slots = {items_per_minute = 50.4, max_input = 2, max_woven_input = 2, max_output = 2}
+
+      local plans = planner.plan_tree(gadgets(100, circuit_gear_plate, two_slots))
+
+      assert.are.same({4, {a = 1, b = 1}}, {plans.plan.machines, plans.plan.belt_inserters})
+    end)
+
+    it("refuses a rate that the lane of one ingredient cannot carry, whichever belt it is on", function()
+      -- 10 plates a craft: 600 a minute for one machine at full speed, and a lane carries 450, so 0.75 of a machine:
+      -- 45 gadgets a minute.
+      local plates = {amount_of(1, "circuit"), amount_of(1, "gear"), amount_of(10, "plate")}
+
+      local plans, reason, max_rate = planner.plan_tree(gadgets(100, plates, nil))
+
+      assert.is_nil(plans)
+      assert.are.equal("rate-too-high", reason)
+      assert.near(45, max_rate, 1e-6)
+    end)
+
+  end)
+
+  describe("plan_tree, for a recipe with three or four ingredients, whose belts are not woven: a second belt for long-handed inserters", function()
+    -- The same gadgets, for a machine whose limits give no slots for woven belts (`max_woven_input`): a plain inserter moves
+    -- 50.4 items a minute and a long-handed one 72, and a machine has two input slots. The plain inserters take from belt a,
+    -- the long-handed ones from belt b, one column further out, over belt a.
+    local two_slots = {items_per_minute = 50.4, long_items_per_minute = 72, max_input = 2, max_output = 2}
 
     it("splits the ingredients between the belts so that the machine runs fastest", function()
       -- Each belt carries 60 of each item. Circuit alone on belt a: 50.4 / 60 = 0.84 and 72 / 120 = 0.6, so 0.6.
@@ -1328,8 +1633,7 @@ describe("planner", function()
     it("gives a machine one plain and one long-handed inserter when it has two input slots", function()
       local plans = planner.plan_tree(gadgets(36, circuit_gear_plate, two_slots))
 
-      assert.are.equal(1, plans.plan.input_inserters)
-      assert.are.equal(1, plans.plan.long_inserters)
+      assert.are.same({1, 1, nil}, {plans.plan.input_inserters, plans.plan.long_inserters, plans.plan.belt_inserters})
     end)
 
     it("builds the machines that the slower belt allows", function()
@@ -1385,6 +1689,17 @@ describe("planner", function()
 
         assert.are.same({1, 60, 1, true, 1}, {plans.plan.machines, plans.plan.output_per_minute, plans.plan.input_inserters, plans.plan.input_fast, plans.plan.long_inserters})
       end)
+
+      it("keeps the inserter of belt a plain when only belt b is more than a plain inserter moves, which a long-handed one does", function()
+        -- 0.4 circuits, 0.4 plates and 1 gear a craft: 24, 24 and 60 a minute. The circuit and the plate on belt a, 48 a
+        -- minute, which one plain inserter moves (50.4), and the gear alone on belt b, 60 a minute, more than a plain inserter
+        -- moves and less than the long-handed one's 72: the machine runs flat out, and no inserter is a fast one.
+        local light_pair = {amount_of(0.4, "circuit"), amount_of(0.4, "plate"), amount_of(1, "gear")}
+
+        local plans = planner.plan_tree(gadgets(60, light_pair, fast_two_slots))
+
+        assert.are.same({{a = {"circuit", "plate"}, b = {"gear"}}, false, 1, 1}, {plans.plan.belts, plans.plan.input_fast, plans.plan.input_inserters, plans.plan.long_inserters})
+      end)
     end)
 
     it("puts the ingredient that is eaten most alone on the long-handed belt when it is much heavier than the others", function()
@@ -1396,14 +1711,6 @@ describe("planner", function()
 
       assert.are.same({a = {"circuit", "gear"}, b = {"plate"}}, plans.plan.belts)
       assert.are.equal(5, plans.plan.machines) -- 30 / 6.3 = 4.76
-    end)
-
-    it("puts the fewest ingredients on belt b, the last ones in the recipe, when no inserter limits the machine", function()
-      local plans = planner.plan_tree(gadgets(60, circuit_gear_plate, nil))
-
-      assert.are.same({a = {"circuit", "gear"}, b = {"plate"}}, plans.plan.belts)
-      assert.are.equal(1, plans.plan.input_inserters)
-      assert.are.equal(1, plans.plan.long_inserters)
     end)
 
     it("puts two ingredients on each belt when there are four", function()
@@ -1441,8 +1748,8 @@ describe("planner", function()
     end)
 
     it("keeps a raw ingredient on belt a, even where the speed would put it on belt b", function()
-      -- 9 wood a craft: 540 a minute. Alone on belt b it would run at 72 / 540 = 0.133, but a raw belt can only be
-      -- side-loaded onto belt a. Wood alone on belt a, gear and circuit on belt b: 50.4 / 540 = 0.093 is the best left.
+      -- 9 wood a craft: 540 a minute, raw, so on belt a. Alone on belt b it would run at 72 / 540 = 0.133, but a raw belt can
+      -- only be side-loaded onto belt a. Wood alone on belt a, gear and circuit on belt b: 50.4 / 540 = 0.093 is the best left.
       local with_wood = {amount_of(9, "wood"), amount_of(1, "gear"), amount_of(1, "circuit")}
 
       local plans = planner.plan_tree(gadgets(5, with_wood, two_slots, {wood = true}))
@@ -1466,6 +1773,16 @@ describe("planner", function()
       assert.are.equal("unsupported-recipe", reason)
     end)
 
+    it("refuses five ingredients even where the limits allow three belts, since a long-handed inserter reaches only a second", function()
+      local three_belts = {items_per_minute = 50.4, long_items_per_minute = 72, max_input = 3, most_belts = 3, max_output = 2}
+      local five = {amount_of(1, "a"), amount_of(1, "b"), amount_of(1, "c"), amount_of(1, "d"), amount_of(1, "e")}
+
+      local plans, reason = planner.plan_tree(gadgets(20, five, three_belts))
+
+      assert.is_nil(plans)
+      assert.are.equal("unsupported-recipe", reason)
+    end)
+
     it("refuses a stage with three ingredients when its machine has only one input slot", function()
       local one_slot = {items_per_minute = 50.4, long_items_per_minute = 72, max_input = 1, max_output = 2}
 
@@ -1484,8 +1801,7 @@ describe("planner", function()
       local plans = planner.plan_tree(gadgets(50.4, circuit_gear_plate, three_slots))
 
       assert.are.same({a = {"circuit", "gear"}, b = {"plate"}}, plans.plan.belts)
-      assert.are.equal(2, plans.plan.input_inserters)
-      assert.are.equal(1, plans.plan.long_inserters)
+      assert.are.same({2, 1}, {plans.plan.input_inserters, plans.plan.long_inserters})
       assert.are.equal(1, plans.plan.machines) -- 60 * 0.84 = 50.4 a minute
     end)
 
@@ -1496,8 +1812,7 @@ describe("planner", function()
 
       local plans = planner.plan_tree(gadgets(5, circuit_gear_plate, three_slots))
 
-      assert.are.equal(1, plans.plan.input_inserters)
-      assert.are.equal(1, plans.plan.long_inserters)
+      assert.are.same({1, 1}, {plans.plan.input_inserters, plans.plan.long_inserters})
     end)
 
     it("gives a machine all the long-handed inserters its slots allow when belt b is the heavy one", function()
@@ -1510,8 +1825,7 @@ describe("planner", function()
       local plans = planner.plan_tree(gadgets(18, heavy_pair, four_slots))
 
       assert.are.same({a = {"circuit"}, b = {"gear", "plate"}}, plans.plan.belts)
-      assert.are.equal(1, plans.plan.input_inserters)
-      assert.are.equal(3, plans.plan.long_inserters)
+      assert.are.same({1, 3}, {plans.plan.input_inserters, plans.plan.long_inserters})
     end)
 
     it("takes fewer long-handed inserters when the machine is used for part of its time", function()
@@ -1523,18 +1837,6 @@ describe("planner", function()
       local plans = planner.plan_tree(gadgets(5, heavy_pair, four_slots))
 
       assert.are.equal(1, plans.plan.long_inserters)
-    end)
-
-    it("refuses a rate that the lane of one ingredient cannot carry, whichever belt it is on", function()
-      -- 10 plates a craft: 600 a minute for one machine at full speed, and a lane carries 450, so 0.75 of a machine:
-      -- 45 gadgets a minute.
-      local plates = {amount_of(1, "circuit"), amount_of(1, "gear"), amount_of(10, "plate")}
-
-      local plans, reason, max_rate = planner.plan_tree(gadgets(100, plates, nil))
-
-      assert.is_nil(plans)
-      assert.are.equal("rate-too-high", reason)
-      assert.near(45, max_rate, 1e-6)
     end)
 
     it("takes the speed of a plain inserter for a long-handed one when the limits give none", function()
@@ -1715,8 +2017,8 @@ describe("planner", function()
     -- plates a minute.
     local plate_recipe = {energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
     local gear_recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
-    local furnace_inserters = {items_per_minute = 50.4, long_items_per_minute = 72, max_input = 1, max_output = 1, machine_size = 2}
-    local assembler_inserters = {items_per_minute = 50.4, long_items_per_minute = 72, max_input = 2, max_output = 2, machine_size = 3}
+    local furnace_inserters = {items_per_minute = 50.4, max_input = 1, max_output = 1, machine_size = 2}
+    local assembler_inserters = {items_per_minute = 50.4, max_input = 2, max_output = 2, machine_size = 3}
 
     local function furnace(options)
       options = options or {}
@@ -1734,14 +2036,14 @@ describe("planner", function()
       local plan = planner.plan{rate_per_minute = 450, lane_items_per_minute = 450, product = "iron-plate", recipe = plate_recipe,
         machine_speed = 1, fuel = "coal", inserters = furnace_inserters, wide = true}
 
-      assert.are.same({24, false, {"iron-ore", "coal"}, 0}, {plan.machines, plan.wide, plan.lanes, plan.long_inserters})
+      assert.are.same({24, false, {"iron-ore", "coal"}}, {plan.machines, plan.wide, plan.lanes})
     end)
 
     it("builds them wide when the rate is above that, with three lanes of ore and a second plain input inserter, for belt b", function()
       local plan = planner.plan{rate_per_minute = 451, lane_items_per_minute = 450, product = "iron-plate", recipe = plate_recipe,
         machine_speed = 1, fuel = "coal", inserters = furnace_inserters, wide = true}
 
-      assert.are.same({25, true, {"iron-ore", "coal", "iron-ore", "iron-ore"}, 2, 0}, {plan.machines, plan.wide, plan.lanes, plan.input_inserters, plan.long_inserters})
+      assert.are.same({25, true, {"iron-ore", "coal", "iron-ore", "iron-ore"}, 2}, {plan.machines, plan.wide, plan.lanes, plan.input_inserters})
     end)
 
     it("makes 900 plates a minute at the most, with 48 furnaces, where it made 450 with 24", function()
@@ -1916,6 +2218,30 @@ describe("planner", function()
       local per_minute = planner.inserter_items_per_minute(basic_rotation_speed)
 
       assert.near(50.4, per_minute, 1e-6) -- 0.014 swings a tick x 60 ticks x 60 seconds, one item a swing
+    end)
+  end)
+
+  describe("belt_of, the input belt of a stage that an ingredient rides", function()
+    local belts = {a = {"circuit", "gear"}, b = {"plate"}, c = {"stick"}}
+
+    it("says belt a for an ingredient that is on it", function()
+      assert.are.equal("a", planner.belt_of(belts, "gear"))
+    end)
+
+    it("says belt b for an ingredient that is on it", function()
+      assert.are.equal("b", planner.belt_of(belts, "plate"))
+    end)
+
+    it("says belt c for an ingredient that is on it", function()
+      assert.are.equal("c", planner.belt_of(belts, "stick"))
+    end)
+
+    it("says belt a for the ingredient of a stage that has no belt c", function()
+      assert.are.equal("a", planner.belt_of({a = {"plate", "cable"}, b = {}}, "cable"))
+    end)
+
+    it("is refused for an item that is on none of the belts", function()
+      assert.has_error(function() planner.belt_of(belts, "wood") end, "planner: wood is on none of the input belts of the stage")
     end)
   end)
 

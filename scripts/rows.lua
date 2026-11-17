@@ -9,10 +9,11 @@
 -- Every step is a column, built by `layout.chain_block` (a chain of stages fed raw items, or the
 -- column of machines that eats what other columns make, the "final" column). The columns stand
 -- left to right in the order of a walk of the recipe tree that visits the columns that make the
--- ingredients of a step before the step itself, the ingredients of belt a before those of belt b.
+-- ingredients of a step before the step itself, the ingredients of belt a before those of belt b and
+-- those of belt c.
 -- Above them run the belts of raw items, one row each, from the west edge; the belt of the column
 -- furthest east has the top row, so no belt crosses another. A product leaves its column at the
--- bottom, runs east along a row of its own (an "arc") and goes up into belt a or belt b of the
+-- bottom, runs east along a row of its own (an "arc") and goes up into belt a, b or c of the
 -- column that eats it, which run NORTH here. An arc runs under the columns it passes and deeper
 -- than the arcs it would cross, which are the arcs of the columns east of its own. The circuit
 -- (ii and cc are furnaces for iron and copper plates, O the cable assemblers, E the circuit
@@ -40,6 +41,14 @@
 -- in the free space under a column shorter than the ones it passes. A final column starts one row
 -- lower than that: its belts run north, and the end of a belt that points into the side of
 -- another belt feeds it, which would put its ingredients on the belt of raw items above it.
+--
+-- A final column that eats more than two ingredients takes from two or three belts, woven so that every machine's plain
+-- inserters take from all of them (scripts/weave.lua): belt a is the inner column, next to the inserters, belt b comes up two
+-- columns west of it and belt c four (the column between is the taps, with the poles). Each belt comes up from the arc of its
+-- first product to the tile under the first tile of the weave, which the block says (`bpgen.Block.trunk_rows`).
+-- Where the blueprint cannot weave belts (the splitters and underground belts are not researched), it takes from two belts at
+-- the most: belt b comes up in the column west of belt a, and the long-handed inserters of the column reach it over belt a. It
+-- comes up to the first of them (`bpgen.Block.long_rows`).
 --
 -- A raw item that goes with a made one (wood next to cables) has no machines: its column is two
 -- wide, the belt and a spare column for the gadget of the arc before it, and its belt is the arc.
@@ -71,7 +80,7 @@ local north, east, south = defines.direction.north, defines.direction.east, defi
 -- One column of the blueprint, with the product it sends to its parent.
 ---@class bpgen.Column
 ---@field kind "raw"|"chain"|"final"  a belt of a raw item, a chain fed raw items, or the column that eats other columns' products
----@field belt "a"|"b"  the input belt of the parent that its product rides
+---@field belt "a"|"b"|"c"  the input belt of the parent that its product rides
 ---@field fed bpgen.StageLayout|bpgen.RawSupplier  the stage a belt of raw items feeds (a chain: its first); the stage of a final column
 ---@field stages? bpgen.StageLayout[]  the stages whose machines the column holds, nil for a raw item
 ---@field feed? bpgen.Feed  of a chain or a raw column, what it takes from the belts that come in (`build_pure` only)
@@ -80,11 +89,14 @@ local north, east, south = defines.direction.north, defines.direction.east, defi
 ---@field parent? bpgen.Column
 ---@field block? bpgen.Block  not for a raw item
 ---@field arc? bpgen.Arc  not for the root
----@field has_belt_b? boolean  of a final column: whether a second input belt stands west of belt a
+---@field woven? boolean  of a final column: whether it takes from two or three woven belts (see scripts/weave.lua), which stand west of its inner column, belt b two columns and belt c four columns west of belt a
+---@field belts_used? integer  of a final column: how many input belts have ingredients on them (1 for a column with a belt a only; 2 for one whose second belt is reached by long-handed inserters or woven; 3 when woven)
+---@field has_belt_b? boolean  of a final column that is not woven: whether a second input belt stands west of belt a, for its long-handed inserters
 ---@field wide_input? boolean  of a chain: whether its first stage is built wide, with a second input belt that comes down from the band west of belt a (see `bpgen.StageRequest.wide`; `build_pure` only)
 ---@field second_leaf? bpgen.FeedLeaf  of a chain built wide: what its second input belt takes from the belts that come in
 ---@field index integer  place in the row of columns, from the west
----@field x_b? integer  tile column of belt b
+---@field x_b? integer  tile column of belt b: west of belt a for the long-handed inserters, two columns west of it when woven
+---@field x_c? integer  tile column of belt c, of a column that takes from three woven belts
 ---@field x0? integer  tile column of the input belt (belt a for a final column); nil for a raw item
 ---@field x_source integer  tile column of the product belt (for a raw item: of its belt)
 ---@field raw_row? integer  row of its belt of raw items
@@ -152,13 +164,13 @@ local function straight_chain(stage)
   return chain
 end
 
--- The columns of a final column's suppliers: those of belt a first, then those of belt b, each in
+-- The columns of a final column's suppliers: those of belt a first, then those of belt b and then those of belt c, each in
 -- the recipe's order.
 ---@param children bpgen.Column[]
 ---@return bpgen.Column[]
 local function belt_a_first(children)
   local ordered = {}
-  for _, belt in ipairs({"a", "b"}) do
+  for _, belt in ipairs({"a", "b", "c"}) do
     for _, child in ipairs(children) do
       if child.belt == belt then
         ordered[#ordered + 1] = child
@@ -168,11 +180,21 @@ local function belt_a_first(children)
   return ordered
 end
 
+-- How many belts a final column takes from, when `counts` says how many of its children ride each belt.
+---@param counts table<string, integer>  by belt letter
+---@return integer
+local function belts_used_of(counts)
+  if counts.c > 0 then
+    return 3
+  end
+  return counts.b > 0 and 2 or 1
+end
+
 -- Says how each child of a final column reaches it: the first product of a belt is its head, and
 -- a head that has company on its belt goes through the lane gadget.
 ---@param final bpgen.Column
 local function mark_arcs(final)
-  local counts, seen = {a = 0, b = 0}, {}
+  local counts, seen = {a = 0, b = 0, c = 0}, {}
   for _, child in ipairs(final.children) do
     counts[child.belt] = counts[child.belt] + 1
   end
@@ -183,13 +205,16 @@ local function mark_arcs(final)
     child.parent = final
     seen[child.belt] = true
   end
-  final.has_belt_b = counts.b > 0
+  final.belts_used = belts_used_of(counts)
+  final.has_belt_b = counts.b > 0 and not final.woven
+  assert(not final.woven or final.belts_used >= 2, "rows: a column takes from woven belts only when it takes from more than one belt")
+  assert(final.belts_used < 3 or final.woven, "rows: a column takes from three belts only when they are woven")
 end
 
 local column_of -- defined below: a final column is made of the columns of its suppliers
 
 ---@param stage bpgen.StageLayout
----@param belt "a"|"b"
+---@param belt "a"|"b"|"c"
 ---@param names bpgen.SharedNames
 ---@param is_root boolean
 ---@return bpgen.Column
@@ -200,7 +225,7 @@ local function final_column(stage, belt, names, is_root)
   end
   local final = {
     kind = "final", belt = belt, fed = stage, children = belt_a_first(children), stages = {stage},
-    block = layout.chain_block({stage}, names, {product_belt = is_root}),
+    block = layout.chain_block({stage}, names, {product_belt = is_root}), woven = stage.shape.input_belts ~= nil,
   }
   mark_arcs(final)
   return final
@@ -212,7 +237,7 @@ end
 ---@param is_root boolean  whether this makes the final product of the blueprint, which draws its product belt
 ---@return bpgen.Column
 function column_of(stage, names, is_root)
-  local belt = stage.belt == "b" and "b" or "a"
+  local belt = (stage.belt == "b" or stage.belt == "c") and stage.belt or "a"
   if stage.raw_item then
     return {kind = "raw", belt = belt, fed = stage, children = {}}
   end
@@ -237,8 +262,13 @@ local function flatten(column, columns)
   column.index = #columns
 end
 
--- Gives every column its tile columns, side by side from column `start` (0 by default). A final column
--- with a belt b has a column of its own for it, west of belt a, and so has a chain built wide.
+-- The tile columns a final column takes west of its inner column for its woven belts, by how many belts there are: belt b's
+-- trunk and the column of the taps for two, and the two columns of belt c for three (see scripts/weave.lua).
+local WOVEN_WIDTH = {[2] = 2, [3] = 4}
+
+-- Gives every column its tile columns, side by side from column `start` (0 by default). A final column with a belt b for its
+-- long-handed inserters has a column of its own for it, west of belt a, and so has a chain built wide for its second belt; a
+-- final column that takes from woven belts has the columns of the weave.
 ---@param columns bpgen.Column[]
 ---@param start? integer
 local function place_across(columns, start)
@@ -248,7 +278,12 @@ local function place_across(columns, start)
       column.x_source = cursor + 1
       cursor = cursor + 2
     else
-      if column.has_belt_b or column.wide_input then
+      if column.woven then
+        local width = WOVEN_WIDTH[column.belts_used]
+        column.x_b = cursor + width - 2
+        column.x_c = column.belts_used == 3 and cursor or nil
+        cursor = cursor + width
+      elseif column.has_belt_b or column.wide_input then
         column.x_b = cursor
         cursor = cursor + 1
       end
@@ -393,7 +428,7 @@ local function place_blocks(entities, columns, belt_name)
         entity.position.x = entity.position.x + column.x0
         entity.position.y = entity.position.y + column.top
       end
-      if column.kind == "final" then
+      if column.kind == "final" and not column.woven then
         face_north(column, belt_name)
       end
       absorb(entities, column.block)
@@ -464,8 +499,20 @@ local function add_arc(entities, belt_name, child, target)
   end
 end
 
--- The belts that carry the products north to the machines, from the arc of their head up to
--- where the final column's own belt begins (belt a) or to its first long-handed inserter (belt b).
+-- The tile column of each input belt of a final column: belt a is the inner column, belt b and belt c are further west.
+---@param final bpgen.Column
+---@param belt "a"|"b"|"c"
+---@return integer
+local function column_of_belt(final, belt)
+  if belt == "a" then
+    return final.x0
+  end
+  return assert(belt == "b" and final.x_b or final.x_c, "rows: the column has no belt " .. belt)
+end
+
+-- The belts that carry the products north to the machines, from the arc of their head up to where the final column's own
+-- belts begin: the tile under the first tile of each woven belt; where the belts are not woven, the end of belt a, and
+-- the first long-handed inserter for belt b.
 ---@param entities bpgen.Entity[]
 ---@param belt_name string
 ---@param final bpgen.Column
@@ -475,6 +522,12 @@ local function add_risers(entities, belt_name, final)
     if child.arc.head then
       heads[child.belt] = child.arc.row
     end
+  end
+  if final.woven then
+    for belt, arc_row in pairs(heads) do
+      add_run(entities, belt_name, column_of_belt(final, belt), final.top + final.block.trunk_rows[belt] + 1, arc_row, north)
+    end
+    return
   end
   if heads.a then
     add_run(entities, belt_name, final.x0, input_belt_end(final, belt_name) + 1, heads.a, north)
@@ -493,7 +546,7 @@ local function add_arcs(entities, belt_name, final)
     if child.kind == "final" then
       add_arcs(entities, belt_name, child)
     end
-    add_arc(entities, belt_name, child, child.belt == "b" and final.x_b or final.x0)
+    add_arc(entities, belt_name, child, column_of_belt(final, child.belt))
   end
   add_risers(entities, belt_name, final)
 end

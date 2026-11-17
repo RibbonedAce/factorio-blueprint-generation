@@ -17,7 +17,7 @@ local config = {
   -- The building blocks used in every blueprint.
   entities = {
     inserter = "inserter",
-    long_inserter = "long-handed-inserter", -- for a second input belt (recipes with three or four ingredients)
+    long_inserter = "long-handed-inserter", -- for a second input belt (recipes with three or four ingredients) when the belts cannot be woven
     fast_inserter = "fast-inserter", -- for a machine whose side needs more than one plain inserter moves, once researched
     lamp = "small-lamp", -- the lights of the blueprint, once researched (see scripts/lights.lua)
 
@@ -54,7 +54,8 @@ local config = {
     ["light-armor"] = true,
     ["electronic-circuit"] = true,
     ["small-electric-pole"] = true,
-    -- Three ingredients: a second input belt, reached by long-handed inserters.
+    -- Three ingredients: a second input belt, woven with the first (see scripts/weave.lua), or reached by long-handed
+    -- inserters while the force has not got what the weave is made of.
     ["inserter"] = true,
     ["long-handed-inserter"] = true,
     ["fast-inserter"] = true,

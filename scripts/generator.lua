@@ -14,6 +14,10 @@ local messages = require("scripts.messages")
 
 local generator = {}
 
+-- How many ingredients one input belt carries: two, one on each lane. A step with more takes them from more belts: two
+-- reached by long-handed inserters, or two or three woven.
+local LANES_OF_ONE_BELT = 2
+
 -- Copy a recipe prototype into a plain table for the planner. Returns nil for a
 -- recipe with a fluid among its ingredients: it would need pipes, which the layout
 -- does not build. (A product that is not an item comes with an item product, and
@@ -120,7 +124,8 @@ end
 
 -- Whether the buildings that every blueprint needs exist. The long-handed inserter is
 -- not one of them: only recipes with three or more ingredients use it, and a game
--- without one is not refused (it gets the plain inserter's speed for it). Whether the
+-- without one is not refused (it gets the plain inserter's speed for it). Nor are the fast inserter, the splitter and the
+-- underground belt: a blueprint takes them only when the force has them. Whether the
 -- player has UNLOCKED these recipes is a separate question (see `locked_item`).
 ---@param names bpgen.SharedNames
 ---@return boolean
@@ -449,7 +454,7 @@ end
 -- The item whose recipe the force has not unlocked yet, or nil when the force has it. Only
 -- the recipe of the product is looked at (owner, 2026-11-08): in the game a recipe is never
 -- unlocked before those of its ingredients, nor before the crafting machine it needs, and
--- the buildings (long-handed inserter, belt, inserter, pole) are left to a later feature
+-- the buildings (long-handed inserter, belt, splitter, underground belt, inserter, pole) are left to a later feature
 -- that will unlock by the entities a blueprint places. A recipe the force does not know at
 -- all is not held against it: there is nothing to unlock.
 ---@param job bpgen.Job
@@ -508,11 +513,47 @@ local function fuel_problem(stage, has_inputs)
   return nil
 end
 
+-- Whether the blueprint can weave input belts for a step that takes from more than one belt (see scripts/weave.lua): it is
+-- of the design that brings in one belt of each material, whose splitters and underground belts the weave is made of, the
+-- underground belt spans the longest hop of the weave, and the pole of the blueprint reaches the inserters beside two belts.
+-- Without that a step takes its second belt with long-handed inserters, which every game has from the start.
+---@param job bpgen.Job
+---@return boolean
+local function can_weave(job)
+  return job.inputs ~= nil and job.inputs.underground_reach >= layout.WEAVE_REACH
+    and layout.most_woven_belts(layout.pole_reach(job.names.pole_supply_distance)) >= 2
+end
+
+-- How many input belts a step of the blueprint takes from, at most: woven belts where the blueprint can weave them, as many
+-- as its pole serves (see `layout.most_woven_belts`: three need the medium pole), else two, the second reached by long-handed
+-- inserters over the first.
+---@param job bpgen.Job
+---@return integer
+local function most_belts(job)
+  if can_weave(job) then
+    return layout.most_woven_belts(layout.pole_reach(job.names.pole_supply_distance))
+  end
+  return layout.LONG_HANDED_BELTS
+end
+
+-- The reason a step with more ingredients than `belts` belts carry (two each, one on each lane) cannot be built, as a message
+-- for the player, or nil: it needs three woven belts, which the blueprint has to be able to weave.
+---@param stage bpgen.StageData
+---@param belts integer  the most belts the blueprint takes from (see `most_belts`)
+---@return LocalisedString|nil
+local function belts_problem(stage, belts)
+  if #stage.suppliers == 0 or #stage.recipe.ingredients <= belts * LANES_OF_ONE_BELT then
+    return nil
+  end
+  return messages.belts_need_weave(stage.item)
+end
+
 -- The reason this step's machine cannot be built with, as a message for the player, or nil.
 ---@param stage bpgen.StageData
 ---@param has_inputs boolean  whether the design that brings in one belt of each material is available
+---@param belts integer  the most belts the blueprint takes from (see `most_belts`)
 ---@return LocalisedString|nil
-local function stage_problem(stage, has_inputs)
+local function stage_problem(stage, has_inputs, belts)
   local size = stage.machine_size
   if not size or not layout.supports_machine_size(size) then
     return messages.unsupported_machine()
@@ -521,7 +562,7 @@ local function stage_problem(stage, has_inputs)
   if not energy_source then
     return messages.unsupported_energy()
   end
-  local problem = fuel_problem(stage, has_inputs)
+  local problem = fuel_problem(stage, has_inputs) or belts_problem(stage, belts)
   if problem then
     return problem
   end
@@ -535,8 +576,9 @@ end
 ---@param job bpgen.Job
 ---@return LocalisedString|nil
 local function machine_problem(job)
+  local belts = most_belts(job)
   for _, stage in ipairs(in_order(job.root, {})) do
-    local problem = stage_problem(stage, job.inputs ~= nil)
+    local problem = stage_problem(stage, job.inputs ~= nil, belts)
     if problem then
       return problem
     end
@@ -681,6 +723,8 @@ local function stage_request(job, stage)
       long_items_per_minute = planner.inserter_items_per_minute(job.long_inserter_rotation_speed),
       fast_items_per_minute = job.fast_inserter_rotation_speed and planner.inserter_items_per_minute(job.fast_inserter_rotation_speed) or nil,
       max_input = layout.max_input_inserters(machine_size),
+      max_woven_input = can_weave(job) and layout.max_woven_inserters(machine_size) or nil,
+      most_belts = most_belts(job),
       max_output = layout.max_output_inserters(machine_size),
       machine_size = machine_size,
     },
@@ -747,20 +791,6 @@ local function recipe_to_set(stage)
     return nil
   end
   return stage.recipe.name
-end
-
--- Whether the product of a step rides belt b of the stage that eats it, the belt that
--- long-handed inserters take from (see `bpgen.Belts`).
----@param plan bpgen.Plan  of the stage that eats it
----@param item string  what the step makes
----@return boolean
-local function rides_belt_b(plan, item)
-  for _, name in ipairs(plan.belts.b) do
-    if name == item then
-      return true
-    end
-  end
-  return false
 end
 
 -- What a step takes from the belts that come in, for the design that brings in one belt of each
@@ -833,6 +863,7 @@ local function shape_of(step, pole_reach)
     input_inserters = step.plan.input_inserters,
     input_fast = step.plan.input_fast,
     long_inserters = step.plan.long_inserters,
+    input_belts = step.plan.belt_inserters,
     output_inserters = step.plan.output_inserters,
     output_fast = step.plan.output_fast,
     output_paired = wide,
@@ -854,7 +885,7 @@ local function layout_stage(step, lane, pole_reach)
   local suppliers = {}
   for index, supplier in ipairs(step.suppliers) do
     suppliers[index] = layout_stage(supplier, lane, pole_reach)
-    suppliers[index].belt = rides_belt_b(step.plan, supplier.stage.item) and "b" or "a"
+    suppliers[index].belt = planner.belt_of(step.plan.belts, supplier.stage.item)
   end
   local raw_item = step.stage.raw_item
   if raw_item then

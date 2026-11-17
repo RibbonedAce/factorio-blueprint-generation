@@ -20,11 +20,14 @@ local WINDING_OUTPUT_INSERTERS = 2
 local WINDING_MACHINE_SIZE = 3
 
 -- The input belt of a stage has two lanes, so a stage fed raw items takes at most this
--- many items from it: its ingredients and its fuel. A stage fed by other stages has two
--- belts, one next to its machines and one beyond it (see `bpgen.Belts`), so it takes at
--- most twice as many ingredients, one on each lane.
+-- many items from it: its ingredients and its fuel. A stage fed by other stages has up to
+-- three belts, woven (see `bpgen.Belts` and scripts/weave.lua), so it takes at most three
+-- times as many ingredients, one on each lane.
 local INPUT_LANES = 2
-local MOST_INGREDIENTS = 2 * INPUT_LANES
+local MOST_BELTS = 3
+
+-- The names of the input belts of a stage, in order.
+local BELT_LETTERS = {"a", "b", "c"}
 
 -- Add up how many of `item_name` one craft of the recipe makes.
 ---@param recipe bpgen.Recipe
@@ -67,6 +70,22 @@ end
 ---@return number
 function planner.inserter_items_per_minute(rotation_speed)
   return rotation_speed * TICKS_PER_SECOND * SECONDS_PER_MINUTE
+end
+
+-- The input belt of a stage that carries `item`, by letter (see `bpgen.Belts`): the belt that the product of the step that
+-- makes it rides. Every ingredient of the stage is on one.
+---@param belts bpgen.Belts
+---@param item string  an ingredient of the stage
+---@return "a"|"b"|"c"
+function planner.belt_of(belts, item)
+  for _, letter in ipairs(BELT_LETTERS) do
+    for _, name in ipairs(belts[letter] or {}) do
+      if name == item then
+        return letter
+      end
+    end
+  end
+  error("planner: " .. item .. " is on none of the input belts of the stage")
 end
 
 -- Whether this planner can handle the recipe: it must make the product (and
@@ -135,27 +154,37 @@ local function inserters_needed(items_per_machine, inserter_items_per_minute)
   return math.max(1, math.ceil(items_per_machine / inserter_items_per_minute - EPSILON))
 end
 
--- What one long-handed inserter moves a minute: the figure the limits give, or a plain
--- inserter's when they give none.
----@param limits bpgen.InserterLimits
----@return number
-local function long_rate(limits)
-  return limits.long_items_per_minute or limits.items_per_minute
-end
-
--- Which ingredients ride which of the two input belts of a stage. Belt `a` is next to
--- the machines and plain inserters take from it; belt `b` is one column further out
--- and long-handed inserters take from it, over belt `a`. Each belt has two lanes, one
--- ingredient on each (a belt of raw items fills both lanes of its own).
+-- Which ingredients ride which of the input belts of a stage. Where the layout can weave them (the limits give slots for
+-- woven belts, see scripts/weave.lua) the plain or fast inserters of a machine take from all of them: belt `a` is the one that
+-- goes under the others, `b` and `c` are tapped from their trunks. Where it cannot, belt `a` is next to the machines and plain
+-- inserters take from it, and belt `b` is one column further out and long-handed inserters take from it, over belt `a` (there
+-- is no belt `c`). Each belt has two lanes, one ingredient on each (a belt of raw items fills both lanes of its own). A stage
+-- with up to two ingredients has them all on belt a; `c` is only there for a stage that takes from three woven belts.
 ---@class bpgen.Belts
 ---@field a string[]
 ---@field b string[]
+---@field c? string[]
 
--- How many inserters of each kind a machine's input side has.
+-- The letters of the belts that carry something, belt a first.
+---@param belts bpgen.Belts
+---@return string[]
+local function belts_in_use(belts)
+  local used = {"a"}
+  for _, letter in ipairs({"b", "c"}) do
+    if belts[letter] and #belts[letter] > 0 then
+      used[#used + 1] = letter
+    end
+  end
+  return used
+end
+
+-- How many inserters a machine's input side has on each belt (a letter and the count): plain or fast ones, but for belt b
+-- when the belts are not woven, whose inserters are long-handed.
 ---@class bpgen.InputInserters
----@field a integer  for belt a: plain ones, or fast ones when `fast`
----@field b integer  long-handed ones, for belt b
----@field fast? boolean  whether belt a's are fast ones; nil while the split is only being compared with others
+---@field a integer
+---@field b? integer
+---@field c? integer
+---@field fast? boolean  whether the plain inserters are fast ones; nil while the split is only being compared with others
 
 -- What one machine eats of each ingredient and makes a minute at full speed.
 ---@param request bpgen.StageRequest
@@ -190,7 +219,19 @@ local function flow_of(inputs, names)
   return total
 end
 
--- What one inserter of belt a and of the output side moves, as far as the planner counts: a fast one when the game
+-- How many items a minute each belt in use brings, by letter, at full speed.
+---@param inputs bpgen.PlanInput[]
+---@param belts bpgen.Belts
+---@return table<string, number>
+local function flows_of(inputs, belts)
+  local flows = {}
+  for _, letter in ipairs(belts_in_use(belts)) do
+    flows[letter] = flow_of(inputs, belts[letter])
+  end
+  return flows
+end
+
+-- What one inserter of the input side and of the output side moves, as far as the planner counts: a fast one when the game
 -- has them researched (`limits.fast_items_per_minute`), else a plain one. A side that needs it uses fast ones; one that
 -- needs less uses a plain one (see `side_inserters`).
 ---@param limits bpgen.InserterLimits
@@ -212,38 +253,133 @@ local function side_inserters(flow, limits)
   return inserters_needed(flow, limits.fast_items_per_minute), true
 end
 
+-- What one long-handed inserter moves a minute: the figure the limits give, or a plain inserter's when they give none.
+---@param limits bpgen.InserterLimits
+---@return number
+local function long_rate(limits)
+  return limits.long_items_per_minute or limits.items_per_minute
+end
+
+-- Whether the inserters that take from belt `letter` are long-handed: those of belt b when the belts are not woven (the
+-- limits give no slots for woven belts), which reach over belt a to the column one further out.
+---@param letter string
+---@param limits bpgen.InserterLimits
+---@return boolean
+local function is_long_handed(letter, limits)
+  return letter == "b" and limits.max_woven_input == nil
+end
+
+-- What one inserter that takes from belt `letter` moves a minute: a long-handed one's figure for belt b when it is not
+-- woven, else a fast inserter's when `fast` says so, a plain one's when it says not, and the best the game has when it says
+-- nothing (a split being compared with others).
+---@param letter string
+---@param fast boolean|nil
+---@param limits bpgen.InserterLimits
+---@return number
+local function inserter_rate(letter, fast, limits)
+  if is_long_handed(letter, limits) then
+    return long_rate(limits)
+  end
+  if fast == nil then
+    return side_rate(limits)
+  end
+  return fast and limits.fast_items_per_minute or limits.items_per_minute
+end
+
+-- Whether a belt of plain inserters needs more than one of them moves while the game has fast ones to give. (A long-handed
+-- inserter has no fast kind.)
+---@param flows table<string, number>  items a minute, by belt letter
+---@param limits bpgen.InserterLimits
+---@return boolean
+local function needs_fast(flows, limits)
+  if not limits.fast_items_per_minute then
+    return false
+  end
+  for letter, flow in pairs(flows) do
+    if not is_long_handed(letter, limits) and flow > limits.items_per_minute + EPSILON then
+      return true
+    end
+  end
+  return false
+end
+
+-- The inserters the input side of a machine needs on each belt for `flows` (items a minute, by belt letter): at least one on
+-- each. When one belt needs more than one plain inserter moves and the game has fast ones, every plain inserter of the side
+-- is a fast one, as many as each belt needs; else plain ones. The long-handed inserters of belt b are as many as it needs of
+-- them. (For one belt this is `side_inserters`.)
+---@param flows table<string, number>
+---@param limits bpgen.InserterLimits
+---@return table<string, integer> counts  by belt letter
+---@return boolean fast
+local function needed_inserters(flows, limits)
+  local fast = needs_fast(flows, limits)
+  local counts = {}
+  for letter, flow in pairs(flows) do
+    counts[letter] = inserters_needed(flow, inserter_rate(letter, fast, limits))
+  end
+  return counts, fast
+end
+
 -- How much of its full speed a machine can use for what the inserters of its input
 -- side can move: the belt that holds it back the most decides.
--- Belt a's inserters are fast ones when `counts.fast` says so, plain ones when it says not, and the best the game has
+-- The plain inserters are fast ones when `counts.fast` says so, plain ones when it says not, and the best the game has
 -- when it says nothing (a split being compared with others).
----@param flows {a: number, b: number}  items a minute that each belt brings, at full speed
+---@param flows table<string, number>  items a minute that each belt brings, at full speed, by belt letter
 ---@param counts bpgen.InputInserters
 ---@param limits bpgen.InserterLimits
 ---@return number
 local function input_fraction(flows, counts, limits)
-  local rate_a = side_rate(limits)
-  if counts.fast ~= nil then
-    rate_a = counts.fast and limits.fast_items_per_minute or limits.items_per_minute
+  local fraction = 1
+  for letter, flow in pairs(flows) do
+    fraction = math.min(fraction, side_fraction(flow, counts[letter] * inserter_rate(letter, counts.fast, limits)))
   end
-  return math.min(
-    side_fraction(flows.a, counts.a * rate_a),
-    side_fraction(flows.b, counts.b * long_rate(limits)))
+  return fraction
 end
 
--- How the input slots of a machine are shared between the belts: all to belt a when belt b
--- carries nothing, otherwise the split (at least one slot each) that lets the machine run
--- fastest, the first one when several do. Nil when there are too few slots for two belts.
----@param flows {a: number, b: number}
----@param limits bpgen.InserterLimits
----@param has_b boolean  whether belt b carries anything
----@return bpgen.InputInserters|nil
-local function allotted_counts(flows, limits, has_b)
-  if not has_b then
-    return {a = limits.max_input, b = 0}
+-- The ways to share `total` slots between `parts` belts, at least one slot each, the first belt's share growing first.
+---@param total integer
+---@param parts integer
+---@return integer[][]
+local function compositions(total, parts)
+  if parts == 1 then
+    return {{total}}
   end
+  local found = {}
+  for first = 1, total - parts + 1 do
+    for _, rest in ipairs(compositions(total - first, parts - 1)) do
+      found[#found + 1] = {first, table.unpack(rest)}
+    end
+  end
+  return found
+end
+
+-- The letters of the belts that `flows` has, belt a first.
+---@param flows table<string, number>
+---@return string[]
+local function letters_in(flows)
+  local letters = {}
+  for _, letter in ipairs(BELT_LETTERS) do
+    if flows[letter] then
+      letters[#letters + 1] = letter
+    end
+  end
+  return letters
+end
+
+-- The split of the `slots` of a machine between the belts `letters` (at least one slot each) that lets the machine run
+-- fastest, the first one when several do.
+---@param letters string[]
+---@param flows table<string, number>  by belt letter
+---@param slots integer
+---@param limits bpgen.InserterLimits
+---@return bpgen.InputInserters
+local function best_allotment(letters, flows, slots, limits)
   local best, best_fraction
-  for plain = 1, limits.max_input - 1 do
-    local counts = {a = plain, b = limits.max_input - plain}
+  for _, shares in ipairs(compositions(slots, #letters)) do
+    local counts = {}
+    for position, letter in ipairs(letters) do
+      counts[letter] = shares[position]
+    end
     local fraction = input_fraction(flows, counts, limits)
     if not best_fraction or fraction > best_fraction + EPSILON then
       best, best_fraction = counts, fraction
@@ -252,44 +388,166 @@ local function allotted_counts(flows, limits, has_b)
   return best
 end
 
+-- How many input slots a machine has for `belts` belts: the woven slots when the belts are woven, which serve two or three
+-- belts. Without them belt b is reached by long-handed inserters, which share the slots of one belt with the plain ones of
+-- belt a, and there is no third belt: none.
+---@param belts integer  how many belts carry something
+---@param limits bpgen.InserterLimits
+---@return integer
+local function slots_for(belts, limits)
+  if limits.max_woven_input then
+    return limits.max_woven_input
+  end
+  return belts == 2 and limits.max_input or 0
+end
+
+-- How the input slots of a machine are shared between the belts: all to belt a when it is the only one, otherwise the
+-- best split (see `best_allotment`). Nil when the machine has too few slots for the belts.
+---@param flows table<string, number>  by belt letter, the belts in use
+---@param limits bpgen.InserterLimits
+---@return bpgen.InputInserters|nil
+local function allotted_counts(flows, limits)
+  local letters = letters_in(flows)
+  if #letters == 1 then
+    return {a = limits.max_input}
+  end
+  local slots = slots_for(#letters, limits)
+  if slots < #letters then
+    return nil
+  end
+  return best_allotment(letters, flows, slots, limits)
+end
+
 -- The counts cut down to what a machine that is used for `share` of its time needs:
 -- a machine that takes two inserters to run flat out takes one for 40%.
 ---@param counts bpgen.InputInserters
----@param flows {a: number, b: number}
+---@param flows table<string, number>  by belt letter
 ---@param limits bpgen.InserterLimits
 ---@param share number
 ---@return bpgen.InputInserters
 local function trimmed_counts(counts, flows, limits, share)
-  local needed, fast = side_inserters(share * flows.a, limits)
-  return {
-    a = math.min(counts.a, needed),
-    fast = fast,
-    b = counts.b == 0 and 0 or math.min(counts.b, inserters_needed(share * flows.b, long_rate(limits))),
-  }
+  local scaled = {}
+  for letter, flow in pairs(flows) do
+    scaled[letter] = share * flow
+  end
+  local needed, fast = needed_inserters(scaled, limits)
+  local trimmed = {fast = fast}
+  for letter in pairs(flows) do
+    trimmed[letter] = math.min(counts[letter], needed[letter])
+  end
+  return trimmed
 end
 
 ---@class bpgen.MachineRates  what ONE machine does each minute, once its inserters are counted
 ---@field output number  items of the product it makes
 ---@field inputs bpgen.PlanInput[]  what it eats, per ingredient, in the recipe's order
----@field input_inserters integer  inserters on its input side, for belt a
+---@field input_inserters integer  inserters on its input side that take from the column in front of them: all of them for one belt or for woven belts, those of belt a for a belt b that long-handed inserters reach
 ---@field input_fast boolean  whether those are fast inserters
----@field long_inserters integer  long-handed inserters on its input side, for belt b
+---@field long_inserters integer  long-handed inserters on its input side, for belt b, when its belts are not woven (0 otherwise)
+---@field belt_inserters? table<string, integer>  how many of the input inserters take from each belt (a letter and the count), when the machine takes from more than one woven belt (see scripts/weave.lua)
 ---@field output_inserters integer  on its output side
 ---@field output_fast boolean  whether those are fast inserters
 
 -- The inserters of a machine that runs at `fraction` of its full speed: what each side needs for the flow it then has.
----@param flows {a: number, b: number}
+---@param flows table<string, number>  by belt letter
 ---@param output number  what it makes at full speed
 ---@param fraction number
 ---@param limits bpgen.InserterLimits
----@param has_b boolean
----@return {input: integer, input_fast: boolean, long: integer, output: integer, output_fast: boolean}
-local function inserters_for(flows, output, fraction, limits, has_b)
-  local input, input_fast = side_inserters(flows.a * fraction, limits)
+---@return {input: table<string, integer>, input_fast: boolean, output: integer, output_fast: boolean}
+local function inserters_for(flows, output, fraction, limits)
+  local scaled = {}
+  for letter, flow in pairs(flows) do
+    scaled[letter] = flow * fraction
+  end
+  local input, input_fast = needed_inserters(scaled, limits)
   local output_count, output_fast = side_inserters(output * fraction, limits)
+  return {input = input, input_fast = input_fast, output = output_count, output_fast = output_fast}
+end
+
+-- The inserters of a machine when the caller sets no limits: one on each belt and one on the output, plain ones.
+---@param flows table<string, number>  by belt letter
+---@return {input: table<string, integer>, input_fast: boolean, output: integer, output_fast: boolean}
+local function bare_counts(flows)
+  local input = {}
+  for letter in pairs(flows) do
+    input[letter] = 1
+  end
+  return {input = input, input_fast = false, output = 1, output_fast = false}
+end
+
+-- The figures the inserters of a machine are counted against: those of the busiest machine of the stage when this one is
+-- only partly used (`partial`), else its own at full use.
+---@param partial {share: number, rates: bpgen.MachineRates}|nil
+---@param belts bpgen.Belts
+---@param flows table<string, number>  of the machine at full speed
+---@param output number  what it makes at full speed
+---@return {flows: table<string, number>, output: number, share: number}
+local function reference_of(partial, belts, flows, output)
+  if not partial then
+    return {flows = flows, output = output, share = 1}
+  end
+  return {flows = flows_of(partial.rates.inputs, belts), output = partial.rates.output, share = partial.share}
+end
+
+-- How much of its full speed a machine runs at for the inserters it may have (`allotted` on its input side, at most
+-- `limits.max_output` on its output side), the inserters being counted against `reference`.
+---@param flows table<string, number>  of the machine at full speed
+---@param output number  what it makes at full speed
+---@param reference {flows: table<string, number>, output: number, share: number}
+---@param allotted bpgen.InputInserters
+---@param limits bpgen.InserterLimits
+---@return number
+local function served_fraction(flows, output, reference, allotted, limits)
+  local movable = trimmed_counts(allotted, reference.flows, limits, reference.share)
+  local needed, fast = side_inserters(reference.share * reference.output, limits)
+  local rate = fast and limits.fast_items_per_minute or limits.items_per_minute
+  return math.min(input_fraction(flows, movable, limits), side_fraction(output, math.min(limits.max_output, needed) * rate))
+end
+
+-- The sum of the inserters of all the belts.
+---@param counts table<string, integer>  by belt letter
+---@return integer
+local function total_of(counts)
+  local total = 0
+  for _, inserters in pairs(counts) do
+    total = total + inserters
+  end
+  return total
+end
+
+-- How many of the input inserters are long-handed: those of belt b when the belts are not woven. (With no limits every
+-- inserter is a plain one, one on each belt.)
+---@param counts table<string, integer>  by belt letter
+---@param limits bpgen.InserterLimits|nil
+---@return integer
+local function long_count(counts, limits)
+  if limits and counts.b and is_long_handed("b", limits) then
+    return counts.b
+  end
+  return 0
+end
+
+-- What one machine does when it runs at `fraction` of its full speed, with the inserters in `counts`.
+---@param inputs bpgen.PlanInput[]  what it eats at full speed
+---@param output number  what it makes at full speed
+---@param fraction number
+---@param counts {input: table<string, integer>, input_fast: boolean, output: integer, output_fast: boolean}
+---@param limits bpgen.InserterLimits|nil
+---@return bpgen.MachineRates
+local function machine_rates(inputs, output, fraction, counts, limits)
+  for _, input in ipairs(inputs) do
+    input.per_minute = input.per_minute * fraction
+  end
+  local long = long_count(counts.input, limits)
   return {
-    input = input, input_fast = input_fast, long = has_b and inserters_needed(flows.b * fraction, long_rate(limits)) or 0,
-    output = output_count, output_fast = output_fast,
+    output = output * fraction,
+    inputs = inputs,
+    input_inserters = total_of(counts.input) - long,
+    input_fast = counts.input_fast,
+    long_inserters = long,
+    belt_inserters = counts.input.b and long == 0 and counts.input or nil,
+    output_inserters = counts.output,
+    output_fast = counts.output_fast,
   }
 end
 
@@ -299,7 +557,7 @@ end
 -- much of its full speed the busiest machine of the stage is used at. A machine that
 -- is only partly used (`partial`: its share, and what it does at full use) gets only
 -- the inserters that share needs. Returns nil when the machine has too few input slots
--- for both belts.
+-- for its belts.
 ---@param request bpgen.StageRequest
 ---@param belts bpgen.Belts
 ---@param partial? {share: number, rates: bpgen.MachineRates}
@@ -307,37 +565,17 @@ end
 local function rates_per_machine(request, belts, partial)
   local inputs, output = full_speed(request)
   local limits = request.inserters
-  local has_b = #belts.b > 0
-  local flows = {a = flow_of(inputs, belts.a), b = flow_of(inputs, belts.b)}
-  local fraction, counts = 1, {input = 1, input_fast = false, long = has_b and 1 or 0, output = 1, output_fast = false}
+  local flows = flows_of(inputs, belts)
+  local fraction, counts = 1, bare_counts(flows)
   if limits then
-    local allotted = allotted_counts(flows, limits, has_b)
+    local allotted = allotted_counts(flows, limits)
     if not allotted then
       return nil
     end
-    local reference = partial and {
-      flows = {a = flow_of(partial.rates.inputs, belts.a), b = flow_of(partial.rates.inputs, belts.b)},
-      output = partial.rates.output,
-      share = partial.share,
-    } or {flows = flows, output = output, share = 1}
-    local movable = trimmed_counts(allotted, reference.flows, limits, reference.share)
-    local needed_out, out_fast = side_inserters(reference.share * reference.output, limits)
-    local out_rate = out_fast and limits.fast_items_per_minute or limits.items_per_minute
-    fraction = math.min(input_fraction(flows, movable, limits), side_fraction(output, math.min(limits.max_output, needed_out) * out_rate))
-    counts = inserters_for(flows, output, fraction, limits, has_b)
+    fraction = served_fraction(flows, output, reference_of(partial, belts, flows, output), allotted, limits)
+    counts = inserters_for(flows, output, fraction, limits)
   end
-  for _, input in ipairs(inputs) do
-    input.per_minute = input.per_minute * fraction
-  end
-  return {
-    output = output * fraction,
-    inputs = inputs,
-    input_inserters = counts.input,
-    input_fast = counts.input_fast,
-    long_inserters = counts.long,
-    output_inserters = counts.output,
-    output_fast = counts.output_fast,
-  }
+  return machine_rates(inputs, output, fraction, counts, limits)
 end
 
 -- How many whole machines it takes to do `machines_worth` of work: a fraction of a
@@ -348,8 +586,10 @@ local function whole_machines(machines_worth)
   return math.max(1, math.ceil(machines_worth - EPSILON))
 end
 
--- Whether the sides of the machines leave room for a winding belt: they are 3x3 and neither side is full. Not knowing
--- the size (`limits.machine_size` nil) leaves the question open and says yes.
+-- Whether the sides of the machines leave room for a winding belt: they are 3x3 and neither side is full (the plain and the
+-- long-handed inserters of the input side together). Not knowing the size (`limits.machine_size` nil) leaves the question
+-- open and says yes. A side of woven belts is full and takes no row of poles, which stand beside the belts (see
+-- scripts/weave.lua), so it does not count.
 ---@param limits bpgen.InserterLimits
 ---@param rates bpgen.MachineRates
 ---@return boolean
@@ -358,7 +598,8 @@ local function room_for_winding(limits, rates)
   if size == nil then
     return true
   end
-  return size == WINDING_MACHINE_SIZE and math.max(rates.input_inserters + rates.long_inserters, rates.output_inserters) < size
+  local input = rates.belt_inserters and 0 or rates.input_inserters + rates.long_inserters
+  return size == WINDING_MACHINE_SIZE and math.max(input, rates.output_inserters) < size
 end
 
 -- The winding a machine's output inserters ask for when the belt can wind: "double" for two of them, which fill a lane
@@ -509,11 +750,20 @@ local function both_lanes_of_wide(lanes, suppliers)
   return lanes
 end
 
+-- The most belts a stage takes from: three, unless the limits say fewer (the pole of the blueprint does not reach the
+-- inserters of three woven belts, or the belts are not woven and a long-handed inserter reaches one belt over belt a).
+---@param stage bpgen.StageRequest
+---@return integer
+local function most_belts(stage)
+  return stage.inserters and stage.inserters.most_belts or MOST_BELTS
+end
+
 -- The items on the lanes of the belts that feed a stage, or nil when they do not
 -- fit. A stage fed raw items shares the two lanes of its belt among them and its fuel
 -- (see `assign_lanes`). Every other stage eats the products of the stages that feed it,
 -- each on the one lane its product travels on, and at most one raw item, which has no
--- stage (nothing could put a fuel on those belts), so it has at most four ingredients.
+-- stage (nothing could put a fuel on those belts), so it has at most as many ingredients as its belts
+-- have lanes: six for three belts.
 -- The stages that feed it make ingredients of its recipe, in any order. The one exception
 -- is a stage that burns fuel and eats one made ingredient (see `fuel_lanes`).
 ---@param stage bpgen.StageRequest
@@ -528,7 +778,7 @@ local function stage_lanes(stage, suppliers)
   if stage.fuel then
     return fuel_lanes(stage, suppliers)
   end
-  if #ingredients > MOST_INGREDIENTS then
+  if #ingredients > most_belts(stage) * INPUT_LANES then
     return nil
   end
   local lanes, unmade = {}, {}
@@ -545,37 +795,107 @@ local function stage_lanes(stage, suppliers)
   return both_lanes_of_wide(lanes, suppliers), unmade
 end
 
--- The ingredients on belts a and b for one way of splitting them: the ingredients whose
--- bit is set in `mask` go on belt b. Nil when a belt would have more than two, or a raw
--- ingredient would go on belt b (a belt of raw items fills both lanes, so it can only be
--- side-loaded onto belt a). Also gives how late in the recipe the ingredients of belt b
--- are, as the sum of their places.
----@param lanes string[]
----@param mask integer
----@param raw table<string, true>
----@return bpgen.Belts|nil
----@return integer|nil later
-local function split_ingredients(lanes, mask, raw)
-  local belts, later = {a = {}, b = {}}, 0
-  for index, name in ipairs(lanes) do
-    if math.floor(mask / 2 ^ (index - 1)) % 2 == 1 then
-      if raw[name] then
-        return nil
-      end
-      belts.b[#belts.b + 1] = name
-      later = later + index
-    else
-      belts.a[#belts.a + 1] = name
+-- The ways to put `count` ingredients on two belts, as the letter of the belt of each ingredient: those whose bit is set in
+-- the number, from 1 up, go on belt b.
+---@param count integer
+---@return string[][]
+local function two_belt_splits(count)
+  local splits = {}
+  for mask = 1, 2 ^ count - 1 do
+    local letters = {}
+    for index = 1, count do
+      letters[index] = math.floor(mask / 2 ^ (index - 1)) % 2 == 1 and "b" or "a"
+    end
+    splits[#splits + 1] = letters
+  end
+  return splits
+end
+
+-- The belt of each of `count` ingredients that the digits of `number` in base three say (belt a is 0, b 1 and c 2, the first
+-- ingredient being the lowest digit), and the place of the first ingredient on each belt.
+---@param number integer
+---@param count integer
+---@return string[] letters
+---@return table<string, integer> first
+local function letters_of_number(number, count)
+  local letters, first = {}, {}
+  for index = 1, count do
+    local letter = BELT_LETTERS[math.floor(number / 3 ^ (index - 1)) % 3 + 1]
+    letters[index] = letter
+    first[letter] = first[letter] or index
+  end
+  return letters, first
+end
+
+-- The ways to put `count` ingredients on three belts, all of them used. A split with belt c before belt b is another with the
+-- two letters swapped, and is left out.
+---@param count integer
+---@return string[][]
+local function three_belt_splits(count)
+  local splits = {}
+  for number = 0, 3 ^ count - 1 do
+    local letters, first = letters_of_number(number, count)
+    if first.a and first.b and first.c and first.b < first.c then
+      splits[#splits + 1] = letters
     end
   end
-  if #belts.a > INPUT_LANES or #belts.b > INPUT_LANES then
+  return splits
+end
+
+-- The ways to put `count` ingredients on belts, as the letter of the belt of each ingredient, for up to `belts` belts: first
+-- those that use two belts, then those that use three.
+---@param count integer
+---@param belts integer  the most belts
+---@return string[][]
+local function splits_of(count, belts)
+  local splits = two_belt_splits(count)
+  if belts >= 3 then
+    for _, letters in ipairs(three_belt_splits(count)) do
+      splits[#splits + 1] = letters
+    end
+  end
+  return splits
+end
+
+-- Whether no belt has more ingredients than it has lanes.
+---@param belts bpgen.Belts
+---@return boolean
+local function fits_lanes(belts)
+  for _, letter in ipairs(BELT_LETTERS) do
+    if belts[letter] and #belts[letter] > INPUT_LANES then
+      return false
+    end
+  end
+  return true
+end
+
+-- The ingredients on the belts for one way of splitting them (see `splits_of`). Nil when a belt would have more than two, or
+-- a raw ingredient would go on belt b or c (a belt of raw items fills both lanes, so it can only be side-loaded onto belt a).
+-- Also gives how late in the recipe the ingredients of belt b and of belt c are, as the sums of their places.
+---@param lanes string[]
+---@param letters string[]  the belt of each ingredient
+---@param raw table<string, true>
+---@return bpgen.Belts|nil
+---@return {b: integer, c: integer}|nil later
+local function split_ingredients(lanes, letters, raw)
+  local belts, later = {a = {}, b = {}}, {b = 0, c = 0}
+  for index, name in ipairs(lanes) do
+    local letter = letters[index]
+    if letter ~= "a" and raw[name] then
+      return nil
+    end
+    belts[letter] = belts[letter] or {}
+    belts[letter][#belts[letter] + 1] = name
+    later[letter] = (later[letter] or 0) + index
+  end
+  if not fits_lanes(belts) then
     return nil
   end
   return belts, later
 end
 
 -- How much of its full speed a machine can use for this split, or nil when its slots
--- cannot serve both belts. Without an inserter limit every split is as good.
+-- cannot serve all the belts. Without an inserter limit every split is as good.
 ---@param inputs bpgen.PlanInput[]
 ---@param belts bpgen.Belts
 ---@param limits bpgen.InserterLimits|nil
@@ -584,15 +904,25 @@ local function split_fraction(inputs, belts, limits)
   if not limits then
     return 1
   end
-  local flows = {a = flow_of(inputs, belts.a), b = flow_of(inputs, belts.b)}
-  local counts = allotted_counts(flows, limits, true)
+  local flows = flows_of(inputs, belts)
+  local counts = allotted_counts(flows, limits)
   return counts and input_fraction(flows, counts, limits)
 end
 
--- Whether a split beats the best so far: it runs the machine faster, or equally fast with
--- fewer ingredients on belt b, or equally fast with as many there but later in the recipe.
----@param candidate {fraction: number, belts: bpgen.Belts, later: integer}
----@param best {fraction: number, belts: bpgen.Belts, later: integer}|nil
+-- What decides between two splits that run the machine equally fast, in order, the smaller number winning: how many
+-- ingredients are on belt c (none when there are two belts, so fewer belts win) and on belt b, and how early in the recipe
+-- the ingredients of belt c and then of belt b are (so the ingredients go on the belts in the recipe's order where nothing
+-- else decides).
+---@param split {belts: bpgen.Belts, later: {b: integer, c: integer}}
+---@return integer[]
+local function tie_breaks(split)
+  return {#(split.belts.c or {}), #split.belts.b, -split.later.c, -split.later.b}
+end
+
+-- Whether a split beats the best so far: it runs the machine faster, or equally fast with a smaller number in the first
+-- place that `tie_breaks` differs.
+---@param candidate {fraction: number, belts: bpgen.Belts, later: {b: integer, c: integer}}
+---@param best {fraction: number, belts: bpgen.Belts, later: {b: integer, c: integer}}|nil
 ---@return boolean
 local function is_better(candidate, best)
   if not best then
@@ -601,14 +931,17 @@ local function is_better(candidate, best)
   if math.abs(candidate.fraction - best.fraction) > EPSILON then
     return candidate.fraction > best.fraction
   end
-  if #candidate.belts.b ~= #best.belts.b then
-    return #candidate.belts.b < #best.belts.b
+  local here, there = tie_breaks(candidate), tie_breaks(best)
+  for index = 1, #here do
+    if here[index] ~= there[index] then
+      return here[index] < there[index]
+    end
   end
-  return candidate.later > best.later
+  return false
 end
 
 -- Which ingredients ride which belt. A stage with up to two ingredients keeps them all on
--- belt a. With three or four, the split that lets a machine run fastest (see
+-- belt a. With more, the split that lets a machine run fastest (see
 -- `is_better`): it depends only on what one machine eats, not on the rate. Nil when no
 -- split fits.
 ---@param stage bpgen.StageRequest
@@ -621,8 +954,8 @@ local function choose_belts(stage, lanes, raw)
   end
   local inputs = full_speed(stage)
   local best
-  for mask = 1, 2 ^ #lanes - 1 do
-    local belts, later = split_ingredients(lanes, mask, raw)
+  for _, letters in ipairs(splits_of(#lanes, most_belts(stage))) do
+    local belts, later = split_ingredients(lanes, letters, raw)
     local fraction = belts and split_fraction(inputs, belts, stage.inserters)
     if belts and fraction then
       local candidate = {fraction = fraction, belts = belts, later = later}
@@ -909,6 +1242,7 @@ local function stage_plan(stage, machines, load, rates, output)
     input_inserters = rates.input_inserters,
     input_fast = rates.input_fast,
     long_inserters = rates.long_inserters,
+    belt_inserters = rates.belt_inserters,
     output_inserters = rates.output_inserters,
     output_fast = rates.output_fast,
     wide = stage.wide,
@@ -942,13 +1276,14 @@ end
 --    machine_speed = the machine's crafting speed,
 --    fuel = optional item the machine burns (a stage fed raw items, or one that eats
 --           one made ingredient; it takes one lane of the input belt),
---    inserters = optional {items_per_minute, long_items_per_minute, max_input,
---           max_output}: how much one inserter (and one long-handed inserter, a plain
---           one's figure when left out) moves, and how many inserters the input side
---           (shared between plain and long-handed ones) and the output side of a
---           machine get. A machine that would need more runs slower, at what they can
---           move. Two output inserters put the product on both lanes of the output
---           belt, but only for the root stage}
+--    inserters = optional {items_per_minute, long_items_per_minute,
+--           fast_items_per_minute, max_input, max_woven_input, most_belts,
+--           max_output}: how much one inserter (a plain one, a long-handed one and a
+--           fast one when the game has them) moves, and how many inserters the input
+--           side (`max_woven_input` for a stage whose belts are woven, nil when they
+--           are not) and the output side of a machine get. A machine that would need
+--           more runs slower, at what they can move. Two output inserters put the
+--           product on both lanes of the output belt, but only for the root stage}
 --
 -- A stage fed raw items shares the two lanes of its input belt among them and its
 -- fuel: one item fills both lanes, two items get a lane each, and more are refused. A
@@ -956,20 +1291,27 @@ end
 -- iron plates) has that product on one lane and the fuel on the other.
 -- Any other stage eats the products of the stages that feed it, and at most one raw
 -- item more, each on the one lane it travels on. With one or two ingredients they all
--- ride the belt next to the machines (belt a). With three or four there is a second
--- belt (b), reached by long-handed inserters, and the planner splits the ingredients
--- between the belts, at most two on each and a raw one only on belt a, so that a
--- machine runs fastest (`choose_belts`).
+-- ride the belt next to the machines (belt a). With more there are a second belt (b), and
+-- a third (c) for a stage whose belts are woven. Woven belts (b and c woven with belt a
+-- so that plain inserters take from all of them: see scripts/weave.lua) are what the
+-- layout draws when it has the splitters and underground belts for them
+-- (`max_woven_input` is given); without them belt b is one column further out and
+-- long-handed inserters take from it over belt a, and there are two belts. The planner
+-- splits the ingredients between the belts, at most two on each and a raw one only on
+-- belt a, so that a machine runs fastest (`choose_belts`), with as few belts as it takes.
 --
 -- On success returns a tree of plans in the shape of the request's: for each stage
 --   {machines, output_per_minute, inputs, lanes, belts, input_inserters,
---    long_inserters, output_inserters}
+--    long_inserters, belt_inserters, output_inserters}
 --   inputs   {{name, per_minute}, ...} what the machines eat in total, per ingredient
 --   lanes    the item on each lane of the input belts (two entries for a stage fed raw
 --            items, one for each ingredient of any other)
---   belts    {a = {...}, b = {...}} which ingredients ride which belt
---   *_inserters  inserters per machine: plain ones for belt a and the input side,
---            long-handed ones for belt b, plain ones for the output side
+--   belts    {a = {...}, b = {...}, c = {...}} which ingredients ride which belt (c only
+--            for a stage that takes from three woven belts)
+--   *_inserters  inserters per machine: on the input side that take from the column in front of them (all
+--            of them for woven belts, those for belt a with long-handed ones for belt b) and on the
+--            output side; `long_inserters` is the long-handed ones for belt b, and `belt_inserters` how
+--            many of the input ones take from each woven belt, for a stage with more than one
 -- Each stage makes what the stages it feeds eat, and the root makes at least the rate
 -- asked.
 -- On failure returns nil, a reason string, and sometimes an extra value:

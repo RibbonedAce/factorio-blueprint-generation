@@ -539,6 +539,37 @@ describe("belt tracer", function()
       assert.are.same({}, problems)
     end)
 
+    it("takes what is behind its entrance out of its exit, over a piece of an underground belt that crosses in between", function()
+      local machines = {
+        maker = {size = 2, eats = {}, makes = "a"},
+        eater = {size = 2, eats = {"a"}, makes = "product"}, other_eater = {size = 2, eats = {"b"}, makes = "other"},
+      }
+      local entities = all_of(
+        machine("maker", 1, 0), builders.inserter(3, 0, west), belts_from(4, 0, south, 2),
+        builders.underground(4, 2, south, "input"), builders.underground(4, 5, south, "output"),
+        builders.belt(3, 3, east), builders.underground(4, 3, east, "input"), builders.underground(5, 3, east, "output"),
+        builders.inserter(6, 3, west), machine("other_eater", 7, 3),
+        builders.belt(4, 6, south), builders.inserter(5, 6, west), machine("eater", 6, 6))
+
+      local problems = tracer.problems(entities, {
+        machines = machines, raw = {}, product = "product", supplies = {{x = 3, y = 3, item = "b"}},
+      })
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports an entrance that has another entrance of its own way in between: that one meets the exit", function()
+      local machines = {maker = {size = 2, eats = {}, makes = "a"}, eater = {size = 2, eats = {"a"}, makes = "product"}}
+      local entities = all_of(
+        machine("maker", 1, 0), builders.inserter(3, 0, west), belts_from(4, 0, south, 2),
+        builders.underground(4, 2, south, "input"), builders.underground(4, 3, south, "input"), builders.underground(4, 5, south, "output"),
+        builders.belt(4, 6, south), builders.inserter(5, 6, west), machine("eater", 6, 6))
+
+      local problems = tracer.problems(entities, {machines = machines, raw = {}, product = "product"})
+
+      assert.has_item_containing("the underground belt entrance at 4,2 meets no exit within reach", problems)
+    end)
+
     it("reports an entrance that meets no exit within the reach of the belt", function()
       local entities, machines = underground_under_a_crossing(5)
 

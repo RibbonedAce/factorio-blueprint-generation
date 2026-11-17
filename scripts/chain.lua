@@ -6,14 +6,16 @@
 --
 -- The result is a tree of steps, each with the steps that make its made ingredients. A
 -- step whose ingredients are all raw has none (the first step of a chain). A step with one
--- made ingredient is fed by a straight chain of steps. A step with two to four made
+-- made ingredient is fed by a straight chain of steps. A step with two to six made
 -- ingredients is fed by that many blocks, one on each lane of its input belts (two lanes
--- a belt, and a second belt for the third and fourth, see scripts/rows.lua). A step
+-- a belt, and a second belt for the third and fourth, reached by long-handed inserters or
+-- woven with the first, and a third woven belt for the fifth and sixth: see
+-- scripts/rows.lua and scripts/weave.lua). A step
 -- with made ingredients and one raw ingredient is fed by the blocks that make the first
 -- and by a belt of the second, which takes a lane too (`ChainStage.raw_item`). The
 -- following are refused:
---   * a step with more than four made ingredients (it needs more lanes than two belts have);
---   * a step with made ingredients and more than four ingredients in all, or more than one
+--   * a step with more than six made ingredients (it needs more lanes than three belts have);
+--   * a step with made ingredients and more than six ingredients in all, or more than one
 --     raw ingredient (a belt of raw items fills both lanes, so it is side-loaded onto a
 --     lane of its own, and only one is laid out);
 --   * a step with one made ingredient that is itself made from two or more, or from one
@@ -23,9 +25,9 @@
 local chain = {}
 
 -- The most made ingredients a step can have, and the most ingredients in all of a step that
--- has any: one for each lane of its two input belts. And the most raw ones that go with them.
-local MOST_MADE_INGREDIENTS = 4
-local MOST_INGREDIENTS = 4
+-- has any: one for each lane of its three input belts. And the most raw ones that go with them.
+local MOST_MADE_INGREDIENTS = 6
+local MOST_INGREDIENTS = 6
 local MOST_RAW_INGREDIENTS = 1
 
 -- An ingredient that something makes, with how it is made.
@@ -56,7 +58,7 @@ local function crafted_ingredients(production, lookup)
 end
 
 -- Why a step cannot be built from its made ingredients, or nil when it can: when it has
--- more than four, or more than four ingredients in all, or more than one raw one.
+-- more than six, or more than six ingredients in all, or more than one raw one.
 ---@param production bpgen.Production
 ---@param crafted bpgen.MadeIngredient[]  its made ingredients
 ---@return bpgen.ChainReason|nil

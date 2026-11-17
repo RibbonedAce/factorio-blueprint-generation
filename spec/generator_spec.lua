@@ -1076,13 +1076,15 @@ describe("generator", function()
     end)
   end)
 
-  describe("a recipe with three made ingredients, so the final machines take from a second input belt", function()
+  describe("a recipe with three made ingredients, so the final machines take from woven belts", function()
     -- A furnace makes 18.75 plates a minute (speed 1, 3.2 s), or 18.75 bricks from 2 stone each. An assembler (speed 0.5,
     -- 3x3) crafts every 1 s. Gears, 2 plates each, would eat 120 plates a minute, but the two plain inserters of a gear
     -- assembler move 100.8: 50.4 gears a minute. "Inserters" (the recipe is a stand-in) take a gear, a brick and a plate each,
-    -- 60 of each a minute at full speed; a plain inserter moves 50.4 items a minute, a long-handed one 72, and a machine has
-    -- two input slots. The gear alone on belt a (50.4 / 60 = 0.84), the brick and the plate on belt b (72 / 120 = 0.6): 0.6,
-    -- so 36 inserters a minute for each final assembler.
+    -- 60 of each a minute at full speed; a plain inserter moves 50.4 items a minute, and a machine has three input slots
+    -- for its woven belts. The gear and the brick on belt a with two inserters, the plate on belt b with one: 100.8 / 120 and
+    -- 50.4 / 60 are 0.84 each, so 50.4 inserters a minute for each final assembler. The woven belts are made of splitters and
+    -- underground belts, so the force has to have them, and `plain` has the plain inserter only.
+    local plain = fake_force{locked = {"fast-inserter"}}
     local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
     local brick = a_recipe{energy = 3.2, ingredients = {amount_of(2, "stone")}, products = {amount_of(1, "stone-brick")}, category = "smelting"}
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
@@ -1099,50 +1101,60 @@ describe("generator", function()
         recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-gear-wheel"] = gear, ["inserter"] = inserter},
         missing_entities = extra.missing_entities,
         long_inserter_rotation_speed = extra.long_inserter_rotation_speed,
+        underground_distance = extra.underground_distance,
+        small_pole_supply_distance = extra.small_pole_supply_distance,
       }
     end
 
     it("builds the machines of every step: furnaces for the plates of the gears, the bricks and the plates, assemblers for the gears and the inserters", function()
       _G.prototypes = inserter_game()
 
-      local result = generator.generate("inserter", 36)
+      local result = generator.generate("inserter", 36, plain)
 
       assert.are.equal(8, count_named(result.entities, "stone-furnace")) -- 72 plates for 36 gears / 18.75 = 3.8, 36 bricks / 18.75 = 1.9, 36 plates / 18.75 = 1.9
       assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- one for the gears, one for the inserters
     end)
 
-    it("gives each final assembler a long-handed inserter, and builds one for each 36 a minute", function()
+    it("builds a final assembler for each 50.4 inserters a minute, with no long-handed inserter", function()
       _G.prototypes = inserter_game()
 
-      local result = generator.generate("inserter", 100)
+      local result = generator.generate("inserter", 100, plain)
 
-      assert.are.equal(3, count_named(result.entities, "long-handed-inserter")) -- 100 / 36 = 2.8 final assemblers
+      local finals = 0
+      for _, entity in ipairs(result.entities) do
+        if entity.recipe == "inserter" then
+          finals = finals + 1
+        end
+      end
+      assert.are.same({2, 0}, {finals, count_named(result.entities, "long-handed-inserter")}) -- 100 / 50.4 = 1.98 final assemblers
     end)
 
     it("describes the blueprint with the machines of every step, each after the steps that feed it", function()
       _G.prototypes = inserter_game()
 
-      local result = generator.generate("inserter", 36)
+      local result = generator.generate("inserter", 36, plain)
 
+      -- The final assembler makes 50.4 a minute, more than the 36: the two brick furnaces, 37.5, are what limits the tree.
       assert.are.equal(
-        "inserter: 36 per minute from 4 x stone-furnace, 1 x assembling-machine-1, 2 x stone-furnace, 2 x stone-furnace, 1 x assembling-machine-1",
+        "inserter: 37.5 per minute from 4 x stone-furnace, 1 x assembling-machine-1, 2 x stone-furnace, 2 x stone-furnace, 1 x assembling-machine-1",
         result.description)
     end)
 
     it("adds up the same raw item used by two branches, and the fuel of every furnace", function()
       _G.prototypes = inserter_game()
 
-      local result = generator.generate("inserter", 36)
+      local result = generator.generate("inserter", 36, plain)
 
-      -- 36 inserters: 36 gears (72 plates), 36 bricks (72 stone) and 36 plates, so 72 + 36 iron ore and 72 stone.
-      -- The furnaces craft 3.2 s for each: 72 + 36 plates and 36 bricks are 3.84 + 1.92 + 1.92 furnaces' worth: 10.368 coal.
-      assert.are.same(ready_message("inserter", "36", {{"iron-ore", "108"}, {"stone", "72"}, {"coal", "10.37"}}), result.message)
+      -- 37.5 inserters (what the 2 brick furnaces make): 37.5 gears (75 plates), 37.5 bricks (75 stone) and 37.5 plates, so
+      -- 75 + 37.5 iron ore and 75 stone. All 8 furnaces (4 for the plates of the gears, 2 for the bricks, 2 for the plates) work
+      -- flat out and burn 1.35 coal a minute each: 10.8.
+      assert.are.same(ready_message("inserter", "37.5", {{"iron-ore", "112.5"}, {"stone", "75"}, {"coal", "10.8"}})[4], result.message[4])
     end)
 
     it("sets the recipe of every assembling machine and leaves the furnaces to pick their own", function()
       _G.prototypes = inserter_game()
 
-      local result = generator.generate("inserter", 36)
+      local result = generator.generate("inserter", 36, plain)
 
       local recipes = {}
       for _, entity in ipairs(result.entities) do
@@ -1160,50 +1172,216 @@ describe("generator", function()
       local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
       catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
 
-      local result = generator.generate("inserter", 100)
+      local result = generator.generate("inserter", 100, plain)
 
       assert.are.same({}, validator.validate(result.entities, catalog))
     end)
 
-    it("names the most a lane carries when the lane of plates for the gears fills first", function()
+    it("names the most a lane carries when the lane of the bricks fills first", function()
       _G.prototypes = inserter_game()
 
-      assert.are.same({"blueprint-generation.max-rate", "225"}, generator.max_rate_message("inserter")) -- 450 plates, 2 for each gear
+      assert.are.same({"blueprint-generation.max-rate", "225"}, generator.max_rate_message("inserter", plain)) -- 450 stone, 2 for each brick
     end)
 
     it("refuses the rate when it is more than that", function()
       _G.prototypes = inserter_game()
 
-      local result, error_message = generator.generate("inserter", 226)
+      local result, error_message = generator.generate("inserter", 226, plain)
 
       assert.is_nil(result)
       assert.are.same({"blueprint-generation.error-rate-too-high", "225"}, error_message)
     end)
 
-    it("takes the long-handed inserter's speed from the game", function()
-      -- At the plain inserter's speed (0.014) the belt b side is 50.4 / 120 = 0.42 too: 25.2 a minute, 100 / 25.2 = 3.97.
-      _G.prototypes = inserter_game{long_inserter_rotation_speed = 0.014}
-
-      local result = generator.generate("inserter", 100)
-
-      assert.are.equal(4, count_named(result.entities, "long-handed-inserter"))
-    end)
-
-    it("plans with the plain inserter's speed when the game has no long-handed inserter, and refuses nothing", function()
+    it("builds the recipe when the game has no long-handed inserter: the blueprint has none", function()
       _G.prototypes = inserter_game{missing_entities = {"long-handed-inserter"}}
 
-      local result = generator.generate("inserter", 100)
-
-      assert.are.equal(4, count_named(result.entities, "long-handed-inserter")) -- the blueprint still has them, as 25.2 a minute machines
-    end)
-
-    it("builds a recipe with one input belt when the game has no long-handed inserter", function()
-      _G.prototypes = inserter_game{missing_entities = {"long-handed-inserter"}}
-
-      local result = generator.generate("iron-gear-wheel", 10)
+      local result = generator.generate("inserter", 100, plain)
 
       assert.is_not_nil(result)
-      assert.are.equal(0, count_named(result.entities, "long-handed-inserter"))
+    end)
+
+    describe("when the blueprint cannot weave its belts: a long-handed inserter takes from the second belt", function()
+      -- The woven belts are made of splitters and underground belts, so they need a force that has researched both, an
+      -- underground belt that spans the longest hop of belt a, and a pole that powers two tiles away. Without them the
+      -- final machines have a plain inserter for belt a and a long-handed one for belt b, one column further out, and two
+      -- input slots, not three: the gear alone on belt a (50.4 / 60 = 0.84), the brick and the plate on belt b
+      -- (72 / 120 = 0.6): 0.6, so 36 inserters a minute for each final assembler.
+      local LONG = "long-handed-inserter"
+
+      it("gives each final assembler a long-handed inserter, and builds one for each 36 a minute, when no force is given", function()
+        _G.prototypes = inserter_game()
+
+        local result = generator.generate("inserter", 100)
+
+        assert.are.equal(3, count_named(result.entities, LONG)) -- 100 / 36 = 2.8 final assemblers
+      end)
+
+      it("builds them when the force has not researched the splitter", function()
+        _G.prototypes = inserter_game()
+
+        local result = generator.generate("inserter", 100, fake_force{locked = {"splitter", "fast-inserter"}})
+
+        assert.are.equal(3, count_named(result.entities, LONG))
+      end)
+
+      it("builds them when the force has not researched the underground belt", function()
+        _G.prototypes = inserter_game()
+
+        local result = generator.generate("inserter", 100, fake_force{locked = {"underground-belt", "fast-inserter"}})
+
+        assert.are.equal(3, count_named(result.entities, LONG))
+      end)
+
+      it("builds them when the underground belt spans only 4 tiles, one short of the longest hop of belt a", function()
+        _G.prototypes = inserter_game{underground_distance = 4}
+
+        local result = generator.generate("inserter", 100, plain)
+
+        assert.are.equal(3, count_named(result.entities, LONG))
+      end)
+
+      it("weaves the belts instead when the underground belt spans exactly the 5 tiles of the longest hop", function()
+        _G.prototypes = inserter_game{underground_distance = 5}
+
+        local result = generator.generate("inserter", 100, plain)
+
+        assert.are.equal(0, count_named(result.entities, LONG))
+      end)
+
+      it("builds them when the pole powers only one tile away, which leaves inserters beside woven belts without power", function()
+        _G.prototypes = inserter_game{small_pole_supply_distance = 1.5}
+
+        local result = generator.generate("inserter", 100, fake_force{locked = {"fast-inserter", "medium-electric-pole"}})
+
+        assert.are.equal(3, count_named(result.entities, LONG))
+      end)
+
+      it("weaves the belts instead when the pole powers two tiles away, which two woven belts need", function()
+        _G.prototypes = inserter_game{small_pole_supply_distance = 2}
+
+        local result = generator.generate("inserter", 100, fake_force{locked = {"fast-inserter", "medium-electric-pole"}})
+
+        assert.are.equal(0, count_named(result.entities, LONG))
+      end)
+
+      it("builds the machines of every step: furnaces for the plates of the gears, the bricks and the plates, assemblers for the gears and the inserters", function()
+        _G.prototypes = inserter_game()
+
+        local result = generator.generate("inserter", 36)
+
+        assert.are.equal(8, count_named(result.entities, "stone-furnace")) -- 72 plates for 36 gears / 18.75 = 3.8, 36 bricks / 18.75 = 1.9, 36 plates / 18.75 = 1.9
+        assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- one for the gears, one for the inserters
+      end)
+
+      it("describes the blueprint with the machines of every step, each after the steps that feed it", function()
+        _G.prototypes = inserter_game()
+
+        local result = generator.generate("inserter", 36)
+
+        assert.are.equal(
+          "inserter: 36 per minute from 4 x stone-furnace, 1 x assembling-machine-1, 2 x stone-furnace, 2 x stone-furnace, 1 x assembling-machine-1",
+          result.description)
+      end)
+
+      it("adds up the same raw item used by two branches, and the fuel of every furnace", function()
+        _G.prototypes = inserter_game()
+
+        local result = generator.generate("inserter", 36)
+
+        -- 36 inserters: 36 gears (72 plates), 36 bricks (72 stone) and 36 plates, so 72 + 36 iron ore and 72 stone.
+        -- The furnaces craft 3.2 s for each: 72 + 36 plates and 36 bricks are 3.84 + 1.92 + 1.92 furnaces' worth: 10.368 coal.
+        assert.are.same(ready_message("inserter", "36", {{"iron-ore", "108"}, {"stone", "72"}, {"coal", "10.37"}}), result.message)
+      end)
+
+      it("builds a blueprint that passes the validator, with every machine fed, emptied and powered", function()
+        _G.prototypes = inserter_game()
+        local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+        catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+        local result = generator.generate("inserter", 100)
+
+        assert.are.same({}, validator.validate(result.entities, catalog))
+      end)
+
+      it("names the most a lane carries when the lane of plates for the gears fills first", function()
+        _G.prototypes = inserter_game()
+
+        assert.are.same({"blueprint-generation.max-rate", "225"}, generator.max_rate_message("inserter")) -- 450 plates, 2 for each gear
+      end)
+
+      it("refuses the rate when it is more than that", function()
+        _G.prototypes = inserter_game()
+
+        local result, error_message = generator.generate("inserter", 226)
+
+        assert.is_nil(result)
+        assert.are.same({"blueprint-generation.error-rate-too-high", "225"}, error_message)
+      end)
+
+      it("takes the long-handed inserter's speed from the game", function()
+        -- At the plain inserter's speed (0.014) the belt b side is 50.4 / 120 = 0.42 too: 25.2 a minute, 100 / 25.2 = 3.97.
+        _G.prototypes = inserter_game{long_inserter_rotation_speed = 0.014}
+
+        local result = generator.generate("inserter", 100)
+
+        assert.are.equal(4, count_named(result.entities, LONG))
+      end)
+
+      it("plans with the plain inserter's speed when the game has no long-handed inserter, and refuses nothing", function()
+        _G.prototypes = inserter_game{missing_entities = {LONG}}
+
+        local result = generator.generate("inserter", 100)
+
+        assert.are.equal(4, count_named(result.entities, LONG)) -- the blueprint still has them, as 25.2 a minute machines
+      end)
+
+      it("builds a recipe with one input belt when the game has no long-handed inserter", function()
+        _G.prototypes = inserter_game{missing_entities = {LONG}}
+
+        local result = generator.generate("iron-gear-wheel", 10)
+
+        assert.is_not_nil(result)
+        assert.are.equal(0, count_named(result.entities, LONG))
+      end)
+
+      it("builds a recipe with one input belt all the same, for a force with no splitter", function()
+        _G.prototypes = inserter_game()
+
+        local result = generator.generate("iron-gear-wheel", 10, fake_force{locked = {"splitter"}})
+
+        assert.is_not_nil(result)
+      end)
+
+      it("refuses a step that eats three raw items as a recipe it cannot build: it has no made ingredient to put on a second belt", function()
+        local gear = a_recipe{
+          energy = 0.5, ingredients = {amount_of(1, "iron-ore"), amount_of(1, "copper-ore"), amount_of(1, "stone")},
+          products = {amount_of(1, "iron-gear-wheel")},
+        }
+        _G.prototypes = fake_prototypes{
+          machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+          recipes = {["iron-gear-wheel"] = gear},
+        }
+
+        local result, error_message = generator.generate("iron-gear-wheel", 10)
+
+        assert.are.same({nil, {"blueprint-generation.error-unsupported-recipe"}}, {result, error_message})
+      end)
+
+      it("refuses a step that eats five raw items as a recipe it cannot build too, not as one that needs three woven belts", function()
+        local gear = a_recipe{
+          energy = 0.5,
+          ingredients = {amount_of(1, "iron-ore"), amount_of(1, "copper-ore"), amount_of(1, "stone"), amount_of(1, "wood"), amount_of(1, "sand")},
+          products = {amount_of(1, "iron-gear-wheel")},
+        }
+        _G.prototypes = fake_prototypes{
+          machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+          recipes = {["iron-gear-wheel"] = gear},
+        }
+
+        local result, error_message = generator.generate("iron-gear-wheel", 10)
+
+        assert.are.same({nil, {"blueprint-generation.error-unsupported-recipe"}}, {result, error_message})
+      end)
     end)
   end)
 
@@ -1385,6 +1563,14 @@ describe("generator", function()
       assert.is_not_nil(result)
     end)
 
+    it("does not look at the long-handed inserter when the blueprint takes its second belt with them, without the splitter", function()
+      _G.prototypes = game()
+
+      local result = generator.generate("inserter", 36, fake_force{locked = {"long-handed-inserter", "splitter"}})
+
+      assert.is_not_nil(result)
+    end)
+
     it("does not look at the belt, the inserter and the pole every blueprint places", function()
       _G.prototypes = game()
 
@@ -1412,8 +1598,8 @@ describe("generator", function()
     it("leaves the recipes unchecked when no force is given", function()
       _G.prototypes = game()
 
-      assert.is_not_nil(generator.generate("inserter", 36))
-      assert.are.same({"blueprint-generation.max-rate", "225"}, generator.max_rate_message("inserter"))
+      assert.is_not_nil(generator.generate("iron-gear-wheel", 36))
+      assert.are.same({"blueprint-generation.max-rate", "225"}, generator.max_rate_message("iron-gear-wheel"))
     end)
 
     describe("the products on offer", function()
@@ -2188,29 +2374,109 @@ describe("generator", function()
       assert.are.same({"blueprint-generation.error-ambiguous-recipe", {"item-name.iron-plate"}}, error_message)
     end)
 
-    it("refuses the request when a step needs five made ingredients, naming the item", function()
+    describe("a step that eats many made ingredients", function()
       local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
       local copper = a_recipe{energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}, category = "smelting"}
       local brick = a_recipe{energy = 3.2, ingredients = {amount_of(2, "stone")}, products = {amount_of(1, "stone-brick")}, category = "smelting"}
       local cable = a_recipe{energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(2, "copper-cable")}}
       local pipe = a_recipe{energy = 0.5, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "pipe")}}
-      local gear = a_recipe{
-        energy = 0.5,
-        ingredients = {amount_of(2, "iron-plate"), amount_of(1, "copper-plate"), amount_of(1, "stone-brick"), amount_of(1, "copper-cable"), amount_of(1, "pipe")},
-        products = {amount_of(1, "iron-gear-wheel")},
-      }
-      _G.prototypes = fake_prototypes{
-        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
-        recipes = {
-          ["iron-plate"] = plate, ["copper-plate"] = copper, ["stone-brick"] = brick, ["copper-cable"] = cable, ["pipe"] = pipe,
-          ["iron-gear-wheel"] = gear,
-        },
-      }
+      local rod = a_recipe{energy = 0.5, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(2, "iron-stick")}}
+      local wire = a_recipe{energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(1, "wire")}}
 
-      local result, error_message = generator.generate("iron-gear-wheel", 10)
+      -- A stand-in "gear" that eats `ingredients`, each made by a recipe above.
+      local function game_with(ingredients)
+        local gear = a_recipe{energy = 0.5, ingredients = ingredients, products = {amount_of(1, "iron-gear-wheel")}}
+        return fake_prototypes{
+          furnace_speed = 1,
+          machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+          recipes = {
+            ["iron-plate"] = plate, ["copper-plate"] = copper, ["stone-brick"] = brick, ["copper-cable"] = cable, ["pipe"] = pipe,
+            ["iron-stick"] = rod, ["wire"] = wire, ["iron-gear-wheel"] = gear,
+          },
+        }
+      end
 
-      assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-chain-too-complex", {"item-name.iron-gear-wheel"}}, error_message)
+      local five = {amount_of(2, "iron-plate"), amount_of(1, "copper-plate"), amount_of(1, "stone-brick"), amount_of(1, "copper-cable"), amount_of(1, "pipe")}
+
+      it("refuses the request when a step needs seven made ingredients, naming the item", function()
+        _G.prototypes = game_with({
+          amount_of(2, "iron-plate"), amount_of(1, "copper-plate"), amount_of(1, "stone-brick"), amount_of(1, "copper-cable"),
+          amount_of(1, "pipe"), amount_of(1, "iron-stick"), amount_of(1, "wire"),
+        })
+
+        local result, error_message = generator.generate("iron-gear-wheel", 10, fake_force{})
+
+        assert.is_nil(result)
+        assert.are.same({"blueprint-generation.error-chain-too-complex", {"item-name.iron-gear-wheel"}}, error_message)
+      end)
+
+      it("builds a step that needs five made ingredients, on three woven belts, with the medium pole", function()
+        _G.prototypes = game_with(five)
+        local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+        catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+        local result = generator.generate("iron-gear-wheel", 10, fake_force{})
+
+        assert.are.same({}, validator.validate(result.entities, catalog))
+      end)
+
+      -- Three woven belts need the splitter, the underground belt and the medium pole: without one of them the step is refused,
+      -- and the message says what to research.
+      local refusal = {"blueprint-generation.error-belts-need-weave", {"item-name.iron-gear-wheel"}}
+
+      it("refuses it when the force has only the small pole, whose poles do not reach the inserters beside three belts", function()
+        _G.prototypes = game_with(five)
+
+        local result, error_message = generator.generate("iron-gear-wheel", 10, fake_force{locked = {"medium-electric-pole"}})
+
+        assert.are.same({nil, refusal}, {result, error_message})
+      end)
+
+      it("refuses it when no force is given: long-handed inserters reach a second belt only", function()
+        _G.prototypes = game_with(five)
+
+        local result, error_message = generator.generate("iron-gear-wheel", 10)
+
+        assert.are.same({nil, refusal}, {result, error_message})
+      end)
+
+      it("refuses it when the force has not researched the splitter", function()
+        _G.prototypes = game_with(five)
+
+        local result, error_message = generator.generate("iron-gear-wheel", 10, fake_force{locked = {"splitter"}})
+
+        assert.are.same({nil, refusal}, {result, error_message})
+      end)
+
+      it("refuses it when the force has not researched the underground belt", function()
+        _G.prototypes = game_with(five)
+
+        local result, error_message = generator.generate("iron-gear-wheel", 10, fake_force{locked = {"underground-belt"}})
+
+        assert.are.same({nil, refusal}, {result, error_message})
+      end)
+
+      it("shows the same refusal under the rate field", function()
+        _G.prototypes = game_with(five)
+
+        assert.are.same(refusal, generator.max_rate_message("iron-gear-wheel"))
+      end)
+
+      it("builds a step that needs four made ingredients with the small pole: two woven belts need poles that reach two rows", function()
+        _G.prototypes = game_with({amount_of(2, "iron-plate"), amount_of(1, "copper-plate"), amount_of(1, "stone-brick"), amount_of(1, "copper-cable")})
+
+        local result = generator.generate("iron-gear-wheel", 10, fake_force{locked = {"medium-electric-pole"}})
+
+        assert.is_not_nil(result)
+      end)
+
+      it("builds a step that needs four made ingredients with long-handed inserters when no force is given: two belts carry them", function()
+        _G.prototypes = game_with({amount_of(2, "iron-plate"), amount_of(1, "copper-plate"), amount_of(1, "stone-brick"), amount_of(1, "copper-cable")})
+
+        local result = generator.generate("iron-gear-wheel", 10)
+
+        assert.are.equal(1, count_named(result.entities, "long-handed-inserter"))
+      end)
     end)
 
     it("refuses the request when a later step mixes the made ingredient with two raw ones, naming the item", function()

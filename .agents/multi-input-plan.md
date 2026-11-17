@@ -2,6 +2,8 @@
 
 **The layout part was superseded on 2026-11-08 by the row layout ([row-layout-plan.md](row-layout-plan.md)): belt a and belt b still exist and the long-handed inserters still reach over belt a, but the columns stand side by side, both belts run north and `final_first_row` is gone. The split of ingredients between the belts (`choose_belts`) is unchanged.**
 
+**Since 2026-11-16 a blueprint takes woven input belts instead of the long-handed inserter when the force has the splitter and the underground belt (project-status 5ad, `scripts/weave.lua`): plain or fast inserters take from two or three belts that take turns in the column beside the machines, up to six ingredients. This plan is the design a blueprint takes otherwise, and it is built exactly as first built.**
+
 Status: IMPLEMENTED 2026-11-07 in one local commit, not yet run in game, nothing pushed. The owner confirmed the five decisions below the same day. "What changed from the plan" at the end lists what building it taught.
 
 ## Requirements (owner, 2026-11-07)

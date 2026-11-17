@@ -63,9 +63,24 @@ local function assemblers(machine, count, input_inserters, output_inserters, sup
   }
 end
 
--- An assembler whose machines each have a plain inserter and a long-handed one (in the row under it). The plain
--- inserter takes from belt a, the input belt next to the inserters; the long-handed one from belt b, one column further
--- west. `machine` says which assembler it is, for the tracer.
+-- An assembler whose machines take from two or three woven belts (see scripts/weave.lua), with the inserters on each belt
+-- that `counts` says, by belt. The belt each supplier rides is its `belt` ("a" when it has none). `machine` says which
+-- assembler it is, for the tracer.
+local function woven_assembler(count, counts, suppliers, machine)
+  local total = 0
+  for _, inserters in pairs(counts) do
+    total = total + inserters
+  end
+  return {
+    machine_count = count, machine = machine or "gadget-assembler",
+    shape = {machine_size = 3, input_inserters = total, input_belts = counts, output_inserters = 1},
+    suppliers = suppliers,
+  }
+end
+
+-- An assembler whose machines each have a plain inserter and a long-handed one (in the row under it), for a blueprint that
+-- cannot weave its belts. The plain inserter takes from belt a, the input belt next to the inserters; the long-handed one
+-- from belt b, one column further west. `machine` says which assembler it is, for the tracer.
 local function gadget_assembler(count, suppliers, machine)
   return {
     machine_count = count, machine = machine or "gadget-assembler",
@@ -74,14 +89,25 @@ local function gadget_assembler(count, suppliers, machine)
   }
 end
 
--- The same column, said to ride belt b.
-local function on_belt_b(stage)
-  stage.belt = "b"
+-- The same column, said to ride `belt`.
+local function on_belt(stage, belt)
+  stage.belt = belt
   return stage
 end
 
 local function tile_of(entity, size)
   return grid.top_left_tile(entity.position, size, size)
+end
+
+-- How many entities have the name.
+local function count_named(entities, name)
+  local total = 0
+  for _, entity in ipairs(entities) do
+    if entity.name == name then
+      total = total + 1
+    end
+  end
+  return total
 end
 
 local function entity_at(entities, name, x, y, size)
@@ -354,12 +380,161 @@ describe("rows", function()
     end)
   end)
 
-  describe("three ingredients, some of them on a second input belt", function()
-    -- Iron plates are alone on belt a. The cables and the bricks share belt b, one column west of belt a (column 24
-    -- and 25), which the long-handed inserters of the final column (G, in column 26) reach over belt a. The belts of
-    -- belt a's ingredients come first, then belt b's, whatever the recipe's order is. The cables are the head of belt b
-    -- and go through the gadget (rows 7 and 8); the bricks join belt b from the west in row 6; the iron plates, alone
-    -- on belt a, run under everything in row 9 without one. (B the brick furnace, ] a long-handed inserter.)
+  describe("three ingredients, some of them on a second, woven input belt", function()
+    -- Iron plates are alone on belt a, the inner column of the final column (G, in columns 28 to 30, its inserters in 27), which
+    -- runs north under the other belts. The cables and the bricks share belt b, two columns west of it (column 24), with the
+    -- taps and the poles in the column between (25): a splitter in the trunk peels off the stub of each run of rows of belt b,
+    -- and the pole stands in a free tile. The belts of belt a's ingredients come first, then belt b's, whatever the recipe's
+    -- order is. The cables are the head of belt b and go through the gadget (rows 8 and 9); the bricks join belt b from
+    -- the west in row 7; the iron plates, alone on belt a, run under everything in row 10 without one. (B the brick furnace,
+    -- A the cable assemblers, N the entrance of the underground belt of belt a, U its exit, S the splitter, x from -1.)
+    --
+    --      1012345678901234567890123456789012
+    --   0 |>>>>>>>>>>>>>>>>>>>v......+>}GGG}v|
+    --   1 |>>>>>>>v...........v}BB}v.>^}GGG+v|
+    --   2 |>v.....v}CC}v}AAA}v.+BB+vSS>}GGG.v|
+    --   3 |.v}II}v.+CC+.+AAA}v.....v^+U}GGG.v|
+    --   4 |..+II+v.......AAA+v.....v^.>}GGG+v|
+    --   5 |......v...........v.....v^>^}GGG}v|
+    --   6 |......v...........v.....vSSN......|
+    --   7 |......v...........v.....>^.^......|
+    --   8 |......v...........v>>>>>>^.^......|
+    --   9 |......v...........>>^......^......|
+    --  10 |......>>>>>>>>>>>>>>>>>>>>>^......|
+    local iron = furnaces("iron-furnace", 1)
+    local cables = on_belt(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)}), "b")
+    local bricks = on_belt(furnaces("brick-furnace", 1), "b")
+
+    describe("one on belt a and two on belt b", function()
+      local entities = rows.build(woven_assembler(2, {a = 1, b = 2}, {iron, cables, bricks}), NAMES)
+
+      it("runs belt b north in its own column, two west of the inner column, from the arc of its head to its first splitter", function()
+        assert.are.same({3, 4, 5, 7, 8, 10}, belt_rows(entities, 24)) -- the splitters stand in rows 2 and 6; row 10 is the arc of the iron plates, under belt b
+      end)
+
+      it("runs belt a north in the inner column, from the arc of the iron plates up to the entrance of its underground belt", function()
+        assert.are.equal(north, entity_at(entities, NAMES.belt, 26, 10, 1).direction) -- the arc turns north into the head of belt a
+        assert.are.equal(north, entity_at(entities, NAMES.belt, 26, 7, 1).direction)
+        assert.are.equal("input", entity_at(entities, NAMES.underground, 26, 6, 1).type)
+      end)
+
+      it("turns the head of belt b through the gadget and the second product of belt b in from the west", function()
+        assert.are.same({"17,9 east", "18,9 east", "19,9 north"}, belts_in(entities, 17, 9, 19, 9))
+        assert.are.equal(east, entity_at(entities, NAMES.belt, 23, 8, 1).direction) -- the cables, into the head of belt b
+        assert.are.equal(east, entity_at(entities, NAMES.belt, 23, 7, 1).direction) -- the bricks, into the side of belt b
+      end)
+
+      it("gives a product that has its belt to itself no gadget, and runs it under the arcs of belt b", function()
+        assert.are.equal(east, entity_at(entities, NAMES.belt, 5, 10, 1).direction)
+        assert.is_nil(entity_at(entities, NAMES.belt, 5, 11, 1))
+        assert.are.equal(east, entity_at(entities, NAMES.belt, 24, 10, 1).direction)
+      end)
+
+      it("stands the final column after the belts it takes from, with the inserters beside belt a", function()
+        assert.is_not_nil(entity_at(entities, "gadget-assembler", 28, 0, 3))
+      end)
+    end)
+
+    it("stands the columns of belt a before those of belt b whatever order the recipe lists them in", function()
+      local first, second = furnaces("iron-furnace", 1), on_belt(furnaces("brick-furnace", 1), "b")
+
+      local _, raw_stages = rows.build(woven_assembler(1, {a = 1, b = 2}, {second, first}), NAMES)
+
+      assert.are.equal(second, raw_stages[1]) -- the column furthest east has the top row: belt b's, last in the row
+      assert.are.equal(first, raw_stages[2])
+    end)
+
+    it("refuses a column of woven belts whose suppliers all ride belt a, which is no weave", function()
+      local suppliers = {furnaces("iron-furnace", 1), furnaces("brick-furnace", 1)}
+
+      assert.has_error(function() rows.build(woven_assembler(2, {a = 1, b = 1}, suppliers), NAMES) end,
+        "rows: a column takes from woven belts only when it takes from more than one belt")
+    end)
+  end)
+
+  describe("three ingredients on woven belts, one on each of three belts", function()
+    -- The final column takes its belts from the woven pattern of scripts/weave.lua: belt a in the inner column, next to its
+    -- inserters, belt b two columns west of it (with the column of the taps between) and belt c four columns west. The
+    -- belts come up from the arcs, as the long-handed belt b did, and end under the first tile of the pattern. Three belts
+    -- need the medium pole.
+    local medium = builders.medium_pole_names()
+    local iron = furnaces("iron-furnace", 1)
+    local cables = on_belt(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)}), "b")
+    local bricks = on_belt(furnaces("brick-furnace", 1), "c")
+    local entities = rows.build(woven_assembler(2, {a = 1, b = 1, c = 1}, {iron, cables, bricks}), medium)
+
+    -- The tile column of the inner column of the final column: its machines start two columns east of it.
+    local function inner_column()
+      for _, entity in ipairs(entities) do
+        if entity.name == "gadget-assembler" then
+          return tile_of(entity, 3).x - 2
+        end
+      end
+    end
+
+    -- The row of the lowest entity of a kind in a tile column (the first of its belt, which the belts come up to): `kind` is
+    -- "splitter", with its west tile in the column, or "underground".
+    local function lowest(column, kind)
+      local row = -math.huge
+      for _, entity in ipairs(entities) do
+        if kind == "splitter" and entity.name == NAMES.splitter and entity.position.x == column + 1 then
+          row = math.max(row, math.floor(entity.position.y))
+        elseif kind == "underground" and entity.name == NAMES.underground and tile_of(entity, 1).x == column then
+          row = math.max(row, tile_of(entity, 1).y)
+        end
+      end
+      return row
+    end
+
+    -- Whether a belt that runs north stands in the tile column in the row: the top of a riser.
+    local function riser_at(column, row)
+      local belt = entity_at(entities, NAMES.belt, column, row, 1)
+      return belt ~= nil and belt.direction == north
+    end
+
+    it("ends the belt of the ingredients of belt b under a splitter two columns west of the inner column", function()
+      local column = inner_column() - 2
+
+      assert.is_true(riser_at(column, lowest(column, "splitter") + 1))
+    end)
+
+    it("ends the belt of the ingredients of belt c under a splitter four columns west of the inner column", function()
+      local column = inner_column() - 4
+
+      assert.is_true(riser_at(column, lowest(column, "splitter") + 1))
+    end)
+
+    it("ends the belt of the ingredients of belt a under the entrance of the underground belt that goes under the other belts", function()
+      local column = inner_column()
+
+      assert.is_true(riser_at(column, lowest(column, "underground") + 1))
+    end)
+
+    it("stands the final column east of the belts, with the six input inserters of its two machines beside belt a", function()
+      local inserters = 0
+      for _, entity in ipairs(entities) do
+        if entity.name == NAMES.inserter and tile_of(entity, 1).x == inner_column() + 1 then
+          inserters = inserters + 1
+        end
+      end
+
+      assert.are.equal(6, inserters)
+    end)
+
+    it("is refused for the small pole, whose poles do not reach the inserters of three belts in every row", function()
+      local suppliers = {furnaces("iron-furnace", 1), on_belt(furnaces("brick-furnace", 1), "b"), on_belt(furnaces("copper-furnace", 1), "c")}
+
+      assert.has_error(function() rows.build(woven_assembler(2, {a = 1, b = 1, c = 1}, suppliers), NAMES) end)
+    end)
+  end)
+
+  describe("three ingredients, some of them on a second input belt that long-handed inserters reach", function()
+    -- For a blueprint that cannot weave its belts. Iron plates are alone on belt a. The cables and the bricks share belt b,
+    -- one column west of belt a (column 24 and 25), which the long-handed inserters of the final column (G, in column 26)
+    -- reach over belt a. The belts of belt a's ingredients come first, then belt b's, whatever the recipe's order is. The
+    -- cables are the head of belt b and go through the gadget (rows 7 and 8); the bricks join belt b from the west in row 6;
+    -- the iron plates, alone on belt a, run under everything in row 9 without one. (B the brick furnace, ] a long-handed
+    -- inserter.)
     --
     --      101234567890123456789012345678901
     --   0 |>>>>>>>>>>>>>>>>>>>v......^}GGG}v|
@@ -373,8 +548,8 @@ describe("rows", function()
     --   8 |......v...........>>^.....^......|
     --   9 |......>>>>>>>>>>>>>>>>>>>>^......|
     local iron = furnaces("iron-furnace", 1)
-    local cables = on_belt_b(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)}))
-    local bricks = on_belt_b(furnaces("brick-furnace", 1))
+    local cables = on_belt(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)}), "b")
+    local bricks = on_belt(furnaces("brick-furnace", 1), "b")
 
     describe("one on belt a and two on belt b", function()
       local entities = rows.build(gadget_assembler(2, {iron, cables, bricks}), NAMES)
@@ -405,15 +580,25 @@ describe("rows", function()
       it("stands the final column after belt a, with belt b in the column west of it", function()
         assert.is_not_nil(entity_at(entities, "gadget-assembler", 27, 0, 3))
       end)
+
+      it("draws no splitter, since nothing is woven", function()
+        assert.are.equal(0, count_named(entities, NAMES.splitter))
+      end)
     end)
 
     it("stands the columns of belt a before those of belt b whatever order the recipe lists them in", function()
-      local first, second = furnaces("iron-furnace", 1), on_belt_b(furnaces("brick-furnace", 1))
+      local first, second = furnaces("iron-furnace", 1), on_belt(furnaces("brick-furnace", 1), "b")
 
       local _, raw_stages = rows.build(gadget_assembler(1, {second, first}), NAMES)
 
       assert.are.equal(second, raw_stages[1]) -- the column furthest east has the top row: belt b's, last in the row
       assert.are.equal(first, raw_stages[2])
+    end)
+
+    it("refuses a column with a third belt, which long-handed inserters do not reach", function()
+      local suppliers = {iron, cables, on_belt(furnaces("copper-furnace", 1), "c")}
+
+      assert.has_error(function() rows.build(gadget_assembler(2, suppliers), NAMES) end, "rows: a column takes from three belts only when they are woven")
     end)
   end)
 
@@ -1076,7 +1261,7 @@ describe("rows", function()
     local designs = {
       {
         suffix = "",
-        build = function(root) return rows.build(root, NAMES) end,
+        build = function(root, names) return rows.build(root, names or NAMES) end,
         lanes = function(entities, raw_stages) return {supplies = {supply_of(entities, raw_stages, "wood")}} end,
       },
       {
@@ -1103,17 +1288,18 @@ describe("rows", function()
     ---@param tracer_machines? table  what the tracer is told the machines eat and make; default `machines`
     ---@param eaten? string  what the second spec says is on a lane of its own, if not "every item"
     ---@param only_pure? boolean  for a tree that only the design with one belt of each material can build
-    local function it_builds_soundly(subject, tree, product, tracer_machines, eaten, only_pure)
+    ---@param names? bpgen.Names  the names the blueprint is built with: those with the small pole by default
+    local function it_builds_soundly(subject, tree, product, tracer_machines, eaten, only_pure, names)
       for _, design in ipairs(designs) do
         if design.pure or not only_pure then
           it("passes the validator when building " .. subject .. design.suffix, function()
-            local entities = design.build(tree())
+            local entities = design.build(tree(), names)
 
             assert.are.same({}, validator.validate(entities, catalog()))
           end)
 
           it("puts " .. (eaten or "every item on a lane of its own where it is eaten") .. " when building " .. subject .. design.suffix, function()
-            local entities, second = design.build(tree())
+            local entities, second = design.build(tree(), names)
 
             assert.are.same({}, tracer.problems(entities, options_for(design, entities, second, {
               machines = tracer_machines or machines, raw = raw, product = product,
@@ -1227,30 +1413,6 @@ describe("rows", function()
       end
     end
 
-    -- Gadgets from iron plates, cables, stone bricks and (in the third shape) gears, in three shapes: the recipe's
-    -- ingredients split as 1 on belt a and 2 on belt b, as 2 and 1, and as 2 and 2; the suppliers listed in either order.
-    local gadget_shapes = {
-      {label = "1 on belt a and 2 on belt b", on_b = {cables = true, bricks = true}, eats = {"iron-plate", "copper-cable", "stone-brick"}},
-      {label = "2 on belt a and 1 on belt b", on_b = {bricks = true}, eats = {"iron-plate", "copper-cable", "stone-brick"}},
-      {label = "2 on each belt", on_b = {bricks = true, gears = true}, eats = {"iron-plate", "copper-cable", "stone-brick", "iron-gear-wheel"}},
-    }
-
-    local function gadgets(iron_count, brick_count, gadget_count, shape, forward)
-      local suppliers = {
-        iron = furnaces("iron-furnace", iron_count),
-        cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)}),
-        bricks = furnaces("brick-furnace", brick_count),
-        gears = assemblers("gear-assembler", 1, 2, 1, {furnaces("iron-furnace", 2)}),
-      }
-      local order = shape.on_b.gears and {"iron", "cables", "bricks", "gears"} or {"iron", "cables", "bricks"}
-      local list = {}
-      for index = 1, #order do
-        local name = order[forward and index or #order + 1 - index]
-        list[index] = shape.on_b[name] and on_belt_b(suppliers[name]) or suppliers[name]
-      end
-      return gadget_assembler(gadget_count, list)
-    end
-
     -- The machines of the tracer, with the gadget assembler eating what the shape says.
     local function machines_eating(eats)
       local copy = {}
@@ -1261,21 +1423,104 @@ describe("rows", function()
       return copy
     end
 
-    for _, shape in ipairs(gadget_shapes) do
+    -- Gadgets from iron plates, cables, stone bricks and (in the last two shapes) gears, with their ingredients on woven belts,
+    -- in every shape the weave has (see scripts/weave.lua), the suppliers listed in either order. Three belts need the
+    -- medium pole.
+    local woven_shapes = {
+      {
+        label = "iron on belt a, cables and bricks on belt b, two inserters on belt b",
+        counts = {a = 1, b = 2}, belts = {iron = "a", cables = "b", bricks = "b"}, eats = {"iron-plate", "copper-cable", "stone-brick"},
+      },
+      {
+        label = "iron and cables on belt a, bricks on belt b, two inserters on belt a",
+        counts = {a = 2, b = 1}, belts = {iron = "a", cables = "a", bricks = "b"}, eats = {"iron-plate", "copper-cable", "stone-brick"},
+      },
+      {
+        label = "iron, cables and bricks on a belt each",
+        counts = {a = 1, b = 1, c = 1}, belts = {iron = "a", cables = "b", bricks = "c"}, eats = {"iron-plate", "copper-cable", "stone-brick"}, medium = true,
+      },
+      {
+        label = "four ingredients, two on each of two belts",
+        counts = {a = 1, b = 2}, belts = {iron = "a", cables = "a", bricks = "b", gears = "b"},
+        eats = {"iron-plate", "copper-cable", "stone-brick", "iron-gear-wheel"},
+      },
+      {
+        label = "four ingredients on three belts",
+        counts = {a = 1, b = 1, c = 1}, belts = {iron = "a", cables = "a", bricks = "b", gears = "c"},
+        eats = {"iron-plate", "copper-cable", "stone-brick", "iron-gear-wheel"}, medium = true,
+      },
+    }
+
+    local function woven_gadgets(iron_count, brick_count, gadget_count, shape, forward)
+      local suppliers = {
+        iron = on_belt(furnaces("iron-furnace", iron_count), shape.belts.iron),
+        cables = on_belt(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)}), shape.belts.cables),
+        bricks = on_belt(furnaces("brick-furnace", brick_count), shape.belts.bricks),
+        gears = shape.belts.gears and on_belt(assemblers("gear-assembler", 1, 2, 1, {furnaces("iron-furnace", 2)}), shape.belts.gears),
+      }
+      local order = shape.belts.gears and {"iron", "cables", "bricks", "gears"} or {"iron", "cables", "bricks"}
+      local list = {}
+      for index = 1, #order do
+        list[index] = suppliers[order[forward and index or #order + 1 - index]]
+      end
+      return woven_assembler(gadget_count, shape.counts, list)
+    end
+
+    for _, shape in ipairs(woven_shapes) do
       for _, iron_count in ipairs({1, 4}) do
         for _, brick_count in ipairs({1, 3}) do
           for _, gadget_count in ipairs({1, 3}) do
             for _, forward in ipairs({true, false}) do
-              local label = string.format("%d iron and %d brick furnaces and %d gadget assemblers, %s, %s", iron_count, brick_count, gadget_count, shape.label, forward and "listed in order" or "listed backwards")
+              local label = string.format("%d iron and %d brick furnaces and %d woven gadget assemblers, %s, %s", iron_count, brick_count, gadget_count, shape.label, forward and "listed in order" or "listed backwards")
 
-              it_builds_soundly(label, function() return gadgets(iron_count, brick_count, gadget_count, shape, forward) end, "gadget", machines_eating(shape.eats))
+              it_builds_soundly(label, function() return woven_gadgets(iron_count, brick_count, gadget_count, shape, forward) end, "gadget",
+                machines_eating(shape.eats), nil, false, shape.medium and builders.medium_pole_names() or nil)
             end
           end
         end
       end
     end
 
-    -- A gadget assembler that is itself one of the suppliers of an outer one: the inner column has a belt b of its own.
+    -- Gadgets from iron plates, cables, stone bricks and (in the third shape) gears, for a final column whose second belt is
+    -- reached by long-handed inserters: the recipe's ingredients split as 1 on belt a and 2 on belt b, as 2 and 1, and as 2
+    -- and 2; the suppliers listed in either order.
+    local long_shapes = {
+      {label = "1 on belt a and 2 on belt b", on_b = {cables = true, bricks = true}, eats = {"iron-plate", "copper-cable", "stone-brick"}},
+      {label = "2 on belt a and 1 on belt b", on_b = {bricks = true}, eats = {"iron-plate", "copper-cable", "stone-brick"}},
+      {label = "2 on each belt", on_b = {bricks = true, gears = true}, eats = {"iron-plate", "copper-cable", "stone-brick", "iron-gear-wheel"}},
+    }
+
+    local function long_gadgets(iron_count, brick_count, gadget_count, shape, forward)
+      local suppliers = {
+        iron = furnaces("iron-furnace", iron_count),
+        cables = assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)}),
+        bricks = furnaces("brick-furnace", brick_count),
+        gears = assemblers("gear-assembler", 1, 2, 1, {furnaces("iron-furnace", 2)}),
+      }
+      local order = shape.on_b.gears and {"iron", "cables", "bricks", "gears"} or {"iron", "cables", "bricks"}
+      local list = {}
+      for index = 1, #order do
+        local name = order[forward and index or #order + 1 - index]
+        list[index] = shape.on_b[name] and on_belt(suppliers[name], "b") or suppliers[name]
+      end
+      return gadget_assembler(gadget_count, list)
+    end
+
+    for _, shape in ipairs(long_shapes) do
+      for _, iron_count in ipairs({1, 4}) do
+        for _, brick_count in ipairs({1, 3}) do
+          for _, gadget_count in ipairs({1, 3}) do
+            for _, forward in ipairs({true, false}) do
+              local label = string.format("%d iron and %d brick furnaces and %d long-handed gadget assemblers, %s, %s", iron_count, brick_count, gadget_count, shape.label, forward and "listed in order" or "listed backwards")
+
+              it_builds_soundly(label, function() return long_gadgets(iron_count, brick_count, gadget_count, shape, forward) end, "gadget", machines_eating(shape.eats))
+            end
+          end
+        end
+      end
+    end
+
+    -- A long-handed gadget assembler that is itself one of the suppliers of an outer one: the inner column has a belt b of its own.
     for _, iron_count in ipairs({1, 3}) do
       for _, outer_count in ipairs({1, 2}) do
         for _, inner_on_b in ipairs({true, false}) do
@@ -1285,28 +1530,28 @@ describe("rows", function()
             local inner = gadget_assembler(1, {
               furnaces("iron-furnace", 1),
               assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)}),
-              on_belt_b(furnaces("brick-furnace", 1)),
+              on_belt(furnaces("brick-furnace", 1), "b"),
             })
-            local outer_suppliers = {furnaces("iron-furnace", iron_count), inner, on_belt_b(furnaces("brick-furnace", 2))}
+            local outer_suppliers = {furnaces("iron-furnace", iron_count), inner, on_belt(furnaces("brick-furnace", 2), "b")}
             if inner_on_b then
-              on_belt_b(inner)
+              on_belt(inner, "b")
               outer_suppliers[3] = furnaces("brick-furnace", 2)
             end
             return gadget_assembler(outer_count, outer_suppliers, "outer-assembler")
           end
 
-          it_builds_soundly("a gadget inside a gadget with " .. label, nested, "outer-gadget")
+          it_builds_soundly("a long-handed gadget inside a long-handed gadget with " .. label, nested, "outer-gadget")
         end
       end
     end
 
     for _, design in ipairs(designs) do
-      it("puts a raw item alone on belt a, with the other two ingredients on belt b" .. design.suffix, function()
+      it("puts a raw item alone on belt a, with the other two ingredients on belt b, which long-handed inserters reach" .. design.suffix, function()
         -- Wood rides both lanes of belt a and has the column furthest west.
         local suppliers = {
           wood_supplier(),
-          on_belt_b(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)})),
-          on_belt_b(furnaces("brick-furnace", 1)),
+          on_belt(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)}), "b"),
+          on_belt(furnaces("brick-furnace", 1), "b"),
         }
 
         local entities, second = design.build(gadget_assembler(2, suppliers))
@@ -1316,7 +1561,49 @@ describe("rows", function()
           machines = machines_eating({"wood", "copper-cable", "stone-brick"}), raw = raw, product = "gadget",
         })))
       end)
+    end
 
+    -- A woven gadget assembler that is itself one of the suppliers of an outer one, which is woven too.
+    for _, iron_count in ipairs({1, 3}) do
+      for _, outer_count in ipairs({1, 2}) do
+        for _, inner_belt in ipairs({"a", "b"}) do
+          local label = string.format("%d iron furnaces and %d outer assemblers, the inner gadgets on belt %s", iron_count, outer_count, inner_belt)
+
+          local function nested()
+            local inner = on_belt(woven_assembler(1, {a = 1, b = 2}, {
+              furnaces("iron-furnace", 1),
+              on_belt(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)}), "b"),
+              on_belt(furnaces("brick-furnace", 1), "b"),
+            }), inner_belt)
+            local outer_belts = inner_belt == "a" and {"a", "a", "b"} or {"a", "b", "b"}
+            local outer_suppliers = {on_belt(furnaces("iron-furnace", iron_count), outer_belts[1]), inner, on_belt(furnaces("brick-furnace", 2), outer_belts[3])}
+            return woven_assembler(outer_count, inner_belt == "a" and {a = 2, b = 1} or {a = 1, b = 2}, outer_suppliers, "outer-assembler")
+          end
+
+          it_builds_soundly("a woven gadget inside a woven gadget with " .. label, nested, "outer-gadget")
+        end
+      end
+    end
+
+    for _, design in ipairs(designs) do
+      it("puts a raw item alone on belt a, with the other two ingredients on woven belt b" .. design.suffix, function()
+        -- Wood rides both lanes of belt a and has the column furthest west.
+        local suppliers = {
+          wood_supplier(),
+          on_belt(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)}), "b"),
+          on_belt(furnaces("brick-furnace", 1), "b"),
+        }
+
+        local entities, second = design.build(woven_assembler(2, {a = 1, b = 2}, suppliers))
+
+        assert.are.same({}, validator.validate(entities, catalog()))
+        assert.are.same({}, tracer.problems(entities, options_for(design, entities, second, {
+          machines = machines_eating({"wood", "copper-cable", "stone-brick"}), raw = raw, product = "gadget",
+        })))
+      end)
+    end
+
+    for _, design in ipairs(designs) do
       it("wires a tall tree from the poles of its columns" .. design.suffix, function()
         -- Six furnaces in each plate column make the columns of the transport belt tree 12 rows tall.
         local entities = design.build(underground_belts(6, 1, 1, 1, true))

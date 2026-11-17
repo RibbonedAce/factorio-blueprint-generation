@@ -21,7 +21,8 @@
 --     lane for lane, what its two input tiles bring: it keeps the lanes (not yet seen in game);
 --   * an underground belt entrance gives its exit, which stands in line with it, facing the
 --     same way, within `options.underground_reach` tiles (5 by default), what comes into it
---     from behind, lane for lane; between them anything may stand (not yet seen in game).
+--     from behind, lane for lane; between them anything may stand, a piece of an underground belt that crosses their
+--     line (faces across it) included (not yet seen in game).
 -- The problems are text. They are: a lane that carries two items, an input inserter of a machine
 -- whose inserters, all of them together, never see something it eats, an item nobody eats, a belt that carries the product together with something else, and a belt
 -- of raw items that something we made is put on; an underground belt entrance with no exit within
@@ -591,7 +592,21 @@ local function note_supplies(index)
   end
 end
 
--- The first piece of an underground belt in line with an entrance, within reach, or nil.
+-- Whether a piece of an underground belt faces across the line of another: it goes its own way, and neither is in the
+-- other's way (an underground belt passes under it).
+---@param piece table
+---@param other table
+---@return boolean
+local function crosses(piece, other)
+  local directions = defines.direction
+  local function runs_north_or_south(entity)
+    return entity.direction == directions.north or entity.direction == directions.south
+  end
+  return runs_north_or_south(piece) ~= runs_north_or_south(other)
+end
+
+-- The first piece of an underground belt in line with an entrance, within reach, or nil. A piece that crosses its line
+-- does not count (the owner's blueprint of woven belts has one sit over another's way, 2026-11-09).
 ---@param index bpgen.TraceIndex
 ---@param entrance table
 ---@return table|nil
@@ -599,7 +614,7 @@ local function first_piece_ahead(index, entrance)
   local reach = index.options.underground_reach or UNDERGROUND_REACH
   for distance = 1, reach do
     local piece = entity_beside(index, entrance, entrance.direction, distance)
-    if piece and piece.name == (index.options.underground or "underground-belt") then
+    if piece and piece.name == (index.options.underground or "underground-belt") and not crosses(piece, entrance) then
       return piece
     end
   end
