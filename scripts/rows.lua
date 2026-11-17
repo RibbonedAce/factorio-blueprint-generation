@@ -50,6 +50,11 @@
 -- the most: belt b comes up in the column west of belt a, and the long-handed inserters of the column reach it over belt a. It
 -- comes up to the first of them (`bpgen.Block.long_rows`).
 --
+-- A final column that takes a fluid (concrete eats water) has two columns for its pipes west of everything else of it: the
+-- trunk of pipes (a pipe takes it on to a pump in the corner where the belts come in, where the player brings the fluid) and
+-- the column where the underground pipes that go under the belts to the machines start (see scripts/layout.lua). Its machines take one inserter from the belt or, for
+-- more than two items, one from each of two woven belts, with belt b in the column beside the inner one.
+--
 -- A raw item that goes with a made one (wood next to cables) has no machines: its column is two
 -- wide, the belt and a spare column for the gadget of the arc before it, and its belt is the arc.
 -- See .agents/row-layout-plan.md for the reasons and the measurements.
@@ -89,13 +94,14 @@ local north, east, south = defines.direction.north, defines.direction.east, defi
 ---@field parent? bpgen.Column
 ---@field block? bpgen.Block  not for a raw item
 ---@field arc? bpgen.Arc  not for the root
----@field woven? boolean  of a final column: whether it takes from two or three woven belts (see scripts/weave.lua), which stand west of its inner column, belt b two columns and belt c four columns west of belt a
+---@field woven? boolean  of a final column: whether it takes from two or three woven belts (see scripts/weave.lua), which stand west of its inner column, belt b two columns and belt c four columns west of belt a (one column, beside a pipe: `fluid`)
+---@field fluid? boolean  of a final column: whether its machines take a fluid through a pipe in the middle row of their input side (see `bpgen.Shape.fluid_input`), with two columns for the pipes west of the belts
 ---@field belts_used? integer  of a final column: how many input belts have ingredients on them (1 for a column with a belt a only; 2 for one whose second belt is reached by long-handed inserters or woven; 3 when woven)
 ---@field has_belt_b? boolean  of a final column that is not woven: whether a second input belt stands west of belt a, for its long-handed inserters
 ---@field wide_input? boolean  of a chain: whether its first stage is built wide, with a second input belt that comes down from the band west of belt a (see `bpgen.StageRequest.wide`; `build_pure` only)
 ---@field second_leaf? bpgen.FeedLeaf  of a chain built wide: what its second input belt takes from the belts that come in
 ---@field index integer  place in the row of columns, from the west
----@field x_b? integer  tile column of belt b: west of belt a for the long-handed inserters, two columns west of it when woven
+---@field x_b? integer  tile column of belt b: west of belt a for the long-handed inserters, two columns west of it when woven (one, when it takes a fluid)
 ---@field x_c? integer  tile column of belt c, of a column that takes from three woven belts
 ---@field x0? integer  tile column of the input belt (belt a for a final column); nil for a raw item
 ---@field x_source integer  tile column of the product belt (for a raw item: of its belt)
@@ -226,6 +232,7 @@ local function final_column(stage, belt, names, is_root)
   local final = {
     kind = "final", belt = belt, fed = stage, children = belt_a_first(children), stages = {stage},
     block = layout.chain_block({stage}, names, {product_belt = is_root}), woven = stage.shape.input_belts ~= nil,
+    fluid = stage.shape.fluid_input == true,
   }
   mark_arcs(final)
   return final
@@ -266,9 +273,51 @@ end
 -- trunk and the column of the taps for two, and the two columns of belt c for three (see scripts/weave.lua).
 local WOVEN_WIDTH = {[2] = 2, [3] = 4}
 
--- Gives every column its tile columns, side by side from column `start` (0 by default). A final column with a belt b for its
--- long-handed inserters has a column of its own for it, west of belt a, and so has a chain built wide for its second belt; a
--- final column that takes from woven belts has the columns of the weave.
+-- The tile columns of the pipes of a column that takes a fluid, west of everything else of it: the trunk and the column of
+-- the underground pipes that start there. The weave of a column with a pipe has belt b's trunk alone, beside the inner column.
+local PIPE_COLUMNS = 2
+local PIPED_WEAVE_WIDTH = 1
+
+-- Where the trunks of the woven belts of a column stand, when its first tile column is `cursor`: how many columns they take,
+-- and the columns of belt b and of belt c (nil for two belts).
+---@param column bpgen.Column  a final column that takes from woven belts
+---@param cursor integer
+---@return integer width
+---@return integer x_b
+---@return integer|nil x_c
+local function woven_columns(column, cursor)
+  if column.fluid then
+    return PIPED_WEAVE_WIDTH, cursor, nil
+  end
+  local width = WOVEN_WIDTH[column.belts_used]
+  return width, cursor + width - 2, column.belts_used == 3 and cursor or nil
+end
+
+-- Gives a final column or a chain the tile columns west of its inner column, from `cursor`: the columns of its pipes, the
+-- columns of its woven belts, or the column of the belt b of its long-handed inserters (a chain built wide has one for its
+-- second belt). Returns the tile column of its inner column.
+---@param column bpgen.Column
+---@param cursor integer
+---@return integer
+local function place_beside_belt_a(column, cursor)
+  if column.fluid then
+    cursor = cursor + PIPE_COLUMNS
+  end
+  if column.woven then
+    local width
+    width, column.x_b, column.x_c = woven_columns(column, cursor)
+    return cursor + width
+  end
+  if column.has_belt_b or column.wide_input then
+    column.x_b = cursor
+    return cursor + 1
+  end
+  return cursor
+end
+
+-- Gives every column its tile columns, side by side from column `start` (0 by default): a final column that takes a fluid, from
+-- woven belts or with a belt b for its long-handed inserters has columns of its own west of belt a (see
+-- `place_beside_belt_a`).
 ---@param columns bpgen.Column[]
 ---@param start? integer
 local function place_across(columns, start)
@@ -278,17 +327,8 @@ local function place_across(columns, start)
       column.x_source = cursor + 1
       cursor = cursor + 2
     else
-      if column.woven then
-        local width = WOVEN_WIDTH[column.belts_used]
-        column.x_b = cursor + width - 2
-        column.x_c = column.belts_used == 3 and cursor or nil
-        cursor = cursor + width
-      elseif column.has_belt_b or column.wide_input then
-        column.x_b = cursor
-        cursor = cursor + 1
-      end
-      column.x0 = cursor
-      column.x_source = cursor + column.block.product_column
+      column.x0 = place_beside_belt_a(column, cursor)
+      column.x_source = column.x0 + column.block.product_column
       cursor = column.x_source + 1
     end
   end
@@ -575,16 +615,90 @@ local function add_arcs(entities, belt_name, final)
   add_risers(entities, belt_name, final)
 end
 
+-- The tiles a machine covers on a side, by the machine's name.
+---@param columns bpgen.Column[]
+---@return table<string, integer>
+local function machine_sizes(columns)
+  local sizes = {}
+  for _, column in ipairs(columns) do
+    for _, stage in ipairs(column.stages or {}) do
+      sizes[stage.machine] = stage.shape.machine_size
+    end
+  end
+  return sizes
+end
+
+-- What the bridge poles need to know of the blueprint: where they go (after its entities) and which tiles those cover.
+---@param entities bpgen.Entity[]
+---@param columns bpgen.Column[]
+---@param names bpgen.SharedNames
+---@return bpgen.PoleBridge
+local function pole_bridge(entities, columns, names)
+  local sizes = machine_sizes(columns)
+  local function size_of(entity)
+    return inputs.footprint(entity, names, sizes)
+  end
+  return {
+    entities = entities, taken = poles.taken_tiles(entities, size_of),
+    pole = names.pole, wire_distance = assert(names.pole_wire_distance, "rows: the names give no wire distance for the pole"),
+  }
+end
+
+-- The most tiles of pipe that one pump serves: a pipe system longer than that needs another pump.
+local MOST_PIPES_OF_A_PUMP = 320
+
+-- The water inlet of a final column that takes a fluid, in the corner where the belts come in (the top left): the trunk of pipes
+-- goes up from its top end to the row above the blueprint and west along it to a pump facing east, whose input, where the
+-- player brings the water, is free to the west. A pole beside the pump powers it. Returns that pole, for the wires.
+---@param entities bpgen.Entity[]
+---@param columns bpgen.Column[]
+---@param names bpgen.SharedNames
+---@return bpgen.Entity
+local function add_water_inlet(entities, columns, names)
+  local sizes = machine_sizes(columns)
+  local left, top, trunk = math.huge, math.huge, nil
+  for _, entity in ipairs(entities) do
+    local width, height = inputs.footprint(entity, names, sizes)
+    local tile = grid.top_left_tile(entity.position, width, height)
+    left, top = math.min(left, tile.x), math.min(top, tile.y)
+    if entity.name == names.pipe and (not trunk or tile.y < trunk.y) then
+      trunk = tile
+    end
+  end
+  assert(trunk and trunk.x >= left + 2, "rows: a column that takes a fluid has no pipes, or no room beside them for a pump")
+  local function add(entity)
+    entities[#entities + 1] = entity
+    entity.entity_number = #entities
+    return entity
+  end
+  local row = top - 1
+  for y = row, trunk.y - 1 do
+    add({name = names.pipe, position = grid.position(trunk.x, y), direction = north})
+  end
+  for x = left + 2, trunk.x - 1 do
+    add({name = names.pipe, position = grid.position(x, row), direction = north})
+  end
+  add({name = names.pump, position = grid.position(left, row, 2, 1), direction = east})
+  local pipes = 0
+  for _, entity in ipairs(entities) do
+    pipes = pipes + ((entity.name == names.pipe or entity.name == names.pipe_to_ground) and 1 or 0)
+  end
+  assert(pipes <= MOST_PIPES_OF_A_PUMP, "rows: the pipes of the blueprint are more than one pump serves")
+  return add({name = names.pole, position = grid.position(left, row - 1)})
+end
+
 -- Wires the poles of the columns into one network (see scripts/poles.lua).
 ---@param columns bpgen.Column[]  at least one has a pole
 ---@param bridge? bpgen.PoleBridge  to put poles between two that are further apart than a wire reaches
-local function join_poles(columns, bridge)
+---@param inlet_pole? bpgen.Entity  the pole of the pump of the water inlet, which joins them too
+local function join_poles(columns, bridge, inlet_pole)
   local groups = {}
   for _, column in ipairs(columns) do
     if column.block then
       groups[#groups + 1] = column.block.poles
     end
   end
+  groups[#groups + 1] = inlet_pole and {inlet_pole} or {}
   poles.join(groups, bridge)
 end
 
@@ -636,7 +750,8 @@ function rows.build(root, names)
   place_blocks(entities, columns, names.belt)
   add_raw_belts(entities, names.belt, runs)
   add_arcs(entities, names.belt, top)
-  join_poles(columns)
+  local inlet_pole = top.fluid and add_water_inlet(entities, columns, names) or nil
+  join_poles(columns, inlet_pole and pole_bridge(entities, columns, names) or nil, inlet_pole)
   return entities, raw_stages_of(runs)
 end
 
@@ -799,35 +914,6 @@ local function fuel_tails(columns, names, ends)
   return tails
 end
 
--- The tiles a machine covers on a side, by the machine's name.
----@param columns bpgen.Column[]
----@return table<string, integer>
-local function machine_sizes(columns)
-  local sizes = {}
-  for _, column in ipairs(columns) do
-    for _, stage in ipairs(column.stages or {}) do
-      sizes[stage.machine] = stage.shape.machine_size
-    end
-  end
-  return sizes
-end
-
--- What the bridge poles need to know of the blueprint: where they go (after its entities) and which tiles those cover.
----@param entities bpgen.Entity[]
----@param columns bpgen.Column[]
----@param names bpgen.SharedNames
----@return bpgen.PoleBridge
-local function pole_bridge(entities, columns, names)
-  local sizes = machine_sizes(columns)
-  local function size_of(entity)
-    return inputs.footprint(entity, names, sizes)
-  end
-  return {
-    entities = entities, taken = poles.taken_tiles(entities, size_of),
-    pole = names.pole, wire_distance = assert(names.pole_wire_distance, "rows: the names give no wire distance for the pole"),
-  }
-end
-
 -- The blueprint for `root` in the design that takes one belt of each material (see the top of the file and
 -- .agents/inputs-plan.md); `root` is as for `rows.build`, every stage fed raw items has its `feed`, and `names`
 -- has the splitter and the underground belt. Works for a single chain too.
@@ -859,7 +945,8 @@ function rows.build_pure(root, names, options)
   if top.kind == "final" then
     add_arcs(entities, names.belt, top)
   end
-  join_poles(columns, pole_bridge(entities, columns, names))
+  local inlet_pole = top.fluid and add_water_inlet(entities, columns, names) or nil
+  join_poles(columns, pole_bridge(entities, columns, names), inlet_pole)
   return entities, supplies
 end
 

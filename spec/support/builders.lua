@@ -33,6 +33,9 @@ builders.NAMES = {
   lamp = "small-lamp",
   splitter = "splitter",
   underground = "underground-belt",
+  pipe = "pipe",
+  pipe_to_ground = "pipe-to-ground",
+  pump = "pump",
 }
 
 -- `NAMES` with the medium electric pole in place of the small one.
@@ -134,6 +137,24 @@ function builders.underground(tile_x, tile_y, direction, kind)
   return {name = builders.NAMES.underground, position = grid.position(tile_x, tile_y), direction = direction, type = kind}
 end
 
+-- A pipe: it joins the pipes, the ends of underground pipes and the fluid connections of machines on its four sides.
+---@param tile_x number
+---@param tile_y number
+---@return table  an entity without its number yet (see `blueprint_of`)
+function builders.pipe(tile_x, tile_y)
+  return {name = builders.NAMES.pipe, position = grid.position(tile_x, tile_y), direction = defines.direction.north}
+end
+
+-- One end of an underground pipe. `direction` is the side its opening faces, where it joins an ordinary pipe or a
+-- machine; the underground pipe runs the other way, to the end that faces the opposite way.
+---@param tile_x number
+---@param tile_y number
+---@param direction defines.direction  the side of the opening
+---@return table  an entity without its number yet (see `blueprint_of`)
+function builders.pipe_to_ground(tile_x, tile_y, direction)
+  return {name = builders.NAMES.pipe_to_ground, position = grid.position(tile_x, tile_y), direction = direction}
+end
+
 -- Poles can be given another prototype name, for tests that need a second kind of pole.
 ---@param tile_x number
 ---@param tile_y number
@@ -208,6 +229,9 @@ function builders.a_catalog(options)
       wire_reach = options.medium_pole_wire_reach or builders.POLES.medium.wire_distance,
     },
     [names.lamp] = {kind = "lamp", width = 1, height = 1, needs_power = true},
+    [names.pipe] = {kind = "pipe", width = 1, height = 1},
+    [names.pipe_to_ground] = {kind = "pipe_to_ground", width = 1, height = 1, reach = 10},
+    [names.pump] = {kind = "pump", width = 2, height = 1, needs_power = true}, -- only facing east or west is used
   }
 end
 
@@ -260,7 +284,9 @@ end
 --     a_machine{crafting_speed = 1, size = 2, burns = {"chemical"}}
 -- `energy_usage` is what the machine uses while it crafts, in joules per tick; the default is 1500 (90 kW).
 -- `type` is the prototype type, "assembling-machine" unless given; a furnace is "furnace" (it picks its own recipe).
----@param options {crafting_speed: number|false, size: integer, height?: integer, burns?: string[], heat?: boolean, energy_usage?: number, type?: string}  `height` defaults to `size`; give it for a machine that is not square
+-- `fluid_input = true` gives the machine a fluid box that takes a fluid in and one that gives one out (an assembling machine 2 has
+-- both); `fluid_boxes` says the production type of each box instead ("input", "output", "input-output").
+---@param options {crafting_speed: number|false, size: integer, height?: integer, burns?: string[], heat?: boolean, energy_usage?: number, type?: string, fluid_input?: boolean, fluid_boxes?: string[]}  `height` defaults to `size`; give it for a machine that is not square; `fluid_input` gives it a fluid box that takes a fluid in; `fluid_boxes` the production types of its fluid boxes, which `fluid_input` leaves to {"input", "output"}
 ---@return table
 function builders.a_machine(options)
   return {
@@ -271,6 +297,8 @@ function builders.a_machine(options)
     burns = options.burns,
     heat = options.heat,
     energy_usage = options.energy_usage or 1500,
+    fluid_input = options.fluid_input,
+    fluid_boxes = options.fluid_boxes,
   }
 end
 
@@ -348,6 +376,14 @@ function builders.fake_prototypes(options)
     end
     return set
   end
+  -- The fluid boxes of a machine: those `fluid_boxes` names, else an input and an output when `fluid_input` is set, else none.
+  local function fluid_boxes(fields)
+    local boxes = {}
+    for _, production_type in ipairs(fields.fluid_boxes or (fields.fluid_input and {"input", "output"} or {})) do
+      boxes[#boxes + 1] = {production_type = production_type}
+    end
+    return boxes
+  end
   -- Machines run on electricity unless they burn fuel or have a source the mod does not handle.
   local function entity(name, fields)
     fields = fields or {}
@@ -367,6 +403,7 @@ function builders.fake_prototypes(options)
       tile_height = fields.height or 1,
       burner_prototype = burner and {fuel_categories = as_set(burner), effectivity = fields.effectivity or 1} or nil,
       electric_energy_source_prototype = electric and {} or nil,
+      fluidbox_prototypes = fluid_boxes(fields),
     }
   end
   local function item(name, fuel_categories, fuel_value)
@@ -388,6 +425,9 @@ function builders.fake_prototypes(options)
       supply_area_distance = medium_supply_distance or nil, max_wire_distance = medium_wire_distance or nil,
     }),
     ["small-lamp"] = entity("small-lamp"),
+    ["pipe"] = entity("pipe"),
+    ["pipe-to-ground"] = entity("pipe-to-ground"),
+    ["pump"] = entity("pump"),
   }
   for name, machine in pairs(options.machines or {}) do
     machine.is_machine = true
@@ -410,9 +450,14 @@ function builders.fake_prototypes(options)
   for _, name in ipairs(options.items or {}) do
     items[name] = items[name] or item(name)
   end
+  local fluids = {}
   for _, recipe in pairs(recipes) do
     for _, amount in ipairs(recipe.ingredients) do
-      items[amount.name] = items[amount.name] or item(amount.name)
+      if amount.type == "fluid" then
+        fluids[amount.name] = {localised_name = {"fluid-name." .. amount.name}}
+      else
+        items[amount.name] = items[amount.name] or item(amount.name)
+      end
     end
     for _, amount in ipairs(recipe.products) do
       items[amount.name] = items[amount.name] or item(amount.name)
@@ -455,7 +500,7 @@ function builders.fake_prototypes(options)
     return found
   end
 
-  return {entity = entities, item = items, get_item_filtered = get_item_filtered, get_recipe_filtered = get_recipe_filtered}
+  return {entity = entities, item = items, fluid = fluids, get_item_filtered = get_item_filtered, get_recipe_filtered = get_recipe_filtered}
 end
 
 -- A stand-in for a force, which tells the generator which recipes the player can use:

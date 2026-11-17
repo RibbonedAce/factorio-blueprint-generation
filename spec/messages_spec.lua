@@ -48,6 +48,9 @@ local function every_message()
     chain_fuel = messages.chain_fuel("iron-plate"),
     fuel_needs_inputs = messages.fuel_needs_inputs("steel-plate"),
     belts_need_weave = messages.belts_need_weave("inserter"),
+    fluid_last_step = messages.fluid_last_step("concrete"),
+    fluid_unsupported = messages.fluid_unsupported("concrete"),
+    fluid_needs_weave = messages.fluid_needs_weave("concrete"),
     fuel_mismatch = messages.fuel_mismatch({"entity-name.stone-furnace"}),
     locked = messages.locked("iron-plate"),
     rate_too_high = messages.rate_too_high(450),
@@ -140,6 +143,14 @@ describe("messages", function()
 
     it("gives the plain name of an item the game does not have", function()
       assert.are.equal("mystery-item", messages.item("mystery-item"))
+    end)
+
+    it("gives the localised name of a fluid, which is no item", function()
+      _G.prototypes = builders.fake_prototypes{
+        recipes = {concrete = builders.a_recipe{energy = 10, ingredients = {builders.fluid_of(100, "water")}, products = {builders.amount_of(10, "concrete")}}},
+      }
+
+      assert.are.same({"fluid-name.water"}, messages.item("water"))
     end)
   end)
 

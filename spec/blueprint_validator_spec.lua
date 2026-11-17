@@ -19,6 +19,8 @@ local belt, furnace, inserter, pole = builders.belt, builders.furnace, builders.
 local long_inserter = builders.long_inserter
 local blueprint_of, wire_between, a_catalog = builders.blueprint_of, builders.wire_between, builders.a_catalog
 local west, north = defines.direction.west, defines.direction.north
+local east = defines.direction.east
+local pipe, pipe_to_ground = builders.pipe, builders.pipe_to_ground
 
 describe("blueprint validator", function()
   describe("a blueprint that is fine", function()
@@ -390,6 +392,191 @@ describe("blueprint validator", function()
       local problems = validator.validate(entities, a_catalog{})
 
       assert.has_item_containing("copper connector", problems)
+    end)
+  end)
+
+  describe("fluids, which machines take in through a pipe", function()
+    -- A 3 x 3 assembling machine 2 at tile (5, 0) faces west, so its fluid connection is the tile (4, 1) beside the middle of its
+    -- west side. An underground pipe from there runs west under the tiles 2 and 3, to its other end at (1, 1), and an ordinary
+    -- pipe at (0, 1) is where the fluid comes in.
+    local function catalog_with_machine()
+      local catalog = a_catalog{}
+      catalog["assembling-machine-2"] = {kind = "machine", width = 3, height = 3, fluid_input = true}
+      return catalog
+    end
+
+    local function machine(tile_x, tile_y)
+      return {name = "assembling-machine-2", position = require("scripts.grid").position(tile_x, tile_y, 3, 3), direction = west}
+    end
+
+    it("reports no problems when an underground pipe joins the fluid connection of a machine to a pipe that is open", function()
+      local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west), pipe(0, 1))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports a machine when nothing stands at its fluid connection", function()
+      local entities = blueprint_of(machine(5, 0), pipe(0, 1))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("has no pipe at its fluid connection", problems)
+    end)
+
+    it("reports a machine when the underground pipe at its fluid connection opens away from it", function()
+      local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, west), pipe_to_ground(1, 1, east), pipe(0, 1))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("has no pipe at its fluid connection", problems)
+    end)
+
+    it("reports an end of an underground pipe when no other end is behind it", function()
+      local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, east), pipe(3, 1))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("no other end behind it within reach", problems)
+    end)
+
+    it("reports an end of an underground pipe when the other end is further away than it reaches", function()
+      local catalog = catalog_with_machine()
+      catalog["pipe-to-ground"].reach = 2
+      local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west), pipe(0, 1))
+
+      local problems = validator.validate(entities, catalog)
+
+      assert.has_item_containing("no other end behind it within reach", problems)
+    end)
+
+    it("reports an end of an underground pipe when the end behind it opens the same way, so that the two do not join", function()
+      local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, east), pipe(0, 1))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("no other end behind it within reach", problems)
+    end)
+
+    it("reports a pipe that no machine takes fluid from", function()
+      local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west), pipe(0, 1), pipe(9, 9))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("belongs to a network of pipes that no machine takes its fluid from", problems)
+    end)
+
+    it("does not join an ordinary pipe to the side of an underground pipe, which opens on one side only", function()
+      local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west), pipe(0, 1), pipe(1, 0))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("belongs to a network of pipes that no machine takes its fluid from", problems)
+    end)
+
+    it("reports two machines when their pipes are two networks", function()
+      local entities = blueprint_of(
+        machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west), pipe(0, 1),
+        machine(5, 6), pipe_to_ground(4, 7, east), pipe_to_ground(1, 7, west), pipe(0, 7))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("takes its fluid from a network of pipes other than the first machine's", problems)
+    end)
+
+    it("reports no problems when two machines take their fluid from one pipe that runs along them", function()
+      local entities = blueprint_of(
+        machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west),
+        machine(5, 3), pipe_to_ground(4, 4, east), pipe_to_ground(1, 4, west),
+        pipe(0, 1), pipe(0, 2), pipe(0, 3), pipe(0, 4))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports pipes when nothing is free beside them to bring the fluid to", function()
+      local entities = blueprint_of(
+        machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west), pipe(0, 1),
+        belt(-1, 1), belt(0, 0), belt(0, 2))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("no open end to bring the fluid to", problems)
+    end)
+
+    it("expects a pipe at a machine of a kind that takes a fluid only for some recipes when its recipe is one of them", function()
+      local catalog = catalog_with_machine()
+      catalog["assembling-machine-2"].fluid_input = {concrete = true}
+      local wet = machine(5, 0)
+      wet.recipe = "concrete"
+      local entities = blueprint_of(wet, pipe(0, 1))
+
+      local problems = validator.validate(entities, catalog)
+
+      assert.has_item_containing("has no pipe at its fluid connection", problems)
+    end)
+
+    it("expects no pipe at a machine of a kind that takes a fluid only for some recipes when its recipe is another", function()
+      local catalog = catalog_with_machine()
+      catalog["assembling-machine-2"].fluid_input = {concrete = true}
+      local dry = machine(5, 0)
+      dry.recipe = "iron-stick"
+      local entities = blueprint_of(dry)
+
+      local problems = validator.validate(entities, catalog)
+
+      assert.are.same({}, problems)
+    end)
+
+    it("expects no pipe at a machine of a kind that takes a fluid only for some recipes when it has no recipe", function()
+      local catalog = catalog_with_machine()
+      catalog["assembling-machine-2"].fluid_input = {concrete = true}
+      local entities = blueprint_of(machine(5, 0))
+
+      local problems = validator.validate(entities, catalog)
+
+      assert.are.same({}, problems)
+    end)
+
+    -- A pump is two tiles long and joins the pipe beside the end it faces along: here it covers the tiles (-2, 1) and (-1, 1) and
+    -- faces east, so its output is beside the pipe at (0, 1) and its input, (-3, 1), is where the fluid comes in. The pole at
+    -- (-1, 0) powers it.
+    local function pump(tile_x, tile_y, direction)
+      return {name = builders.NAMES.pump, position = require("scripts.grid").position(tile_x, tile_y, 2, 1), direction = direction}
+    end
+
+    it("reports no problems when a pump faces the trunk of pipes, powered by a pole", function()
+      local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west), pipe(0, 1), pump(-2, 1, east), pole(-1, 0))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports a pump that no pipe is beside, so that it joins nothing", function()
+      local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west), pipe(0, 1), pump(-5, 1, east), pole(-4, 0))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("belongs to a network of pipes that no machine takes its fluid from", problems)
+    end)
+
+    it("reports a pump that no pole powers", function()
+      local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west), pipe(0, 1), pump(-2, 1, east))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("outside every pole's supply area", problems)
+    end)
+
+    it("reports nothing about pipes when no machine takes a fluid", function()
+      local entities = blueprint_of(pipe(0, 0), pipe(1, 0))
+
+      local problems = validator.validate(entities, a_catalog{})
+
+      assert.are.same({}, problems)
     end)
   end)
 end)

@@ -30,13 +30,13 @@ function messages.number(value)
   return (string.format("%.2f", value):gsub("%.?0+$", ""))
 end
 
--- The localised name of an item. An item the game does not have (another mod could have
--- removed one the config names) is shown by its plain name.
+-- The localised name of an item, or of a fluid (water is a raw "item" of a recipe that takes it). One the game does not have
+-- (another mod could have removed one the config names) is shown by its plain name.
 ---@param item_name string
 ---@return LocalisedString
 function messages.item(item_name)
-  local item = prototypes.item[item_name]
-  return item and item.localised_name or item_name
+  local prototype = prototypes.item[item_name] or prototypes.fluid[item_name]
+  return prototype and prototype.localised_name or item_name
 end
 
 -- The window ---------------------------------------------------------------
@@ -165,6 +165,30 @@ end
 ---@return LocalisedString
 function messages.belts_need_weave(item_name)
   return text("error-belts-need-weave", messages.item(item_name))
+end
+
+-- Why a step that takes a fluid cannot be made where it stands: the pipes come to the last step of the blueprint only, and that
+-- step has to take two or more ingredients from other steps or belts.
+---@param item_name string  the item the step makes
+---@return LocalisedString
+function messages.fluid_last_step(item_name)
+  return text("error-fluid-last-step", messages.item(item_name))
+end
+
+-- Why a step that takes a fluid cannot be made with the machine it has: its recipe takes more than one fluid or more than four
+-- items, or the machine is not a 3 x 3 machine with a fluid input.
+---@param item_name string  the item the step makes
+---@return LocalisedString
+function messages.fluid_unsupported(item_name)
+  return text("error-fluid-unsupported", messages.item(item_name))
+end
+
+-- Why a step that takes a fluid and more than two items cannot be made: its machines take the items from two woven belts,
+-- which need the splitters and underground belts of the blueprint that brings in one belt of each material.
+---@param item_name string  the item the step makes
+---@return LocalisedString
+function messages.fluid_needs_weave(item_name)
+  return text("error-fluid-needs-weave", messages.item(item_name))
 end
 
 ---@param max_rate number  the most one blueprint can make a minute

@@ -14,6 +14,7 @@ local validator = require("spec.support.blueprint_validator")
 
 local NAMES = builders.NAMES
 local north, east, south = defines.direction.north, defines.direction.east, defines.direction.south
+local west = defines.direction.west
 
 -- The most tiles the underground belt spans in the design that brings in one belt of each material (the basic one's).
 local UNDERGROUND_REACH = 5
@@ -78,6 +79,16 @@ local function woven_assembler(count, counts, suppliers, machine)
   }
 end
 
+-- An assembler whose machines take a fluid through a pipe in the middle row of their input side (see scripts/layout.lua): from one
+-- belt with `inserters` inserters (belts nil), or with one inserter on each of two woven belts (`belts` {a = 1, b = 1}).
+local function fluid_assembler(machine, count, inserters, belts, suppliers)
+  return {
+    machine_count = count, machine = machine,
+    shape = {machine_size = 3, input_inserters = inserters, input_belts = belts, output_inserters = 1, fluid_input = true},
+    suppliers = suppliers,
+  }
+end
+
 -- An assembler whose machines each have a plain inserter and a long-handed one (in the row under it), for a blueprint that
 -- cannot weave its belts. The plain inserter takes from belt a, the input belt next to the inserters; the long-handed one
 -- from belt b, one column further west. `machine` says which assembler it is, for the tracer.
@@ -97,6 +108,17 @@ end
 
 local function tile_of(entity, size)
   return grid.top_left_tile(entity.position, size, size)
+end
+
+-- The entities that have the name.
+local function entities_named(entities, name)
+  local found = {}
+  for _, entity in ipairs(entities) do
+    if entity.name == name then
+      found[#found + 1] = entity
+    end
+  end
+  return found
 end
 
 -- How many entities have the name.
@@ -125,6 +147,19 @@ local function belt_rows(entities, column)
   for _, entity in ipairs(entities) do
     local tile = tile_of(entity, 1)
     if entity.name == NAMES.belt and tile.x == column then
+      found[#found + 1] = tile.y
+    end
+  end
+  table.sort(found)
+  return found
+end
+
+-- The rows of the entities of one name in one tile column, in order.
+local function rows_of(entities, name, column)
+  local found = {}
+  for _, entity in ipairs(entities) do
+    local tile = tile_of(entity, 1)
+    if entity.name == name and tile.x == column then
       found[#found + 1] = tile.y
     end
   end
@@ -525,6 +560,114 @@ describe("rows", function()
       local suppliers = {furnaces("iron-furnace", 1), on_belt(furnaces("brick-furnace", 1), "b"), on_belt(furnaces("copper-furnace", 1), "c")}
 
       assert.has_error(function() rows.build(woven_assembler(2, {a = 1, b = 1, c = 1}, suppliers), NAMES) end)
+    end)
+  end)
+
+  describe("a final column that takes a fluid, with the pipes of its machines west of its belts", function()
+    -- Concrete: iron sticks (an assembler fed by an iron furnace) and bricks (a furnace) on belt a, to machines that each have a
+    -- pipe in the middle row of their input side (see scripts/layout.lua). The column has two columns more west of belt a: the one where
+    -- the underground pipes start (W, which open west; E, beside the machines, opens east) and, one further west, the trunk of pipes
+    -- (=), whose top end is open, where the player brings the water. With more than two items, belt b has its trunk in the column
+    -- beside the inner one, and the tunnel and the trunk of pipes are west of it. Pictures: C the machines, x from 0.
+    local concrete_machines = {["concrete-assembler"] = {size = 3, glyph = "C"}, ["gadget-assembler"] = {size = 3, glyph = "G"}}
+
+    local function concrete_tree(count, inserters)
+      local sticks = assemblers("stick-assembler", 1, 1, 1, {furnaces("iron-furnace", 1)})
+      return fluid_assembler("concrete-assembler", count, inserters or 1, nil, {sticks, furnaces("brick-furnace", 1)})
+    end
+
+    local function drawn(entities, first_column, last_column, last_row)
+      return picture.draw(entities, concrete_machines, first_column, 0, last_column, last_row)
+    end
+
+    it("draws one belt, one inserter, two machines in the original design: the pipes, then belt a, which comes up from the arc of the bricks", function()
+      local entities = rows.build(concrete_tree(2), NAMES)
+
+      assert.are.same({
+        ".=.^}CCC}v",
+        "v=w^eCCC+v",
+        "v=+^.CCC.v",
+        "v=.^.CCC.v",
+        "v=w^eCCC+v",
+        "v.+^}CCC}v",
+        "v..^......",
+        ">>>^......",
+      }, drawn(entities, 17, 26, 7))
+    end)
+
+    it("draws two belts, two machines in the original design: belt b makes a detour for the rows of each pair of inserters", function()
+      local woven = fluid_assembler("gadget-assembler", 2, 2, {a = 1, b = 1}, {
+        furnaces("iron-furnace", 1),
+        on_belt(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 1)}), "b"),
+        on_belt(furnaces("brick-furnace", 1), "b"),
+      })
+      local entities = rows.build(woven, NAMES)
+
+      assert.are.same({
+        ".=..+......",
+        "v=..U}GGG}v",
+        "v=w..eGGG+v",
+        "v=.^<}GGG.v",
+        "v=.>^}GGG.v",
+        "v=w^+eGGG+v",
+        "v..^N}GGG}v",
+        "v..^^......",
+        ">>>^^......",
+      }, drawn(entities, 23, 33, 8))
+    end)
+
+    local designs = {
+      {label = "the original design", build = function(root) return rows.build(root, NAMES) end},
+      {label = "the design with one belt of each material", build = function(root) return (build_pure(root)) end},
+    }
+
+    for _, design in ipairs(designs) do
+      describe("one belt, two machines, in " .. design.label, function()
+        local entities = design.build(concrete_tree(2))
+        -- Belt a stands two columns east of the trunk of pipes: the machine has its inserters in the column before it, and the
+        -- inserter column and the belt are the first two columns before that.
+        local machine_column = tile_of(entities_named(entities, "concrete-assembler")[1], 3).x
+        local belt_column = machine_column - 2
+
+        it("stands the trunk of pipes two columns west of belt a, from the row above the blueprint to the middle row of its last machine", function()
+          assert.are.same({-1, 0, 1, 2, 3, 4}, rows_of(entities, NAMES.pipe, belt_column - 2))
+        end)
+
+        local function belts_left()
+          local left = math.huge
+          for _, belt in ipairs(entities_named(entities, NAMES.belt)) do
+            left = math.min(left, tile_of(belt, 1).x)
+          end
+          return left
+        end
+
+        it("puts a pump in the corner where the belts come in, in the row above them, facing east", function()
+          local pump = entities_named(entities, NAMES.pump)[1]
+
+          assert.are.same({belts_left(), -1 + 0.5, east}, {pump.position.x - 1, pump.position.y, pump.direction})
+        end)
+
+        it("joins the pump to the trunk with pipes along the row above the blueprint, and powers it with a pole above it", function()
+          assert.are.same({true, true}, {entity_at(entities, NAMES.pipe, belts_left() + 2, -1, 1) ~= nil, entity_at(entities, NAMES.pole, belts_left(), -2, 1) ~= nil})
+        end)
+
+        it("faces the machines west", function()
+          assert.are.equal(west, entity_at(entities, "concrete-assembler", machine_column, 0, 3).direction)
+        end)
+
+        it("runs belt a north in the column between the tunnel and the inserters, up to the first machine", function()
+          assert.are.equal(north, entity_at(entities, NAMES.belt, belt_column, 0, 1).direction)
+        end)
+      end)
+    end
+
+    it("stands the machines two columns further east than the same column without a fluid, for the pipes", function()
+      local with_fluid = rows.build(concrete_tree(2), NAMES)
+      local plain_stage = concrete_tree(2)
+      plain_stage.shape.fluid_input = nil
+      local without_fluid = rows.build(plain_stage, NAMES)
+
+      assert.are.equal(2, tile_of(entities_named(with_fluid, "concrete-assembler")[1], 3).x - tile_of(entities_named(without_fluid, "concrete-assembler")[1], 3).x)
     end)
   end)
 
@@ -1239,13 +1382,17 @@ describe("rows", function()
       ["armor-assembler"] = {size = 3, eats = {"copper-plate", "steel-plate"}, makes = "heavy-armor"},
       ["gadget-assembler"] = {size = 3, eats = {"iron-plate", "copper-cable", "stone-brick"}, makes = "gadget"},
       ["outer-assembler"] = {size = 3, eats = {"iron-plate", "gadget", "stone-brick"}, makes = "outer-gadget"},
+      ["stick-assembler"] = {size = 3, eats = {"iron-plate"}, makes = "iron-stick"},
+      ["concrete-assembler"] = {size = 3, eats = {"iron-stick", "stone-brick"}, makes = "concrete", fluid_input = true},
+      ["fluid-gadget-assembler"] = {size = 3, eats = {"iron-plate", "copper-cable", "stone-brick"}, makes = "fluid-gadget", fluid_input = true},
+      ["ore-concrete-assembler"] = {size = 3, eats = {"wood", "stone-brick"}, makes = "concrete", fluid_input = true}, -- a raw item (wood here) next to the bricks
     }
     local raw = {["iron-furnace"] = true, ["copper-furnace"] = true, ["brick-furnace"] = true}
 
     local function catalog()
       local entries = builders.a_catalog{pole_supply_radius = 2.5, pole_wire_reach = 7.5}
       for name, machine in pairs(machines) do
-        entries[name] = {kind = "machine", width = machine.size, height = machine.size, needs_power = machine.size == 3}
+        entries[name] = {kind = "machine", width = machine.size, height = machine.size, needs_power = machine.size == 3, fluid_input = machine.fluid_input}
       end
       return entries
     end
@@ -1451,7 +1598,8 @@ describe("rows", function()
       },
     }
 
-    local function woven_gadgets(iron_count, brick_count, gadget_count, shape, forward)
+    -- The columns that make the ingredients of the gadgets, each on the belt `shape` says, listed in the recipe's order or backwards.
+    local function gadget_suppliers(iron_count, brick_count, shape, forward)
       local suppliers = {
         iron = on_belt(furnaces("iron-furnace", iron_count), shape.belts.iron),
         cables = on_belt(assemblers("cable-assembler", 1, 1, 2, {furnaces("copper-furnace", 2)}), shape.belts.cables),
@@ -1463,7 +1611,11 @@ describe("rows", function()
       for index = 1, #order do
         list[index] = suppliers[order[forward and index or #order + 1 - index]]
       end
-      return woven_assembler(gadget_count, shape.counts, list)
+      return list
+    end
+
+    local function woven_gadgets(iron_count, brick_count, gadget_count, shape, forward)
+      return woven_assembler(gadget_count, shape.counts, gadget_suppliers(iron_count, brick_count, shape, forward))
     end
 
     for _, shape in ipairs(woven_shapes) do
@@ -1475,6 +1627,83 @@ describe("rows", function()
 
               it_builds_soundly(label, function() return woven_gadgets(iron_count, brick_count, gadget_count, shape, forward) end, "gadget",
                 machines_eating(shape.eats), nil, false, shape.medium and builders.medium_pole_names() or nil)
+            end
+          end
+        end
+      end
+    end
+
+    -- Concrete from iron sticks and bricks to machines that take a fluid, with one belt and with one or two inserters, in either
+    -- order of its suppliers, with the small and the medium pole.
+    local function concrete(brick_count, count, inserters, forward)
+      local sticks = assemblers("stick-assembler", 1, 1, 1, {furnaces("iron-furnace", 1)})
+      local bricks = furnaces("brick-furnace", brick_count)
+      return fluid_assembler("concrete-assembler", count, inserters, nil, forward and {sticks, bricks} or {bricks, sticks})
+    end
+
+    for _, brick_count in ipairs({1, 3}) do
+      for _, count in ipairs({1, 2, 5, 8}) do
+        for _, inserters in ipairs({1, 2}) do
+          for _, forward in ipairs({true, false}) do
+            for _, poles in ipairs({{"small", NAMES}, {"medium", builders.medium_pole_names()}}) do
+              local label = string.format("%d brick furnaces and %d concrete assemblers with %d inserter(s), %s first, the %s pole", brick_count, count, inserters, forward and "sticks" or "bricks", poles[1])
+
+              it_builds_soundly(label, function() return concrete(brick_count, count, inserters, forward) end, "concrete", nil, nil, false, poles[2])
+            end
+          end
+        end
+      end
+    end
+
+    -- Concrete as the game has it: bricks and a raw item (wood stands for the iron ore) to machines that take a fluid, in either order.
+    local function ore_concrete(brick_count, count, inserters, forward)
+      local bricks = furnaces("brick-furnace", brick_count)
+      return fluid_assembler("ore-concrete-assembler", count, inserters, nil, forward and {bricks, wood_supplier()} or {wood_supplier(), bricks})
+    end
+
+    for _, brick_count in ipairs({1, 3}) do
+      for _, count in ipairs({1, 2, 5}) do
+        for _, inserters in ipairs({1, 2}) do
+          for _, forward in ipairs({true, false}) do
+            for _, poles in ipairs({{"small", NAMES}, {"medium", builders.medium_pole_names()}}) do
+              local label = string.format("%d brick furnaces and %d concrete assemblers with %d inserter(s) and a raw item, %s first, the %s pole", brick_count, count, inserters, forward and "bricks" or "the raw item", poles[1])
+
+              it_builds_soundly(label, function() return ore_concrete(brick_count, count, inserters, forward) end, "concrete", nil, nil, false, poles[2])
+            end
+          end
+        end
+      end
+    end
+
+    -- Gadgets that take a fluid too: three or four items on two woven belts, one inserter on each, the suppliers listed in either order.
+    local fluid_shapes = {
+      {
+        label = "iron on belt a, cables and bricks on belt b",
+        counts = {a = 1, b = 1}, belts = {iron = "a", cables = "b", bricks = "b"}, eats = {"iron-plate", "copper-cable", "stone-brick"},
+      },
+      {
+        label = "four items, two on each belt",
+        counts = {a = 1, b = 1}, belts = {iron = "a", cables = "a", bricks = "b", gears = "b"},
+        eats = {"iron-plate", "copper-cable", "stone-brick", "iron-gear-wheel"},
+      },
+    }
+
+    for _, shape in ipairs(fluid_shapes) do
+      for _, iron_count in ipairs({1, 4}) do
+        for _, gadget_count in ipairs({1, 2, 3, 6}) do
+          for _, forward in ipairs({true, false}) do
+            for _, poles in ipairs({{"small", NAMES}, {"medium", builders.medium_pole_names()}}) do
+              local label = string.format("%d iron furnaces and %d gadget assemblers with a pipe, %s, %s, the %s pole", iron_count, gadget_count, shape.label, forward and "listed in order" or "listed backwards", poles[1])
+              local function tree()
+                return fluid_assembler("fluid-gadget-assembler", gadget_count, 2, shape.counts, gadget_suppliers(iron_count, 1, shape, forward))
+              end
+              local eating = {}
+              for name, machine in pairs(machines) do
+                eating[name] = machine
+              end
+              eating["fluid-gadget-assembler"] = {size = 3, eats = shape.eats, makes = "fluid-gadget", fluid_input = true}
+
+              it_builds_soundly(label, tree, "fluid-gadget", eating, nil, false, poles[2])
             end
           end
         end

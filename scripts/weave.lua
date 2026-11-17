@@ -49,6 +49,21 @@
 -- The tile columns are fixed, and so are the rows each belt shows, for a given number of inserters on each belt: the patterns
 -- are drawn in `spec/weave_spec.lua`. The pattern asks for belt a to go under up to five tiles, and for poles that reach three
 -- rows when the three belts have one inserter each (the tiles that stay free are few).
+--
+-- A machine that takes a fluid has a pipe in the middle row of its input side (an underground pipe that comes in under the
+-- belts), so its two inserters stand in the top and the bottom row: the second pattern, `weave.plan_with_pipes`, for two belts,
+-- one inserter on each. Belt b has no splitter and no taps there: all of it goes through the inner column for the rows its
+-- inserters take from, in a detour made of curves (the trunk tile turns east, the inner column goes on for a tile, turns west
+-- and goes back into the trunk), which keeps the lanes. The poles stand in the free tiles of the inner column. The pattern is the
+-- one of the owner's blueprint; two machines of it, with the belts running down (it repeats for the next two):
+--
+--   -1 0 1       the tile columns, the trunk of b, the inner column, the inserters
+--    .  n }  a   row 0: belt a comes down into an entrance, the inserter takes from it
+--    .  . .      row 1: the middle row of the machine, where its pipe is; a pole may stand in the inner column
+--    >  v }  b   row 2: belt b turns east into the inner column
+--    v  < }  b   row 3: and back west into the trunk; the second inserter takes from it
+--    v  . .      row 4: (the trunk of b goes on)
+--    .  u }  a   row 5: belt a comes up out of its hop of five tiles, under belt b
 
 local weave = {}
 
@@ -58,6 +73,9 @@ weave.TAPS = -1
 weave.TRUNK_B = -2
 weave.UNDER_C = -3
 weave.TRUNK_C = -4
+
+-- The trunk of belt b in the pattern for machines with a pipe, which has no taps column: next to the inner column.
+weave.NEAR_TRUNK_B = -1
 
 -- The most tiles from an entrance of belt a to its exit: what a basic underground belt spans.
 weave.REACH = 5
@@ -78,16 +96,17 @@ local PATTERNS = {
 ---@field column integer  from the inner column, west negative (the west tile of a splitter, which is two tiles wide)
 ---@field row integer  from 0, the row of the first inserter, in the way the belts run
 ---@field kind "belt"|"entrance"|"exit"|"splitter"
----@field way "flow"|"east"  the way it faces: the way the belts run, or east, into the inserter column
+---@field way "flow"|"east"|"west"  the way it faces: the way the belts run, east, into the inserter column, or west, out of it
 
 -- What the pattern is for one column.
 ---@class bpgen.WeavePlan
----@field kind "abc"|"aba"|"bba"
+---@field kind "abc"|"aba"|"bba"|"pipes"
+---@field pole_column integer  the tile column of the free tiles the poles may take, from the inner column: the taps column, or the inner column for `plan_with_pipes`
 ---@field rows table<integer, "a"|"b"|"c">  the belt each row of the machines shows, from row 0
 ---@field row_count integer  how many rows the machines take
 ---@field tiles bpgen.WeaveTile[]
 ---@field inserters {row: integer, belt: "a"|"b"|"c"}[]  where the inserters are, with the belt each takes from
----@field free_taps integer[]  the rows where the taps column holds nothing, which poles may take, from the first row up
+---@field free_taps integer[]  the rows where the column of the poles holds nothing, which poles may take, from the first row up
 ---@field first_row integer  the first row of any tile, which is -1 when belt a or a tap has to start before row 0
 ---@field starts table<"a"|"b"|"c", integer>  the row of the first tile of each belt, where the belt that brings it ends
 
@@ -315,7 +334,7 @@ function weave.plan(counts, machine_count)
   local row_count = machine_count * weave.MACHINE_SIZE
   local rows = rows_of(kind, machine_count)
   ---@type bpgen.WeavePlan
-  local plan = {kind = kind, rows = rows, row_count = row_count, tiles = {}, inserters = {}, free_taps = {}, first_row = 0, starts = {}}
+  local plan = {kind = kind, pole_column = weave.TAPS, rows = rows, row_count = row_count, tiles = {}, inserters = {}, free_taps = {}, first_row = 0, starts = {}}
   add_belt_a(plan.tiles, rows, row_count)
   for _, belt in ipairs({"b", "c"}) do
     for _, run in ipairs(runs_of(rows, row_count, belt)) do
@@ -335,23 +354,146 @@ function weave.plan(counts, machine_count)
   return plan
 end
 
--- The rows of the poles that power every inserter, in the free tiles of the taps column: from the first row that no pole
--- powers, the last free tile that reaches it, so as few as will do. A pole powers the rows `reach` away from it either way
--- (the inserters are two tiles from the taps column, which both poles reach).
+-- The pattern for machines with a pipe in the middle row of their input side (see the diagram above), two belts, one inserter
+-- each. Which belt a row shows: the first machine has belt a in its top row, where belt a starts (the tile of a belt that comes
+-- up from the arcs), and belt b in its bottom row, the next machine the other way round, and so on, so that two machines side
+-- by side show the same belt where they meet. The middle row of the first machine is free, for a pole that reaches its inserters.
+---@param machine_count integer
+---@return table<integer, "a"|"b">
+local function rows_with_pipes(machine_count)
+  local rows = {}
+  for machine = 0, machine_count - 1 do
+    local top, bottom = "a", "b"
+    if machine % 2 == 1 then
+      top, bottom = "b", "a"
+    end
+    rows[machine * weave.MACHINE_SIZE] = top
+    rows[machine * weave.MACHINE_SIZE + 2] = bottom
+  end
+  return rows
+end
+
+-- The tiles of belt b: for every run of rows that show it, which are two (the bottom row of a machine and the top row of the
+-- next) or one (the last machine of an odd number), a detour of two rows, since the belt goes in and comes back out: in the
+-- inner column a tile that runs on and, in the second row, one that turns west (a run of one row goes on into the middle row of
+-- its machine, or a row past the last); in the trunk (column -1) a tile that turns east in the first row and plain belt down to
+-- the first row of the next run.
 ---@param plan bpgen.WeavePlan
+---@param rows table<integer, string>
+---@param runs {first: integer, length: integer}[]
+local function add_detours_of_b(plan, rows, runs)
+  local tiles = plan.tiles
+  for index, run in ipairs(runs) do
+    local second = run.first + 1
+    assert(rows[second] == nil or rows[second] == "b", "weave: the detour of belt b would run into a row of belt a")
+    tile(tiles, weave.INNER, run.first, "belt", "flow")
+    tile(tiles, weave.INNER, second, "belt", "west")
+    tile(tiles, weave.NEAR_TRUNK_B, run.first, "belt", "east")
+    local next_run = runs[index + 1]
+    for row = second, next_run and next_run.first - 1 or second do
+      tile(tiles, weave.NEAR_TRUNK_B, row, "belt", "flow")
+    end
+  end
+  plan.starts.b = runs[1].first
+end
+
+-- The rows where the inner column holds nothing, from the first tile of belt a (the belt that brings it comes up through the
+-- rows before) to the row after the last of the machines.
+---@param tiles bpgen.WeaveTile[]
+---@param first_row integer  the row of the first tile of belt a
+---@param row_count integer
+---@return integer[]
+local function free_inner_rows(tiles, first_row, row_count)
+  local taken = {}
+  for _, entry in ipairs(tiles) do
+    if entry.column == weave.INNER then
+      taken[entry.row] = true
+    end
+  end
+  local free = {}
+  for row = first_row, row_count do
+    if not taken[row] then
+      free[#free + 1] = row
+    end
+  end
+  return free
+end
+
+---@param rows table<integer, "a"|"b">
+---@param machine_count integer
+---@return {row: integer, belt: "a"|"b"}[]
+local function inserters_with_pipes(rows, machine_count)
+  local inserters = {}
+  for machine = 0, machine_count - 1 do
+    for _, step in ipairs({0, 2}) do
+      local row = machine * weave.MACHINE_SIZE + step
+      inserters[#inserters + 1] = {row = row, belt = rows[row]}
+    end
+  end
+  return inserters
+end
+
+-- The pattern for `machine_count` machines with a pipe in the middle of their input side: two belts, one inserter on each.
+-- Belt b takes the trunk in column -1, with no splitters; the poles stand in the free tiles of the inner column, from the first
+-- tile of belt a to one row past the machines. Belt a starts in row 0, and nothing stands before it.
+---@param machine_count integer  at least 1
+---@return bpgen.WeavePlan
+function weave.plan_with_pipes(machine_count)
+  local row_count = machine_count * weave.MACHINE_SIZE
+  local rows = rows_with_pipes(machine_count)
+  ---@type bpgen.WeavePlan
+  local plan = {kind = "pipes", pole_column = weave.INNER, rows = rows, row_count = row_count, tiles = {}, inserters = {}, free_taps = {}, first_row = 0, starts = {}}
+  add_belt_a(plan.tiles, rows, row_count)
+  add_detours_of_b(plan, rows, runs_of(rows, row_count, "b"))
+  plan.starts.a = 0
+  plan.inserters = inserters_with_pipes(rows, machine_count)
+  plan.free_taps = free_inner_rows(plan.tiles, plan.starts.a, row_count)
+  return plan
+end
+
+-- The last of the free tiles that reaches `row` (a pole powers the rows `reach` away from it either way) and lies no further
+-- down than `lowest`, or nil.
+---@param free_taps integer[]  ascending
+---@param row integer
+---@param reach integer
+---@param lowest number
+---@return integer|nil
+local function last_free_tile(free_taps, row, reach, lowest)
+  local best
+  for _, free in ipairs(free_taps) do
+    if free >= row - reach and free <= math.min(row + reach, lowest) then
+      best = free
+    end
+  end
+  return best
+end
+
+---@param row integer
+---@param reach integer
+---@param longest_wire number|nil
+---@return string
+local function unreached_message(row, reach, longest_wire)
+  local near = longest_wire and (" within " .. longest_wire .. " tiles of the pole before it") or ""
+  return "weave: no free tile beside the belts reaches the inserter in row " .. row .. near .. ": the pole reaches " .. reach .. " rows"
+end
+
+-- The rows of the poles that power every inserter, in the free tiles of the column of the poles: from the first row that no
+-- pole powers, the last free tile that reaches it, so as few as will do. A pole powers the rows `reach` away from it either way
+-- (the inserters are at most two tiles from that column, which both poles reach). When the inserters stand far apart, the
+-- last free tile may be further from the pole before it than a wire reaches, so `longest_wire` keeps it nearer (the poles stand
+-- in one column: the rows between two are the tiles).
+---@param plan {inserters: {row: integer}[], free_taps: integer[]}  a `bpgen.WeavePlan`, or any plan that says these two
 ---@param reach integer  how many rows each way a pole powers (see `layout.pole_reach`)
+---@param longest_wire? number  the longest wire a pole holds, in tiles; no limit when nil (see `bpgen.SharedNames.pole_wire_distance`)
 ---@return integer[] rows  ascending
-function weave.pole_rows(plan, reach)
+function weave.pole_rows(plan, reach, longest_wire)
   local rows, powered_to = {}, -math.huge
   for _, inserter in ipairs(plan.inserters) do
     if inserter.row > powered_to then
-      local best
-      for _, free in ipairs(plan.free_taps) do
-        if free >= inserter.row - reach and free <= inserter.row + reach then
-          best = free
-        end
-      end
-      assert(best, "weave: no free tile beside the belts reaches the inserter in row " .. inserter.row .. ": the pole reaches " .. reach .. " rows")
+      local before = rows[#rows]
+      local lowest = (before and longest_wire) and before + longest_wire or math.huge
+      local best = last_free_tile(plan.free_taps, inserter.row, reach, lowest)
+      assert(best, unreached_message(inserter.row, reach, longest_wire))
       rows[#rows + 1] = best
       powered_to = best + reach
     end

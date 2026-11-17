@@ -30,14 +30,15 @@ local amount_of = builders.amount_of
 local fluid_of = builders.fluid_of
 
 -- The message for a blueprint that is ready: how much of the product it makes a minute, then the raw
--- items and the fuel as {item, amount a minute} pairs, in the order the message lists them.
+-- items, the fuel and the fluids as {item, amount a minute} pairs, in the order the message lists them (a fluid has "fluid" as a
+-- third entry).
 local function ready_message(product, per_minute, raws)
   local list = {""}
   for index, raw in ipairs(raws) do
     if index > 1 then
       list[#list + 1] = ", "
     end
-    list[#list + 1] = {"blueprint-generation.raw-amount", raw[2], {"item-name." .. raw[1]}}
+    list[#list + 1] = {"blueprint-generation.raw-amount", raw[2], {(raw[3] == "fluid" and "fluid-name." or "item-name.") .. raw[1]}}
   end
   return {"blueprint-generation.generated", per_minute, {"item-name." .. product}, list}
 end
@@ -56,6 +57,16 @@ local function ready_message_with_belts(product, per_minute, raws, belts)
   end
   message[5] = list
   return message
+end
+
+local function entities_of(entities, name)
+  local found = {}
+  for _, entity in ipairs(entities) do
+    if entity.name == name then
+      found[#found + 1] = entity
+    end
+  end
+  return found
 end
 
 local function count_named(entities, name)
@@ -1385,6 +1396,352 @@ describe("generator", function()
     end)
   end)
 
+  describe("a recipe that takes a fluid, so the machines of the last step have a pipe in the middle row of their input side", function()
+    -- Concrete: 1 iron stick, 5 stone bricks and 100 water make 10 concrete in 10 s. An assembling machine 2 (speed 0.75, 3x3)
+    -- crafts every 13.33 s, so it makes 45 concrete a minute from 27 items, which one plain inserter (50.4 a minute) moves. A
+    -- furnace makes 18.75 bricks a minute from 37.5 stone; an assembling machine 1 (speed 0.5) makes 2 sticks every second.
+    -- 90 concrete a minute is 2 machines, 9 crafts: 9 sticks and 45 bricks, so 4.5 plates, 90 stone and 900 water a minute.
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local brick = a_recipe{energy = 3.2, ingredients = {amount_of(2, "stone")}, products = {amount_of(1, "stone-brick")}, category = "smelting"}
+    local stick = a_recipe{energy = 0.5, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(2, "iron-stick")}}
+    local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+    local copper_plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "copper-ore")}, products = {amount_of(1, "copper-plate")}, category = "smelting"}
+    local cable = a_recipe{energy = 0.5, ingredients = {amount_of(1, "copper-plate")}, products = {amount_of(2, "copper-cable")}}
+
+    -- A recipe for concrete, in the category of the machines that take a fluid.
+    local function concrete_of(ingredients, energy)
+      return a_recipe{energy = energy or 10, ingredients = ingredients, products = {amount_of(10, "concrete")}, category = "crafting-with-fluid"}
+    end
+
+    local concrete = concrete_of{amount_of(1, "iron-stick"), amount_of(5, "stone-brick"), fluid_of(100, "water")}
+    local base_recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["concrete"] = concrete}
+
+    -- The game with an assembling machine 1 and an assembling machine 2, which has a fluid input unless `options.fluid_input` is false
+    -- (or the fluid boxes of `options.fluid_boxes`).
+    local function concrete_game(options)
+      options = options or {}
+      return fake_prototypes{
+        furnace_speed = 1,
+        machines = {
+          ["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3},
+          ["assembling-machine-2"] = a_machine{crafting_speed = 0.75, size = 3, fluid_input = options.fluid_input ~= false, fluid_boxes = options.fluid_boxes},
+        },
+        recipes = options.recipes or base_recipes,
+        missing_entities = options.missing_entities,
+      }
+    end
+
+    local function catalog()
+      local entries = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      entries["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+      entries["assembling-machine-2"] = {kind = "machine", width = 3, height = 3, needs_power = true, fluid_input = {concrete = true}} -- it takes no fluid for the sticks
+      return entries
+    end
+
+    local function machines_taking_fluid(entities)
+      local found = {}
+      for _, entity in ipairs(entities) do
+        if entity.recipe == "concrete" then
+          found[#found + 1] = entity
+        end
+      end
+      return found
+    end
+
+    it("builds an assembling machine 2 for each 45 concrete a minute, and the machines of the steps before it", function()
+      _G.prototypes = concrete_game()
+
+      local result = generator.generate("concrete", 90)
+
+      assert.are.same({2, 1, 4}, {
+        count_named(result.entities, "assembling-machine-2"), count_named(result.entities, "assembling-machine-1"), count_named(result.entities, "stone-furnace"),
+      })
+    end)
+
+    it("describes the blueprint with the machines of every step, each after the steps that feed it", function()
+      _G.prototypes = concrete_game()
+
+      local result = generator.generate("concrete", 90)
+
+      assert.are.equal("concrete: 90 per minute from 1 x stone-furnace, 1 x assembling-machine-1, 3 x stone-furnace, 2 x assembling-machine-2", result.description)
+    end)
+
+    it("takes a fluid box that is for input and output at once as a fluid input", function()
+      _G.prototypes = concrete_game{fluid_boxes = {"input-output"}}
+
+      local result = generator.generate("concrete", 90)
+
+      assert.are.equal(2, #machines_taking_fluid(result.entities))
+    end)
+
+    it("faces the machines that take the fluid west, where their fluid connection is", function()
+      _G.prototypes = concrete_game()
+
+      local result = generator.generate("concrete", 90)
+
+      local west = defines.direction.west
+      assert.are.same({west, west}, {machines_taking_fluid(result.entities)[1].direction, machines_taking_fluid(result.entities)[2].direction})
+    end)
+
+    it("builds an underground pipe at each end of the pipe of every machine, and a trunk of pipes along the machines", function()
+      _G.prototypes = concrete_game()
+
+      local result = generator.generate("concrete", 90)
+
+      assert.are.same({4, 23}, {count_named(result.entities, "pipe-to-ground"), count_named(result.entities, "pipe")}) -- 5 in the trunk, the rest up and west to the pump
+    end)
+
+    it("adds the fluid to what the blueprint takes a minute, after the raw items and the fuel", function()
+      _G.prototypes = concrete_game()
+
+      local result = generator.generate("concrete", 90)
+
+      assert.are.same(ready_message("concrete", "90", {{"iron-ore", "4.5"}, {"stone", "90"}, {"coal", "3.56"}, {"water", "900", "fluid"}}), result.message)
+    end)
+
+    it("builds a blueprint that passes the validator, with the pipes joined to the machines", function()
+      _G.prototypes = concrete_game()
+
+      local result = generator.generate("concrete", 90)
+
+      assert.are.same({}, validator.validate(result.entities, catalog()))
+    end)
+
+    for _, rate in ipairs({1, 10, 45, 46, 100, 225, 300}) do
+      it("builds a blueprint that passes the validator for " .. rate .. " concrete a minute", function()
+        _G.prototypes = concrete_game()
+
+        local result = generator.generate("concrete", rate)
+
+        assert.are.same({}, validator.validate(result.entities, catalog()))
+      end)
+    end
+
+    it("takes the fluid by pipes in the design that brings in one belt of each material, and names the items of its belts without it", function()
+      _G.prototypes = concrete_game()
+
+      local result = generator.generate("concrete", 90, fake_force{})
+
+      assert.are.same(
+        ready_message_with_belts("concrete", "90", {{"iron-ore", "4.5"}, {"stone", "90"}, {"coal", "3.56"}, {"water", "900", "fluid"}}, {"coal", "stone", "iron-ore"}),
+        result.message)
+    end)
+
+    it("builds a blueprint that passes the validator in the design that brings in one belt of each material", function()
+      _G.prototypes = concrete_game()
+      local entries = catalog()
+      entries[builders.POLES.medium.name] = {kind = "pole", width = 1, height = 1, supply_radius = builders.POLES.medium.supply_distance, wire_reach = builders.POLES.medium.wire_distance}
+
+      local result = generator.generate("concrete", 90, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, entries))
+    end)
+
+    it("puts one pump, with a pole, in the corner where the belts come in: the west end of the pipe along the top", function()
+      _G.prototypes = concrete_game()
+
+      local result = generator.generate("concrete", 90)
+
+      local belt_left = math.huge
+      for _, belt in ipairs(entities_of(result.entities, "transport-belt")) do
+        belt_left = math.min(belt_left, grid.top_left_tile(belt.position).x)
+      end
+      local pump = entities_of(result.entities, "pump")[1]
+      assert.are.same({1, 1, belt_left}, {count_named(result.entities, "pump"), count_named(result.entities, "small-electric-pole") > 0 and 1 or 0, grid.top_left_tile(pump.position, 2, 1).x})
+    end)
+
+    it("tells the lamps to keep the tile behind the pump free, which is where the water comes in", function()
+      _G.prototypes = concrete_game()
+      local lights = require("scripts.lights")
+      local original, told = lights.add, nil
+      lights.add = function(entities, options)
+        told = options
+        return original(entities, options)
+      end
+
+      local generated = pcall(generator.generate, "concrete", 90, fake_force{})
+      lights.add = original
+
+      assert.are.same({true, {"transport-belt", "underground-belt"}, {"pump"}}, {generated, told.belts, told.inlets})
+    end)
+
+    describe("an iron ore next to the bricks, as the game's concrete takes them: the raw item rides the lane the bricks leave free", function()
+      local ore_concrete = concrete_of{amount_of(1, "iron-ore"), amount_of(5, "stone-brick"), fluid_of(100, "water")}
+      local ore_recipes = {["stone-brick"] = brick, ["concrete"] = ore_concrete}
+
+      it("builds the machines of both steps: furnaces for the bricks, assembling machines 2 for the concrete", function()
+        _G.prototypes = concrete_game{recipes = ore_recipes}
+
+        local result = generator.generate("concrete", 90)
+
+        assert.are.same({2, 0, 3}, {
+          count_named(result.entities, "assembling-machine-2"), count_named(result.entities, "assembling-machine-1"), count_named(result.entities, "stone-furnace"),
+        }) -- 9 crafts a minute of 45 bricks: 2.4 furnaces
+      end)
+
+      it("adds up the stone for the bricks, the ore of the recipe, the coal of the furnaces and the water", function()
+        _G.prototypes = concrete_game{recipes = ore_recipes}
+
+        local result = generator.generate("concrete", 90)
+
+        assert.are.same(ready_message("concrete", "90", {{"stone", "90"}, {"iron-ore", "9"}, {"coal", "3.24"}, {"water", "900", "fluid"}}), result.message)
+      end)
+
+      it("builds a blueprint that passes the validator, with the pipes joined to the machines", function()
+        _G.prototypes = concrete_game{recipes = ore_recipes}
+
+        local result = generator.generate("concrete", 90)
+
+        assert.are.same({}, validator.validate(result.entities, catalog()))
+      end)
+
+      it("builds a blueprint that passes the validator in the design that brings in one belt of each material, which names its belts", function()
+        _G.prototypes = concrete_game{recipes = ore_recipes}
+        local entries = catalog()
+        entries[builders.POLES.medium.name] = {kind = "pole", width = 1, height = 1, supply_radius = builders.POLES.medium.supply_distance, wire_reach = builders.POLES.medium.wire_distance}
+
+        local result = generator.generate("concrete", 90, fake_force{})
+
+        assert.are.same({{}, ready_message_with_belts("concrete", "90", {{"stone", "90"}, {"iron-ore", "9"}, {"coal", "3.24"}, {"water", "900", "fluid"}}, {"iron-ore", "stone", "coal"})},
+          {validator.validate(result.entities, entries), result.message})
+      end)
+    end)
+
+    describe("more than two items: two woven belts, one inserter on each", function()
+      -- A heavy concrete that takes a gear too: the stick and the brick ride belt a, the gear belt b (three lanes in all).
+      local heavy = concrete_of{amount_of(1, "iron-stick"), amount_of(5, "stone-brick"), amount_of(1, "iron-gear-wheel"), fluid_of(100, "water")}
+      local heavy_recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["iron-gear-wheel"] = gear, ["concrete"] = heavy}
+
+      it("builds it when the force has the splitter and the underground belt, a blueprint that passes the validator", function()
+        _G.prototypes = concrete_game{recipes = heavy_recipes}
+
+        local result = generator.generate("concrete", 90, fake_force{})
+
+        assert.are.same({}, validator.validate(result.entities, catalog()))
+      end)
+
+      it("builds it with a pipe at every machine", function()
+        _G.prototypes = concrete_game{recipes = heavy_recipes}
+
+        local result = generator.generate("concrete", 90, fake_force{})
+
+        assert.are.equal(2 * #machines_taking_fluid(result.entities), count_named(result.entities, "pipe-to-ground"))
+      end)
+
+      it("refuses it when the blueprint cannot weave belts, naming the item", function()
+        _G.prototypes = concrete_game{recipes = heavy_recipes}
+
+        local result, error_message = generator.generate("concrete", 90)
+
+        assert.is_nil(result)
+        assert.are.same({"blueprint-generation.error-fluid-needs-weave", {"item-name.concrete"}}, error_message)
+      end)
+
+      it("builds it for four items, two on each belt, a blueprint that passes the validator", function()
+        local four = concrete_of{amount_of(1, "iron-stick"), amount_of(5, "stone-brick"), amount_of(1, "iron-gear-wheel"), amount_of(1, "copper-cable"), fluid_of(100, "water")}
+        _G.prototypes = concrete_game{recipes = {
+          ["iron-plate"] = plate, ["copper-plate"] = copper_plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["iron-gear-wheel"] = gear,
+          ["copper-cable"] = cable, ["concrete"] = four,
+        }}
+
+        local result = generator.generate("concrete", 90, fake_force{})
+
+        assert.are.same({}, validator.validate(result.entities, catalog()))
+      end)
+
+      it("builds it with one inserter on each belt, however much the machines could eat: they run slower instead", function()
+        -- 1 s a craft: a machine would eat 270 items a minute from belt a, which one plain inserter (50.4) is far from, so the
+        -- machines are slower and 400 concrete a minute takes two of them (a planner that gave belt a a second inserter would need one)
+        local quick = concrete_of({amount_of(1, "iron-stick"), amount_of(5, "stone-brick"), amount_of(1, "iron-gear-wheel"), fluid_of(100, "water")}, 1)
+        _G.prototypes = concrete_game{recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["iron-gear-wheel"] = gear, ["concrete"] = quick}}
+
+        local result = generator.generate("concrete", 400, fake_force{})
+
+        assert.are.same({}, validator.validate(result.entities, catalog()))
+      end)
+    end)
+
+    describe("refused", function()
+      local function refusal_for(game_options, rate, force)
+        _G.prototypes = concrete_game(game_options)
+        local result, error_message = generator.generate("concrete", rate or 90, force)
+        assert.is_nil(result)
+        return error_message
+      end
+
+      it("refuses a step that takes a fluid when it is not the last: its columns have no room for pipes beside them", function()
+        local wrapped = a_recipe{energy = 0.5, ingredients = {amount_of(1, "concrete"), amount_of(1, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+        _G.prototypes = concrete_game{recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["concrete"] = concrete, ["iron-gear-wheel"] = wrapped}}
+
+        local result, error_message = generator.generate("iron-gear-wheel", 10)
+
+        assert.is_nil(result)
+        assert.are.same({"blueprint-generation.error-fluid-last-step", {"item-name.concrete"}}, error_message)
+      end)
+
+      it("refuses a step that takes one made ingredient and a fluid, which is a column in a chain", function()
+        local bricks_only = concrete_of{amount_of(5, "stone-brick"), fluid_of(100, "water")}
+
+        local error_message = refusal_for{recipes = {["stone-brick"] = brick, ["concrete"] = bricks_only}}
+
+        assert.are.same({"blueprint-generation.error-fluid-last-step", {"item-name.concrete"}}, error_message)
+      end)
+
+      it("refuses a recipe that takes two fluids", function()
+        local two_fluids = concrete_of{amount_of(1, "iron-stick"), amount_of(5, "stone-brick"), fluid_of(100, "water"), fluid_of(10, "steam")}
+
+        local error_message = refusal_for{recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["concrete"] = two_fluids}}
+
+        assert.are.same({"blueprint-generation.error-fluid-unsupported", {"item-name.concrete"}}, error_message)
+      end)
+
+      it("refuses a machine that has no fluid input", function()
+        local error_message = refusal_for{fluid_input = false}
+
+        assert.are.same({"blueprint-generation.error-fluid-unsupported", {"item-name.concrete"}}, error_message)
+      end)
+
+      it("refuses a machine whose only fluid box is for output: it gives a fluid and takes none", function()
+        local error_message = refusal_for{fluid_boxes = {"output"}}
+
+        assert.are.same({"blueprint-generation.error-fluid-unsupported", {"item-name.concrete"}}, error_message)
+      end)
+
+      it("refuses a recipe with five items, which two belts do not carry", function()
+        local five = concrete_of{
+          amount_of(1, "iron-stick"), amount_of(5, "stone-brick"), amount_of(1, "iron-gear-wheel"), amount_of(1, "copper-cable"), amount_of(1, "iron-plate"),
+          fluid_of(100, "water"),
+        }
+        local recipes = {
+          ["iron-plate"] = plate, ["copper-plate"] = copper_plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["iron-gear-wheel"] = gear,
+          ["copper-cable"] = cable, ["concrete"] = five,
+        }
+
+        local error_message = refusal_for({recipes = recipes}, 90, fake_force{})
+
+        assert.are.same({"blueprint-generation.error-fluid-unsupported", {"item-name.concrete"}}, error_message)
+      end)
+
+      it("refuses a game that has no pipe", function()
+        local error_message = refusal_for{missing_entities = {"pipe"}}
+
+        assert.are.same({"blueprint-generation.error-missing-prototype"}, error_message)
+      end)
+
+      it("refuses a game that has no underground pipe", function()
+        local error_message = refusal_for{missing_entities = {"pipe-to-ground"}}
+
+        assert.are.same({"blueprint-generation.error-missing-prototype"}, error_message)
+      end)
+
+      it("refuses a game that has no pump", function()
+        local error_message = refusal_for{missing_entities = {"pump"}}
+
+        assert.are.same({"blueprint-generation.error-missing-prototype"}, error_message)
+      end)
+    end)
+  end)
+
   describe("the most one blueprint can make, shown under the rate field", function()
     local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
@@ -2506,8 +2863,7 @@ describe("generator", function()
       assert.are.same({"blueprint-generation.error-no-recipe", {"item-name.iron-plate"}}, error_message)
     end)
 
-    it("refuses the request when a recipe on the way has a fluid ingredient", function()
-      -- two ingredients fit the two lanes of an electric machine, so only the fluid can make the recipe unsupported
+    it("refuses the request when a step that takes a fluid is fed raw items only, naming the item", function()
       local wet_gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate"), fluid_of(10, "water")}, products = {amount_of(1, "iron-gear-wheel")}}
       _G.prototypes = fake_prototypes{
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
@@ -2517,7 +2873,7 @@ describe("generator", function()
       local result, error_message = generator.generate("iron-gear-wheel", 10)
 
       assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-unsupported-recipe"}, error_message)
+      assert.are.same({"blueprint-generation.error-fluid-last-step", {"item-name.iron-gear-wheel"}}, error_message)
     end)
 
     it("refuses the request when the machine of a later step has a size the layout cannot build", function()

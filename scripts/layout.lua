@@ -80,6 +80,16 @@
 -- machine takes, so it only works for size 3, but for paired machines (`Shape.output_paired`), which wind it whatever
 -- their size, whatever the inserter and whether or not the belt feeds another column.
 --
+-- A machine that takes a fluid (an assembling machine 2 making concrete from water) has its fluid connection in the middle of
+-- the side it faces, so the machines face west and the pipe comes in at the middle row of the input side, which leaves the top
+-- and the bottom row for the inserters (`layout.max_fluid_inserters`). From the tile beside each machine an underground pipe goes
+-- west, under the belts, to the tunnel column, and a trunk of pipes beside that column joins all of them; the top end of the
+-- trunk goes on to a water inlet (see scripts/rows.lua). From the machines west the columns are: the inserters, with the end of the underground
+-- pipe that opens east in the middle row; the input belt; the tunnel column, with the end that opens west and the poles that power
+-- the inserters, two tiles away; and the trunk. With two woven belts the trunk of belt b, beside the inner column, is between the
+-- belt and the tunnel column and the poles stand in the inner column (see scripts/weave.lua). The pictures are in
+-- `spec/layout_spec.lua`.
+--
 -- A column of furnaces that has to make more than one lane of plates is built wide (the planner decides, see
 -- `bpgen.StageRequest.wide`): the machines go in twos with one output inserter each, the belt winds, and the input side is
 -- full, two plain inserters for every furnace, one for each of two input belts that are woven so that both reach them
@@ -239,6 +249,15 @@ function layout.max_woven_inserters(machine_size)
   return machine_size == weave.MACHINE_SIZE and machine_size or nil
 end
 
+-- The most inserters the input side of a machine gets when it takes a fluid through a pipe in the middle row of that side (see
+-- "A machine that takes a fluid" above): the top and the bottom row, from one belt or, one on each, from two woven belts. Nil for a
+-- machine the pipes are not drawn for.
+---@param machine_size integer
+---@return integer|nil
+function layout.max_fluid_inserters(machine_size)
+  return machine_size == weave.MACHINE_SIZE and 2 or nil
+end
+
 -- The most belts a column of machines can take from, woven (see scripts/weave.lua), when its pole powers the inserters
 -- `pole_reach` rows away: three belts with one inserter each leave few free tiles for poles, which only a pole that reaches
 -- three rows serves, and two belts get by with two. One means none: the pole cannot power the inserters beside woven belts.
@@ -276,6 +295,8 @@ layout.LONG_HANDED_BELTS = 2
 ---@field powered_from_output boolean  the poles beside the output side power the inserters of the input side too (see `bpgen.Shape.powered_from_output`)
 ---@field belt_counts? table<string, integer>  of a column that takes from two or three woven belts of its own (see `Shape.input_belts`), the inserters of a machine on each belt
 ---@field weave boolean  the column draws its two or three input belts woven (see scripts/weave.lua), which come up from the south
+---@field fluid boolean  the machines take a fluid in through a pipe in the middle row of their input side (see `Shape.fluid_input`)
+---@field pipe_tunnel_column integer  of a column with a fluid: the tile column where the underground pipes start, west of the belts; the trunk of pipes is the column beside it
 ---@field second_belt boolean  the column draws its two input belts woven, the second in the column west of the input belt (see `Builder:add_woven_input_belts`)
 ---@field fuel_weave boolean  the column's fuel has a belt of its own in the column east of the input belt, woven with it (see `Builder:add_fuel_weave`); the inserters and the machines stand one column further east
 ---@field first_row integer  tile row where the belts start, the first machine's top edge (1 or more with pole rows) unless the column has a belt of fuel, and the row every column of a chain starts on
@@ -285,11 +306,11 @@ layout.LONG_HANDED_BELTS = 2
 -- Whether the machines are separated by rows of poles: when an inserter takes every
 -- tile beside a machine on one side, no tile is free for a pole. A full input side does not
 -- count when the poles beside the output side reach it (`Shape.powered_from_output`), nor when the poles stand
--- beside the woven belts (`Shape.input_belts`).
+-- beside the woven belts (`Shape.input_belts`) or beside the pipes (`Shape.fluid_input`).
 ---@param shape bpgen.Shape
 ---@return boolean
 local function needs_pole_rows(shape)
-  local input = (shape.powered_from_output or shape.input_belts) and 0 or shape.input_inserters + (shape.long_inserters or 0)
+  local input = (shape.powered_from_output or shape.input_belts or shape.fluid_input) and 0 or shape.input_inserters + (shape.long_inserters or 0)
   return math.max(input, shape.output_inserters) >= shape.machine_size
 end
 
@@ -367,6 +388,8 @@ local function geometry_of(shape, place, machine_count)
     powered_from_output = shape.powered_from_output == true,
     belt_counts = shape.input_belts,
     weave = shape.input_belts ~= nil,
+    fluid = shape.fluid_input == true,
+    pipe_tunnel_column = place.origin - (shape.input_belts and 2 or 1),
     second_belt = shape.second_input_belt == true,
     fuel_weave = shape.fuel_belt == true,
     first_row = place.first_row,
@@ -408,6 +431,7 @@ end
 ---@field before? bpgen.Builder  the column before this one in its chain, whose output belt this column's input belt is
 ---@field weave? bpgen.WeavePlan  of a column that takes from woven belts: the pattern for its machines (see scripts/weave.lua)
 ---@field weave_pole_rows? integer[]  of such a column, the rows of the pattern where the poles beside the belts stand
+---@field fluid_pole_rows? integer[]  of a column with a fluid and one input belt, the tile rows where the poles of the input side stand, in the tunnel column
 local Builder = {}
 Builder.__index = Builder
 
@@ -438,21 +462,71 @@ function Builder.new(machine_count, names, shape, entities, place)
   }, Builder)
   if geometry.weave then
     builder:plan_weave()
+  elseif geometry.fluid then
+    builder:plan_fluid()
   end
   return builder
 end
 
 -- Works out the pattern of the woven input belts of the column (see scripts/weave.lua) and where the poles beside them stand.
 -- The pattern is for 3 x 3 machines and for a column that draws its own input belts (the first of its block), with its
--- poles beside the belts and not beside the output side.
+-- poles beside the belts and not beside the output side; machines with a pipe have the pattern of `weave.plan_with_pipes`.
 function Builder:plan_weave()
   local geometry = self.geometry
   assert(geometry.size == weave.MACHINE_SIZE, "layout: woven input belts are drawn for 3 x 3 machines")
   assert(self.draws_input_belt, "layout: woven input belts come from outside the column, not from the column before it")
   assert(geometry.long_count == 0, "layout: woven input belts take no long-handed inserters")
   assert(not (geometry.powered_from_output or geometry.second_belt or geometry.fuel_weave), "layout: woven input belts do not go with another weave")
-  self.weave = weave.plan(geometry.belt_counts, self.machine_count)
-  self.weave_pole_rows = weave.pole_rows(self.weave, self.pole_reach)
+  if geometry.fluid then
+    local counts = geometry.belt_counts
+    assert(counts.a == 1 and counts.b == 1 and counts.c == nil, "layout: machines with a pipe take one inserter from each of two woven belts")
+    self.weave = weave.plan_with_pipes(self.machine_count)
+  else
+    self.weave = weave.plan(geometry.belt_counts, self.machine_count)
+  end
+  self.weave_pole_rows = self:pole_rows_of(self.weave)
+end
+
+-- The rows of the poles that power the inserters of `plan` (a weave plan, or the like), each within a wire of the one before.
+---@param plan {inserters: {row: integer}[], free_taps: integer[]}
+---@return integer[]
+function Builder:pole_rows_of(plan)
+  return weave.pole_rows(plan, self.pole_reach, self.names.pole_wire_distance)
+end
+
+-- The rows of the input inserters of machine `index` when the machines take a fluid: the top and the bottom row, since the
+-- middle row is the fluid connection. A machine with one inserter has it in its top row when it is the first of a pair and in
+-- its bottom row when it is the second (see `Builder:inserter_top`).
+---@param index integer
+---@return integer[]
+function Builder:fluid_input_rows(index)
+  local top = self:machine_top(index)
+  local bottom = top + self.geometry.size - 1
+  if self.geometry.input_count == 2 then
+    return {top, bottom}
+  end
+  return {index % 2 == 1 and bottom or top}
+end
+
+-- Works out where the poles of a column with a fluid and one input belt stand: in the free tiles of the tunnel column, west of
+-- the belt, which reach the input inserters two tiles away (the poles of a column with woven belts are in `plan_weave`).
+function Builder:plan_fluid()
+  local geometry = self.geometry
+  assert(geometry.size == weave.MACHINE_SIZE, "layout: a fluid is taken in by 3 x 3 machines")
+  assert(self.draws_input_belt, "layout: the pipes of a fluid come from outside the column, not from the column before it")
+  assert(geometry.long_count == 0, "layout: machines that take a fluid have no long-handed inserters")
+  assert(not (geometry.powered_from_output or geometry.second_belt or geometry.fuel_weave), "layout: a fluid does not go with another weave")
+  assert(self.pole_reach >= 2, "layout: poles that reach one tile do not reach the input inserters from the tunnel column")
+  local plan = {inserters = {}, free_taps = {}}
+  for index = 0, self.machine_count - 1 do
+    local top = self:machine_top(index)
+    for _, row in ipairs(self:fluid_input_rows(index)) do
+      plan.inserters[#plan.inserters + 1] = {row = row}
+    end
+    plan.free_taps[#plan.free_taps + 1] = top
+    plan.free_taps[#plan.free_taps + 1] = top + geometry.size - 1
+  end
+  self.fluid_pole_rows = self:pole_rows_of(plan)
 end
 
 -- Stores an entity and numbers it, because blueprints identify entities by number.
@@ -538,6 +612,10 @@ end
 -- another belt).
 ---@return integer
 function Builder:last_input_row()
+  if self.geometry.fluid then
+    local rows = self:fluid_input_rows(self.machine_count - 1)
+    return rows[#rows]
+  end
   return self:plain_input_top(self.machine_count - 1) + self.geometry.input_count - 1
 end
 
@@ -900,7 +978,7 @@ function Builder:add_input_weave()
   local directions = defines.direction
   for _, entry in ipairs(self.weave.tiles) do
     local column, row = geometry.input_belt_column + entry.column, self:weave_row(entry.row)
-    local way = entry.way == "east" and directions.east or directions.north
+    local way = ({east = directions.east, west = directions.west})[entry.way] or directions.north
     if entry.kind == "belt" then
       self:add_belt(column, row, way)
     elseif entry.kind == "splitter" then
@@ -930,10 +1008,10 @@ function Builder:add_weave_inserters()
   end
 end
 
--- The poles of a column that takes from woven belts: in the free tiles of the column beside the inner one, which reach the
--- input inserters (two tiles away). The list of the input side goes from the top down.
+-- The poles of a column that takes from woven belts: in the free tiles of the column beside the inner one (the inner one
+-- itself, for machines with a pipe), which reach the input inserters. The list of the input side goes from the top down.
 function Builder:add_weave_poles()
-  local column = self.geometry.input_belt_column + weave.TAPS
+  local column = self.geometry.input_belt_column + self.weave.pole_column
   for index = #self.weave_pole_rows, 1, -1 do
     local pole = self:add({name = self.names.pole, position = grid.position(column, self:weave_row(self.weave_pole_rows[index]))})
     self.poles.input[#self.poles.input + 1] = pole
@@ -1041,6 +1119,24 @@ function Builder:add_machine_poles(index)
   end
 end
 
+-- The input inserters of machine `index`, beside it: in the rows the pipe leaves them for a machine that takes a fluid, else
+-- plain ones and then long-handed ones. A column of woven belts has the inserters its pattern says (`add_weave_inserters`).
+---@param index integer
+function Builder:add_input_inserters(index)
+  local geometry = self.geometry
+  if geometry.weave then
+    return
+  end
+  if geometry.fluid then
+    for _, row in ipairs(self:fluid_input_rows(index)) do
+      self:add_inserters(self:inserter_name(geometry.input_fast), geometry.input_inserter_column, row, 1)
+    end
+    return
+  end
+  self:add_inserters(self:inserter_name(geometry.input_fast), geometry.input_inserter_column, self:plain_input_top(index), geometry.input_count)
+  self:add_inserters(self.names.long_inserter, geometry.input_inserter_column, self:long_input_top(index), geometry.long_count)
+end
+
 -- One machine with its inserters, and its poles if it is one of those that get them.
 -- `index` counts machines from 0 down the column.
 ---@param index integer
@@ -1048,11 +1144,9 @@ function Builder:add_machine_row(index)
   local geometry = self.geometry
   local size = geometry.size
 
-  self:add({name = self.names.machine, position = grid.position(geometry.machine_column, self:machine_top(index), size, size), recipe = self.names.recipe})
-  if not geometry.weave then
-    self:add_inserters(self:inserter_name(geometry.input_fast), geometry.input_inserter_column, self:plain_input_top(index), geometry.input_count)
-    self:add_inserters(self.names.long_inserter, geometry.input_inserter_column, self:long_input_top(index), geometry.long_count)
-  end
+  local direction = geometry.fluid and defines.direction.west or nil -- its fluid connection is on the side it faces
+  self:add({name = self.names.machine, position = grid.position(geometry.machine_column, self:machine_top(index), size, size), recipe = self.names.recipe, direction = direction})
+  self:add_input_inserters(index)
   self:add_inserters(self:inserter_name(geometry.output_fast), geometry.output_inserter_column, self:output_inserter_row(index), geometry.output_count)
 
   if not geometry.has_pole_rows then
@@ -1113,13 +1207,40 @@ function Builder:powered_across()
   return true
 end
 
+-- The pipes of a column whose machines take a fluid: in the middle row of every machine an underground pipe that comes out
+-- in the tile beside the machine, the end that opens east, under the belts from the tunnel column, the end that opens west,
+-- which a trunk of pipes joins in the column beside it. The trunk goes from the first row of the column to the middle row of the
+-- last machine; `rows` takes it on from its top to a pump.
+function Builder:add_fluid_pipes()
+  local geometry, names = self.geometry, self.names
+  local pipe = assert(names.pipe, "layout: the names give no pipe for the fluid")
+  local underground = assert(names.pipe_to_ground, "layout: the names give no underground pipe for the fluid")
+  local directions = defines.direction
+  for index = 0, self.machine_count - 1 do
+    local row = self:machine_top(index) + 1
+    self:add({name = underground, position = grid.position(geometry.input_inserter_column, row), direction = directions.east})
+    self:add({name = underground, position = grid.position(geometry.pipe_tunnel_column, row), direction = directions.west})
+  end
+  for row = geometry.first_row, self:machine_top(self.machine_count - 1) + 1 do
+    self:add({name = pipe, position = grid.position(geometry.pipe_tunnel_column - 1, row), direction = directions.north})
+  end
+end
+
+-- The poles of the input side of a column with a fluid and one input belt, in the tunnel column.
+function Builder:add_tunnel_poles()
+  for _, row in ipairs(self.fluid_pole_rows) do
+    local pole = self:add({name = self.names.pole, position = grid.position(self.geometry.pipe_tunnel_column, row)})
+    self.poles.input[#self.poles.input + 1] = pole
+  end
+end
+
 -- The machines with their inserters, and the poles: in rows between them when the
 -- sides are full, otherwise in the free tiles beside them.
 function Builder:add_machines()
   local geometry = self.geometry
   local from_output = geometry.powered_from_output
   self.pole_plan = {
-    input = (from_output or geometry.weave or self:powered_across()) and {} or self:side_pole_plan(geometry.input_count + geometry.long_count),
+    input = (from_output or geometry.weave or geometry.fluid or self:powered_across()) and {} or self:side_pole_plan(geometry.input_count + geometry.long_count),
     output = self:side_pole_plan(geometry.output_count, from_output),
   }
   for index = 0, self.machine_count - 1 do
@@ -1128,6 +1249,12 @@ function Builder:add_machines()
   if geometry.weave then
     self:add_weave_inserters()
     self:add_weave_poles()
+  end
+  if geometry.fluid then
+    self:add_fluid_pipes()
+    if not geometry.weave then
+      self:add_tunnel_poles()
+    end
   end
   if self.geometry.has_pole_rows then
     self:add_pole_rows()
@@ -1155,8 +1282,8 @@ local function closest_poles(first, second)
 end
 
 -- Chain the poles down each side, then join the two sides at the top (a column whose input side is powered from the
--- output side has poles on the output side only). The sides of a column that takes from woven belts are six tiles apart, so
--- they are joined where they stand closest.
+-- output side has poles on the output side only). The sides of a column that takes from woven belts or from a pipe are five
+-- or six tiles apart, so they are joined where they stand closest.
 function Builder:wire_poles()
   local poles = self.poles
   for _, side in ipairs({poles.input, poles.output}) do
@@ -1165,10 +1292,10 @@ function Builder:wire_poles()
     end
   end
   -- `layout.build` needs at least one machine, so there is a first pole on the output side.
-  if self.geometry.weave then
+  if self.geometry.weave or self.geometry.fluid then
     local from, to, apart = closest_poles(poles.input, poles.output)
     local wire = self.names.pole_wire_distance
-    assert(not wire or apart <= wire, "layout: the poles beside the woven belts are further from the poles beside the output side than a wire reaches")
+    assert(not wire or apart <= wire, "layout: the poles beside the belts are further from the poles beside the output side than a wire reaches")
     self:connect(from, to)
   elseif poles.input[1] then
     self:connect(poles.input[1], poles.output[1])
@@ -1223,12 +1350,13 @@ local function share_belt(builder, next_builder)
 end
 
 -- The row every column of a chain starts on: one below the pole row that a column
--- with pole rows needs above its first machine, so that all the columns line up.
+-- with pole rows needs above its first machine, so that all the columns line up. A column with a fluid and woven belts needs
+-- the row above its first machine too, for the last tiles of its pattern and a pole.
 ---@param stages bpgen.StageLayout[]
 ---@return integer
 local function chain_first_row(stages)
   for _, stage in ipairs(stages) do
-    if needs_pole_rows(stage.shape) then
+    if needs_pole_rows(stage.shape) or (stage.shape.fluid_input and stage.shape.input_belts) then
       return 1
     end
   end
@@ -1273,6 +1401,7 @@ local function columns_of(stages, names, entities, options)
     local stage_names = {
       machine = stage.machine, recipe = stage.recipe, belt = names.belt, inserter = names.inserter,
       long_inserter = names.long_inserter, fast_inserter = names.fast_inserter, underground = names.underground, splitter = names.splitter,
+      pipe = names.pipe, pipe_to_ground = names.pipe_to_ground,
       pole = names.pole, pole_supply_distance = names.pole_supply_distance, pole_wire_distance = names.pole_wire_distance,
     }
     local place = place_of(stage, index, #stages, origin, first_row, options)

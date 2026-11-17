@@ -7,7 +7,7 @@
 -- once and hands that value to whoever asked for it.
 
 ---@class bpgen.Config
----@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, poles: string[], belts: bpgen.BeltTier[]}
+---@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, pipe: string, pipe_to_ground: string, pump: string, poles: string[], belts: bpgen.BeltTier[]}
 ---@field products table<string, true>  the items a player may ask for, by name
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
 ---@field default_product string  the item the window starts with; must be a key of `products`
@@ -20,6 +20,9 @@ local config = {
     long_inserter = "long-handed-inserter", -- for a second input belt (recipes with three or four ingredients) when the belts cannot be woven
     fast_inserter = "fast-inserter", -- for a machine whose side needs more than one plain inserter moves, once researched
     lamp = "small-lamp", -- the lights of the blueprint, once researched (see scripts/lights.lua)
+    pipe = "pipe", -- the trunk of pipes of a step that takes a fluid (see scripts/layout.lua)
+    pipe_to_ground = "pipe-to-ground", -- under the belts of that step, from the trunk to its machines
+    pump = "pump", -- at the water inlet in the corner where the belts come in: one pump serves up to 320 tiles of pipe
 
     -- The tiers of a building, from the one every blueprint can count on to the best: the blueprint is built with the
     -- last tier the force has unlocked (and the game has; nothing is known without a force, which gets the first tier;
@@ -121,6 +124,8 @@ local config = {
     ["steel-furnace"] = true,
     ["piercing-rounds-magazine"] = true,
     ["grenade"] = true,
+    -- Takes a fluid (water): its machines have a pipe in the middle row of their input side (see scripts/layout.lua).
+    ["concrete"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns
@@ -133,6 +138,7 @@ local config = {
     smelting = {tiers = {"stone-furnace", "steel-furnace"}, fuel = "coal"}, -- the steel furnace burns the same fuel, at twice the speed, in the same 2 x 2 tiles
     crafting = {tiers = {"assembling-machine-1", "assembling-machine-2"}}, -- electric: no fuel
     ["advanced-crafting"] = {tiers = {"assembling-machine-1", "assembling-machine-2"}}, -- engine units: the assembling machines make this category too
+    ["crafting-with-fluid"] = {tiers = {"assembling-machine-2"}}, -- concrete: the first assembling machine with a fluid input, which has a 3 x 3 body
   },
 
   -- The item already picked when the window opens.

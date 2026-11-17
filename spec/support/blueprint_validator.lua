@@ -13,6 +13,8 @@
 --      least one of the two is a machine
 --   5. every entity that needs power is inside a pole's supply area
 --   6. every wire joins two poles within reach, and all poles form one network
+--   7. every machine that takes a fluid has a pipe at its fluid connection, every end of an underground pipe meets the other
+--      end, and the machines and the pipes form one network with a free end to bring the fluid to
 --
 -- Deliberately NOT checked (the owner's decision): belt paths, because later
 -- layouts may bend belts to save space, and item flow, because that is a
@@ -20,11 +22,15 @@
 -- in, so the numbers in it can be made up: nothing here depends on their values.
 --
 -- The catalog maps an entity name to its description:
---   {kind = "belt" | "machine" | "inserter" | "pole" | "lamp",
+--   {kind = "belt" | "machine" | "inserter" | "pole" | "lamp" | "pipe" | "pipe_to_ground" | "pump",
 --    width = tiles, height = tiles,
 --    turns = true,                -- optional: covers height x width tiles facing east or west (a splitter)
 --    needs_power = true,          -- optional, for things a pole must reach
---    reach = tiles,               -- inserters only: how far away it picks up and drops, default 1
+--    reach = tiles,               -- inserters only: how far away it picks up and drops, default 1; underground pipes: how far
+--                                 -- apart their two ends may be, default 10
+--    fluid_input = true,          -- machines only: it takes a fluid in, in the middle of the side it faces (its `direction`); a
+--                                 -- table {[recipe name] = true} instead of true when only some recipes take one (an assembling
+--                                 -- machine 2 takes water for concrete and nothing for a recipe of items)
 --    supply_radius = tiles,       -- poles only: how far from its centre it powers
 --    wire_reach = tiles}          -- poles only: the longest wire it can hold
 --
@@ -342,14 +348,192 @@ local function check_wires(index, problems)
 end
 
 --------------------------------------------------------------------------------
+-- Check 7: fluids
+--------------------------------------------------------------------------------
+
+local UNDERGROUND_PIPE_REACH = 10
+
+-- The key of the tile `distance` steps from the tile of the 1x1 `entity`, in `direction`.
+local function tile_beyond(index, entity, direction, distance)
+  local step = pickup_offsets()[direction]
+  if kind_of(index, entity) == "pump" then -- two tiles wide, from the far one in the direction
+    local base_x = entity.position.x - 1 + (step.x > 0 and 1 or 0)
+    return tile_key(base_x + step.x * distance, entity.position.y - 0.5 + step.y * distance)
+  end
+  return tile_key(entity.position.x - 0.5 + step.x * distance, entity.position.y - 0.5 + step.y * distance)
+end
+
+local function opposite(direction)
+  local directions = defines.direction
+  local turned = {
+    [directions.north] = directions.south, [directions.south] = directions.north,
+    [directions.east] = directions.west, [directions.west] = directions.east,
+  }
+  return turned[direction]
+end
+
+local function is_pipe(index, entity)
+  local kind = kind_of(index, entity)
+  return kind == "pipe" or kind == "pipe_to_ground" or kind == "pump"
+end
+
+-- Whether `piece` (a pipe or an end of an underground pipe) opens on its side `side`: an ordinary pipe on every side, an end
+-- of an underground pipe only on the side of its opening, a pump on the two ends it faces along (it is two tiles long).
+local function opens_to(index, piece, side)
+  local kind = kind_of(index, piece)
+  return kind == "pipe" or piece.direction == side or (kind == "pump" and opposite(piece.direction) == side)
+end
+
+-- Whether the pipe-like entity `other`, standing on the side `direction` of `entity`, joins it there.
+local function joins_on_side(index, entity, other, direction)
+  return opens_to(index, entity, direction) and opens_to(index, other, opposite(direction))
+end
+
+-- The end of an underground pipe at the other end of the one `entity` is the end of, or nil: the first end in line behind
+-- it, within reach, which faces away from it.
+local function underground_partner(index, entity)
+  local direction = opposite(entity.direction)
+  local reach = index.catalog[entity.name].reach or UNDERGROUND_PIPE_REACH
+  for distance = 1, reach do
+    local piece = index.by_tile[tile_beyond(index, entity, direction, distance)]
+    if piece and kind_of(index, piece) == "pipe_to_ground" then
+      return piece.direction == direction and piece or nil
+    end
+  end
+  return nil
+end
+
+-- The pipe-like entities next to `entity` that join it, and the other end of the underground pipe it is an end of.
+local function joined_to(index, entity, problems)
+  local joined = {}
+  for _, direction in pairs(defines.direction) do
+    local other = index.by_tile[tile_beyond(index, entity, direction, 1)]
+    if other and is_pipe(index, other) and joins_on_side(index, entity, other, direction) then
+      joined[#joined + 1] = other
+    end
+  end
+  if kind_of(index, entity) == "pipe_to_ground" then
+    local partner = underground_partner(index, entity)
+    if partner then
+      joined[#joined + 1] = partner
+    else
+      add_problem(problems, entity, "is an end of an underground pipe with no other end behind it within reach")
+    end
+  end
+  return joined
+end
+
+-- The entity that stands at the fluid connection of a machine: on the middle tile just outside the side it faces.
+local function connection_of(index, machine)
+  local description = index.catalog[machine.name]
+  local tile_x, tile_y = machine.position.x - description.width / 2, machine.position.y - description.height / 2
+  local middle_x, middle_y = tile_x + math.floor(description.width / 2), tile_y + math.floor(description.height / 2)
+  local directions = defines.direction
+  local outside = {
+    [directions.west] = {tile_x - 1, middle_y}, [directions.east] = {tile_x + description.width, middle_y},
+    [directions.north] = {middle_x, tile_y - 1}, [directions.south] = {middle_x, tile_y + description.height},
+  }
+  local at = outside[machine.direction]
+  return at and index.by_tile[tile_key(at[1], at[2])]
+end
+
+-- Groups entities that join (a union-find over entity numbers, like the one of the wires).
+local function new_groups()
+  local parent = {}
+  local function find(number)
+    parent[number] = parent[number] or number
+    while parent[number] ~= number do
+      number = parent[number]
+    end
+    return number
+  end
+  return {
+    join = function(first, second) parent[find(first)] = find(second) end,
+    same = function(first, second) return find(first) == find(second) end,
+  }
+end
+
+-- Whether some pipe-like entity has a side that opens onto an empty tile, where the fluid can be brought in.
+local function has_open_end(index, pipes)
+  for _, entity in ipairs(pipes) do
+    for _, direction in pairs(defines.direction) do
+      if opens_to(index, entity, direction) and not index.by_tile[tile_beyond(index, entity, direction, 1)] then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+-- Whether the machine takes a fluid in: its kind does for every recipe, or for the recipe it is set to.
+local function takes_fluid(index, machine)
+  local fluid = index.catalog[machine.name].fluid_input
+  if type(fluid) == "table" then
+    return machine.recipe ~= nil and fluid[machine.recipe] == true
+  end
+  return fluid == true
+end
+
+-- The fluid machines, each with the entity at its fluid connection, and a problem for every one that has none that fits.
+local function fluid_machines(index, problems)
+  local found = {}
+  for _, machine in ipairs(usable_of_kind(index, "machine")) do
+    if takes_fluid(index, machine) then
+      local piece = connection_of(index, machine)
+      if piece and is_pipe(index, piece) and opens_to(index, piece, opposite(machine.direction)) then
+        found[#found + 1] = {machine = machine, piece = piece}
+      else
+        add_problem(problems, machine, "has no pipe at its fluid connection, which faces the way the machine does")
+      end
+    end
+  end
+  return found
+end
+
+-- The pipe-like entities, grouped by what joins them.
+local function pipe_groups(index, problems)
+  local pipes, groups = {}, new_groups()
+  for _, entity in ipairs(index.usable) do
+    if is_pipe(index, entity) then
+      pipes[#pipes + 1] = entity
+      groups.join(entity.entity_number, entity.entity_number)
+      for _, other in ipairs(kind_of(index, entity) == "pump" and {} or joined_to(index, entity, problems)) do -- the pipes beside a pump join it
+        groups.join(entity.entity_number, other.entity_number)
+      end
+    end
+  end
+  return pipes, groups
+end
+
+local function check_fluids(index, problems)
+  local machines = fluid_machines(index, problems)
+  local pipes, groups = pipe_groups(index, problems)
+  local first = machines[1]
+  for _, entry in ipairs(machines) do
+    if not groups.same(entry.piece.entity_number, first.piece.entity_number) then
+      add_problem(problems, entry.machine, "takes its fluid from a network of pipes other than the first machine's")
+    end
+  end
+  for _, entity in ipairs(pipes) do
+    if first and not groups.same(entity.entity_number, first.piece.entity_number) then
+      add_problem(problems, entity, "belongs to a network of pipes that no machine takes its fluid from")
+    end
+  end
+  if first and not has_open_end(index, pipes) then
+    add_problem(problems, nil, "the pipes have no open end to bring the fluid to")
+  end
+end
+
+--------------------------------------------------------------------------------
 
 ---@class bpgen.CatalogEntry  what the validator knows about one entity name
----@field kind "belt"|"machine"|"inserter"|"pole"|"lamp"
+---@field kind "belt"|"machine"|"inserter"|"pole"|"lamp"|"pipe"|"pipe_to_ground"|"pump"
 ---@field width number  tiles
 ---@field height number  tiles
 ---@field turns? boolean  the entity covers `height` x `width` tiles when it faces east or west (a splitter)
 ---@field needs_power? boolean
----@field reach? number  inserters only: tiles away that it picks up and drops, 1 by default (2 for a long-handed inserter)
+---@field reach? number  inserters only: tiles away that it picks up and drops, 1 by default (2 for a long-handed inserter); underground pipes: how far apart their two ends may be, 10 by default
+---@field fluid_input? boolean|table<string, true>  machines only: it takes a fluid in, in the middle of the side it faces, for every recipe (true) or for the recipes named
 ---@field supply_radius? number  poles only
 ---@field wire_reach? number  poles only
 
@@ -363,6 +547,7 @@ function validator.validate(entities, catalog)
   check_inserters(index, problems)
   check_power(index, problems)
   check_wires(index, problems)
+  check_fluids(index, problems)
   return problems
 end
 

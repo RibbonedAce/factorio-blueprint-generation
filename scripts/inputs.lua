@@ -154,6 +154,9 @@ function inputs.footprint(entity, names, machine_sizes)
     local across_x = entity.direction == north or entity.direction == south
     return across_x and 2 or 1, across_x and 1 or 2
   end
+  if entity.name == names.pump then -- two tiles long, facing east
+    return 2, 1
+  end
   local size = machine_sizes[entity.name] or 1
   return size, size
 end

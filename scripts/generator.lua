@@ -18,19 +18,22 @@ local generator = {}
 -- reached by long-handed inserters, or two or three woven.
 local LANES_OF_ONE_BELT = 2
 
--- Copy a recipe prototype into a plain table for the planner. Returns nil for a
--- recipe with a fluid among its ingredients: it would need pipes, which the layout
--- does not build. (A product that is not an item comes with an item product, and
--- the planner refuses a recipe with more than one product.)
+-- How many belts a step whose machines take a fluid takes from, at most: the two woven belts that have room beside the pipe of its
+-- machines (see scripts/layout.lua), so four items.
+local FLUID_BELTS = 2
+local MOST_FLUID_ITEMS = FLUID_BELTS * LANES_OF_ONE_BELT
+
+-- Copy a recipe prototype into a plain table for the planner: the items it takes in `ingredients`, the fluids in `fluids` (the
+-- layout brings them in through pipes, which only the last step of a blueprint can have: see `fluid_problem`). (A product
+-- that is not an item comes with an item product, and the planner refuses a recipe with more than one product.)
 ---@param prototype LuaRecipePrototype
----@return bpgen.Recipe|nil
+---@return bpgen.Recipe
 local function read_recipe(prototype)
-  local recipe = {name = prototype.name, energy = prototype.energy, ingredients = {}, products = {}}
+  local recipe = {name = prototype.name, energy = prototype.energy, ingredients = {}, fluids = {}, products = {}}
   for _, ingredient in ipairs(prototype.ingredients) do
-    if ingredient.type ~= "item" then
-      return nil
-    end
-    recipe.ingredients[#recipe.ingredients + 1] = {name = ingredient.name, amount = ingredient.amount}
+    local list = ({item = recipe.ingredients, fluid = recipe.fluids})[ingredient.type]
+    assert(list, "generator: the game gives an ingredient of the type " .. tostring(ingredient.type) .. " in the recipe " .. prototype.name)
+    list[#list + 1] = {name = ingredient.name, amount = ingredient.amount}
   end
   for index, product in ipairs(prototype.products) do
     -- get_product_amount gives the average amount per craft, which also covers
@@ -107,6 +110,7 @@ local function shared_names(force)
     long_inserter = config.entities.long_inserter, fast_inserter = config.entities.fast_inserter,
     pole = best_tier(force, config.entities.poles),
     lamp = config.entities.lamp,
+    pipe = config.entities.pipe, pipe_to_ground = config.entities.pipe_to_ground, pump = config.entities.pump,
     splitter = belts.splitter, underground = belts.underground,
   }
 end
@@ -146,6 +150,19 @@ local function square_size(machine)
     return machine.tile_width
   end
   return nil
+end
+
+-- Whether the machine takes a fluid in: one of its fluid boxes is for input. (The layout assumes the connection is in the middle of
+-- the side the machine faces, as the assembling machine 2's is.)
+---@param machine LuaEntityPrototype
+---@return boolean
+local function takes_fluid(machine)
+  for _, box in ipairs(machine.fluidbox_prototypes) do
+    if box.production_type == "input" or box.production_type == "input-output" then
+      return true
+    end
+  end
+  return false
 end
 
 ---@class bpgen.EnergySource  what a machine runs on
@@ -230,14 +247,9 @@ end
 
 ---@param candidate bpgen.Candidate
 ---@param force LuaForce|nil  whose research decides the machine
----@return bpgen.Production|nil
----@return "unsupported"|nil reason
+---@return bpgen.Production
 local function production_of(candidate, force)
-  local recipe = read_recipe(candidate.prototype)
-  if recipe then
-    return {recipe = recipe, machine = best_tier(force, candidate.choice.tiers), fuel = candidate.choice.fuel}
-  end
-  return nil, "unsupported"
+  return {recipe = read_recipe(candidate.prototype), machine = best_tier(force, candidate.choice.tiers), fuel = candidate.choice.fuel}
 end
 
 -- How the game makes an item for a force, in the shape `chain.resolve` asks for (see `bpgen.RecipeLookup`).
@@ -287,6 +299,7 @@ end
 ---@field fuel_use number|nil  how many of `fuel` one machine burns a minute while it crafts; nil when the game does not say
 ---@field machine_speed number
 ---@field machine_size integer|nil  nil when the machine is not square
+---@field fluid_input boolean  whether the machine has a fluid box that takes a fluid in
 ---@field energy_source bpgen.EnergySource|nil  nil when the machine runs on something unhandled
 ---@field fuels table<string, true>  the items the machine can burn, empty for an electric one
 ---@field suppliers bpgen.StageData[]  the steps that make its made ingredients, in the recipe's order
@@ -311,7 +324,7 @@ local function read_stage(stage)
   return {
     item = stage.item, recipe = stage.recipe, machine = stage.machine, machine_type = machine.type, fuel = stage.fuel,
     fuel_use = read_fuel_use(machine, stage.fuel),
-    machine_speed = machine_speed, machine_size = square_size(machine),
+    machine_speed = machine_speed, machine_size = square_size(machine), fluid_input = takes_fluid(machine),
     energy_source = energy_source, fuels = burnable_by(energy_source), suppliers = suppliers,
     raw_item = stage.raw_item,
   }
@@ -548,12 +561,71 @@ local function belts_problem(stage, belts)
   return messages.belts_need_weave(stage.item)
 end
 
--- The reason this step's machine cannot be built with, as a message for the player, or nil.
+-- How many things a step takes from other steps and from belts: the steps that make its ingredients, and the raw item that goes
+-- with them, if any.
 ---@param stage bpgen.StageData
----@param has_inputs boolean  whether the design that brings in one belt of each material is available
----@param belts integer  the most belts the blueprint takes from (see `most_belts`)
+---@return integer
+local function inputs_of(stage)
+  return #stage.suppliers + (stage.raw_item and 1 or 0)
+end
+
+-- Whether the machine and the recipe of a step that takes a fluid are what the layout draws pipes for: one fluid, no more than
+-- four items, and a machine with a fluid input of the size it draws them for.
+---@param stage bpgen.StageData
+---@return boolean
+local function is_built_with_fluid(stage)
+  return #stage.recipe.fluids == 1 and #stage.recipe.ingredients <= MOST_FLUID_ITEMS
+    and stage.fluid_input and layout.max_fluid_inserters(stage.machine_size) ~= nil
+end
+
+-- The reason the belts and the pipes of a step that takes a fluid cannot be built, as a message for the player, or nil: more
+-- than two items need woven belts, which the blueprint has to be able to weave, and the pipes need the game's pipes and pump.
+---@param job bpgen.Job
+---@param stage bpgen.StageData
 ---@return LocalisedString|nil
-local function stage_problem(stage, has_inputs, belts)
+local function fluid_buildings_problem(job, stage)
+  if #stage.recipe.ingredients > LANES_OF_ONE_BELT and not can_weave(job) then
+    return messages.fluid_needs_weave(stage.item)
+  end
+  if not (prototypes.entity[job.names.pipe] and prototypes.entity[job.names.pipe_to_ground] and prototypes.entity[job.names.pump]) then
+    return messages.missing_prototype()
+  end
+  return nil
+end
+
+-- The reason a step that takes a fluid cannot be built, as a message for the player, or nil. The pipes come to the last step of
+-- the blueprint only, a column that takes at least two things from other steps and belts (a column between others has no room
+-- for the pipes beside it); the step needs a machine, and a recipe, that the pipes are drawn for (see `is_built_with_fluid`).
+---@param job bpgen.Job
+---@param stage bpgen.StageData
+---@return LocalisedString|nil
+local function fluid_problem(job, stage)
+  if #stage.recipe.fluids == 0 then
+    return nil
+  end
+  if stage ~= job.root or inputs_of(stage) < 2 then
+    return messages.fluid_last_step(stage.item)
+  end
+  if not is_built_with_fluid(stage) then
+    return messages.fluid_unsupported(stage.item)
+  end
+  return fluid_buildings_problem(job, stage)
+end
+
+-- The reason the recipe of a step cannot be built with what the blueprint has, as a message for the player, or nil: the fuel it
+-- burns, the fluid it takes and the belts that carry its ingredients.
+---@param job bpgen.Job
+---@param stage bpgen.StageData
+---@return LocalisedString|nil
+local function recipe_problem(job, stage)
+  return fuel_problem(stage, job.inputs ~= nil) or fluid_problem(job, stage) or belts_problem(stage, most_belts(job))
+end
+
+-- The reason this step's machine cannot be built with, as a message for the player, or nil.
+---@param job bpgen.Job
+---@param stage bpgen.StageData
+---@return LocalisedString|nil
+local function stage_problem(job, stage)
   local size = stage.machine_size
   if not size or not layout.supports_machine_size(size) then
     return messages.unsupported_machine()
@@ -562,7 +634,7 @@ local function stage_problem(stage, has_inputs, belts)
   if not energy_source then
     return messages.unsupported_energy()
   end
-  local problem = fuel_problem(stage, has_inputs) or belts_problem(stage, belts)
+  local problem = recipe_problem(job, stage)
   if problem then
     return problem
   end
@@ -576,9 +648,8 @@ end
 ---@param job bpgen.Job
 ---@return LocalisedString|nil
 local function machine_problem(job)
-  local belts = most_belts(job)
   for _, stage in ipairs(in_order(job.root, {})) do
-    local problem = stage_problem(stage, job.inputs ~= nil, belts)
+    local problem = stage_problem(job, stage)
     if problem then
       return problem
     end
@@ -592,12 +663,20 @@ end
 ---@field stage bpgen.StageData
 ---@field plan bpgen.Plan
 ---@field suppliers bpgen.PlannedStage[]  in the order of `stage.suppliers`
----@field demand? bpgen.Demand[]  what the step takes itself of raw items and fuel a minute, once `raw_amounts` has run
+---@field demand? bpgen.Demand[]  what the step takes itself of raw items, fuel and fluids a minute, once `raw_amounts` has run
 
----@class bpgen.Demand  how much of one raw item or fuel a step takes a minute
+---@class bpgen.Demand  how much of one raw item, one fuel or one fluid a step takes a minute
 ---@field name string
 ---@field amount number
 ---@field is_fuel? boolean
+---@field is_fluid? boolean  a fluid, which no belt brings in: the pipes do
+
+-- What the steps of a blueprint take in all, by the order each is listed in: the raw items first, then the fuel, then the fluids.
+---@class bpgen.DemandTotals
+---@field order string[]  the raw items, from the first step
+---@field fuel_order string[]
+---@field fluid_order string[]
+---@field amount table<string, number>
 
 -- The machines of every step, from the first to the last, for the blueprint's description.
 ---@param planned bpgen.PlannedStage
@@ -612,7 +691,7 @@ end
 
 -- What one step takes itself a minute when it makes `crafts` crafts a minute: the ingredients
 -- no step makes, which are raw, then, in a machine that burns fuel, the fuel the machines burn
--- while crafting.
+-- while crafting, then the fluids the recipe takes.
 ---@param step bpgen.PlannedStage
 ---@param crafts number
 ---@param made_by table<string, bpgen.PlannedStage>  the steps below it, by the item they make
@@ -628,16 +707,30 @@ local function own_demand(step, crafts, made_by)
     local machines_working = crafts * stage.recipe.energy / (60 * stage.machine_speed)
     demand[#demand + 1] = {name = stage.fuel, amount = machines_working * stage.fuel_use, is_fuel = true}
   end
+  for _, fluid in ipairs(stage.recipe.fluids) do
+    demand[#demand + 1] = {name = fluid.name, amount = crafts * fluid.amount, is_fluid = true}
+  end
   return demand
 end
 
+-- The list of the totals that an entry is noted in.
+---@param totals bpgen.DemandTotals
+---@param entry bpgen.Demand
+---@return string[]
+local function order_of(totals, entry)
+  if entry.is_fuel then
+    return totals.fuel_order
+  end
+  return entry.is_fluid and totals.fluid_order or totals.order
+end
+
 -- Adds what a step takes to the totals, noting an item the first time it is seen.
----@param totals {order: string[], fuel_order: string[], amount: table<string, number>}
+---@param totals bpgen.DemandTotals
 ---@param entry bpgen.Demand
 local function add_to_totals(totals, entry)
   if not totals.amount[entry.name] then
     totals.amount[entry.name] = 0
-    local order = entry.is_fuel and totals.fuel_order or totals.order
+    local order = order_of(totals, entry)
     order[#order + 1] = entry.name
   end
   totals.amount[entry.name] = totals.amount[entry.name] + entry.amount
@@ -648,10 +741,10 @@ end
 -- ingredient (the steps that make an ingredient are asked for that much in turn; an
 -- ingredient no step makes is raw) and, in a machine that burns fuel, the fuel the machines
 -- burn while crafting (see `own_demand`). `totals.order` lists the raw items in the order the
--- steps need them, from the first step; `totals.fuel_order` the fuels, which go after them.
+-- steps need them, from the first step; `totals.fuel_order` the fuels, which go after them, and `totals.fluid_order` the fluids.
 ---@param step bpgen.PlannedStage  gets its `demand`
 ---@param makes number  how many of the step's item it is asked for
----@param totals {order: string[], fuel_order: string[], amount: table<string, number>}
+---@param totals bpgen.DemandTotals
 local function add_demand(step, makes, totals)
   local crafts = makes / planner.amount_made(step.stage.recipe, step.stage.item)
   local made_by = {}
@@ -669,15 +762,15 @@ local function add_demand(step, makes, totals)
   end
 end
 
--- How much of each raw item, then of each fuel, the blueprint uses a minute when its
+-- How much of each raw item, then of each fuel, then of each fluid, the blueprint uses a minute when its
 -- machines make what they really make (which can be more than was asked).
 ---@param planned bpgen.PlannedStage
 ---@return bpgen.RawAmount[]
 local function raw_amounts(planned)
-  local totals = {order = {}, fuel_order = {}, amount = {}}
+  local totals = {order = {}, fuel_order = {}, fluid_order = {}, amount = {}}
   add_demand(planned, planned.plan.output_per_minute, totals)
   local raws = {}
-  for _, names in ipairs({totals.order, totals.fuel_order}) do
+  for _, names in ipairs({totals.order, totals.fuel_order, totals.fluid_order}) do
     for _, name in ipairs(names) do
       raws[#raws + 1] = {name = name, amount = totals.amount[name]}
     end
@@ -706,6 +799,24 @@ local function may_be_wide(job, stage, machine_size)
     and stage.fuel ~= nil and layout.pole_reach(job.names.pole_supply_distance) > machine_size
 end
 
+-- How many inserters the input side of a step's machines gets, with one belt and with woven ones, and how many belts the step
+-- takes from, at most. The pipe of a machine that takes a fluid leaves the top and the bottom row of its input side: from one belt,
+-- or one inserter on each of two woven belts (none without the weave).
+---@param job bpgen.Job
+---@param stage bpgen.StageData
+---@param machine_size integer
+---@return integer max_input
+---@return integer|nil max_woven_input
+---@return integer most_belts
+local function input_slots(job, stage, machine_size)
+  local weaves = can_weave(job)
+  if #stage.recipe.fluids > 0 then
+    local slots = assert(layout.max_fluid_inserters(machine_size), "generator: no room for inserters beside the pipe of a machine of size " .. machine_size)
+    return slots, weaves and slots or nil, weaves and FLUID_BELTS or 1
+  end
+  return layout.max_input_inserters(machine_size), weaves and layout.max_woven_inserters(machine_size) or nil, most_belts(job)
+end
+
 -- What the planner is told about one step: the inserters that feed and empty each
 -- of its machines, as many as the layout leaves room for.
 ---@param job bpgen.Job
@@ -713,6 +824,7 @@ end
 ---@return bpgen.StageRequest
 local function stage_request(job, stage)
   local machine_size = machine_size_of(stage)
+  local max_input, max_woven_input, belts = input_slots(job, stage, machine_size)
   return {
     product = stage.item,
     recipe = stage.recipe,
@@ -722,9 +834,9 @@ local function stage_request(job, stage)
       items_per_minute = planner.inserter_items_per_minute(job.inserter_rotation_speed),
       long_items_per_minute = planner.inserter_items_per_minute(job.long_inserter_rotation_speed),
       fast_items_per_minute = job.fast_inserter_rotation_speed and planner.inserter_items_per_minute(job.fast_inserter_rotation_speed) or nil,
-      max_input = layout.max_input_inserters(machine_size),
-      max_woven_input = can_weave(job) and layout.max_woven_inserters(machine_size) or nil,
-      most_belts = most_belts(job),
+      max_input = max_input,
+      max_woven_input = max_woven_input,
+      most_belts = belts,
       max_output = layout.max_output_inserters(machine_size),
       machine_size = machine_size,
     },
@@ -795,13 +907,16 @@ end
 
 -- What a step takes from the belts that come in, for the design that brings in one belt of each
 -- material: its raw ingredients, then the fuel. A step with made ingredients takes either one raw
--- item and no fuel (the feed of its raw column), or only fuel (`fuel_problem` allows nothing else).
+-- item and no fuel (the feed of its raw column), or only fuel (`fuel_problem` allows nothing else). A fluid does not
+-- come in on a belt: the pipes bring it.
 ---@param step bpgen.PlannedStage  with its `demand`
 ---@return bpgen.Feed
 local function feed_of(step)
   local items = {}
   for _, entry in ipairs(step.demand) do
-    items[#items + 1] = {name = entry.name, amount = entry.amount}
+    if not entry.is_fluid then
+      items[#items + 1] = {name = entry.name, amount = entry.amount}
+    end
   end
   return {items = items}
 end
@@ -850,7 +965,7 @@ end
 -- The poles of a column stand beside the output side alone when one there reaches the input inserters (a medium pole
 -- does for a 2 x 2 machine: they are 3 tiles away) and so also powers the machine and the output inserters, which
 -- takes half the poles; a column built wide needs it, as its input side is full (it is only built wide when the pole
--- reaches, see `may_be_wide`).
+-- reaches, see `may_be_wide`). A column that takes a fluid keeps poles of its own beside its pipes, whatever the pole reaches.
 ---@param step bpgen.PlannedStage
 ---@param pole_reach integer  how many tiles away from its own a pole of the blueprint powers (`layout.pole_reach`)
 ---@return bpgen.Shape
@@ -858,6 +973,7 @@ local function shape_of(step, pole_reach)
   local wide = step.plan.wide
   local fuel_belt = wide and #step.suppliers > 0
   local machine_size = machine_size_of(step.stage)
+  local fluid = #step.stage.recipe.fluids > 0
   return {
     machine_size = machine_size,
     input_inserters = step.plan.input_inserters,
@@ -867,9 +983,10 @@ local function shape_of(step, pole_reach)
     output_inserters = step.plan.output_inserters,
     output_fast = step.plan.output_fast,
     output_paired = wide,
-    powered_from_output = pole_reach > machine_size,
+    powered_from_output = pole_reach > machine_size and not fluid,
     second_input_belt = wide and not fuel_belt,
     fuel_belt = fuel_belt,
+    fluid_input = fluid or nil,
   }
 end
 
@@ -952,6 +1069,7 @@ local function add_lights(job, entities, root)
   lights.add(entities, {
     lamp = job.names.lamp, pole = job.names.pole, supply_distance = job.lamp_supply_distance,
     belts = {job.names.belt, job.names.underground},
+    inlets = {job.names.pump}, -- the tile behind the pump is where the water comes in
     size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
   })
 end

@@ -45,6 +45,10 @@ local function taken_tiles(entities, options)
   for _, name in ipairs(options.belts or {}) do
     belts[name] = true
   end
+  local inlets = {}
+  for _, name in ipairs(options.inlets or {}) do
+    inlets[name] = true
+  end
   for _, entity in ipairs(entities) do
     local width, height = options.size_of(entity)
     local tile = grid.top_left_tile(entity.position, width, height)
@@ -55,6 +59,9 @@ local function taken_tiles(entities, options)
     end
     if belts[entity.name] and step[entity.direction] then
       taken[key(tile.x + step[entity.direction].x, tile.y + step[entity.direction].y)] = true
+    end
+    if inlets[entity.name] and step[entity.direction] then -- the tile behind it, where its input is
+      taken[key(tile.x - step[entity.direction].x, tile.y - step[entity.direction].y)] = true
     end
   end
   return taken

@@ -9,6 +9,9 @@
 --   N U       the entrance and the exit of one that runs north
 --   }         an inserter, fast or long-handed or not
 --   +         a pole
+--   =         a pipe
+--   P         a pump (two tiles, facing east)
+--   e w       an end of an underground pipe whose opening faces east or west
 --   letters   the machines, as `machines` says: {[entity name] = {size = 2, glyph = "i"}}
 --   .         nothing
 --   ?         an entity this module does not know
@@ -35,6 +38,9 @@ local GLYPHS = {
   [NAMES.long_inserter] = function() return "}" end,
   [NAMES.pole] = function() return "+" end,
   [builders.POLES.medium.name] = function() return "+" end,
+  [NAMES.pipe] = function() return "=" end,
+  [NAMES.pump] = function() return "P" end,
+  [NAMES.pipe_to_ground] = function(entity) return ({[east] = "e", [west] = "w"})[entity.direction] end,
 }
 
 -- How many tiles the entity covers across and along the map.
@@ -46,6 +52,9 @@ local function size_of(entity, machines)
   if entity.name == NAMES.splitter then
     local faces_along_y = entity.direction == north or entity.direction == south
     return faces_along_y and 2 or 1, faces_along_y and 1 or 2
+  end
+  if entity.name == NAMES.pump then
+    return 2, 1
   end
   local machine = machines[entity.name]
   local size = machine and machine.size or 1

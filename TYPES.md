@@ -98,6 +98,7 @@ classDiagram
     item
     machine
     machine_size
+    fluid_input
     fuel_use
   }
   class EnergySource {
@@ -113,7 +114,7 @@ classDiagram
   }
 
   Production *-- Recipe : recipe
-  Recipe *-- RecipeItem : ingredients and products
+  Recipe *-- RecipeItem : ingredients, fluids and products
   ChainStage --|> Production
   ChainStage o-- ChainStage : suppliers
   ChainStage ..> StageData : read_stage adds game numbers
@@ -182,6 +183,7 @@ classDiagram
     name
     amount
     is_fuel
+    is_fluid
   }
   class Job {
     item_name
@@ -235,6 +237,7 @@ classDiagram
     powered_from_output
     second_input_belt
     fuel_belt
+    fluid_input
   }
   class RawSupplier {
     raw_item
@@ -263,6 +266,8 @@ classDiagram
     long_inserter
     fast_inserter
     lamp
+    pipe
+    pipe_to_ground
     splitter
     underground
   }
@@ -467,7 +472,7 @@ The order of the work in `rows.build_pure` is: columns are made (`Column`), the 
 |---|---|
 | `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, NewEntity, Entity, InputOptions, LightOptions, Input, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
-| `scripts/generator.lua` | EnergySource, Candidate, StageData, Job, PlannedStage, Demand |
+| `scripts/generator.lua` | EnergySource, Candidate, StageData, Job, PlannedStage, Demand, DemandTotals |
 | `scripts/planner.lua` | Belts, InputInserters, MachineRates, StageContext, Sizes |
 | `scripts/chain.lua` | MadeIngredient |
 | `scripts/layout.lua` | Geometry, Place, Poles, SharedBelt, Builder |

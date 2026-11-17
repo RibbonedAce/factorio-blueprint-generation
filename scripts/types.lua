@@ -18,6 +18,9 @@
 ---@field splitter? string  the splitter, for the input design that brings in one belt of each material
 ---@field underground? string  the underground belt, for the same design
 ---@field lamp? string  the small lamp, for the lights of the blueprint (see scripts/lights.lua)
+---@field pipe? string  the pipe, for the trunk of pipes of a step that takes a fluid
+---@field pipe_to_ground? string  the underground pipe, which brings the fluid under the belts to the machines of such a step
+---@field pump? string  the pump at the water inlet, which moves the fluid through the pipes
 
 -- What `lights.add` needs to know of the game.
 ---@class bpgen.LightOptions
@@ -26,6 +29,7 @@
 ---@field supply_distance number  how far from its centre a pole powers, in tiles (2.5 for a small pole)
 ---@field size_of fun(entity: bpgen.Entity): integer, integer  how many tiles across and along the map an entity covers
 ---@field belts? string[]  prototype names of belts, whose tile ahead of them stays free for the belt to go on
+---@field inlets? string[]  prototype names of things whose input is the tile behind them (a pump, facing east, where the fluid comes in), which stays free
 
 ---@class bpgen.Names : bpgen.SharedNames  prototype names one column of the layout builds with
 ---@field machine string
@@ -75,7 +79,8 @@
 ---@class bpgen.Recipe  the numbers the planner needs, copied from a recipe prototype
 ---@field name? string  the name of the recipe prototype, which a blueprint uses to set the recipe of an assembling machine
 ---@field energy number  seconds per craft at crafting speed 1
----@field ingredients bpgen.RecipeItem[]
+---@field ingredients bpgen.RecipeItem[]  the items it takes, which belts carry
+---@field fluids bpgen.RecipeItem[]  the fluids it takes, which pipes carry (what the game says; the planner ignores them)
 ---@field products bpgen.RecipeItem[]
 
 ---@class bpgen.InserterLimits  what limits feeding and emptying a machine
@@ -161,6 +166,7 @@
 ---@field output_paired? boolean  the machines go in twos and the output belt winds, whatever the size of the machine and the inserter (plain, for a furnace), so that machines side by side fill a lane each and the product rides both lanes, also when the belt feeds another column; needs one output inserter and at least two machines
 ---@field powered_from_output? boolean  the inserters of the input side stand within reach of the poles beside the output side (a medium pole reaches the input inserters of a 2x2 machine from there), so the input side needs no poles of its own and may be full without rows of poles between the machines; the output side keeps a free tile for each machine. The generator sets it for every stage whose pole reaches (the medium pole, for a 2x2 machine)
 ---@field fuel_belt? boolean  the stage burns fuel and eats what the stage before it makes, which that stage puts on both lanes of the belt between them (it is built wide too): the fuel has a belt of its own, in a column beside the inserters (one column further east than usual) that goes under for two rows while the belt between the two stages detours through that column, so that two plain input inserters on every machine reach both (see `Builder:add_fuel_weave`); needs `output_paired` and `powered_from_output`
+---@field fluid_input? boolean  the machines take a fluid in, in the middle of the side they face: the column faces them west, has a pipe in the middle row of its input side (an underground pipe from a trunk of pipes under the belts), and so its inserters stand in the top and the bottom row only (see scripts/layout.lua); for a 3x3 machine, and the first column of a chain; `input_belts` is nil or two belts with one inserter each
 ---@field second_input_belt? boolean  the column draws its two input belts itself, woven (belt a goes under for two rows in the column beside the inserters while belt b, one column west, comes into it and goes back; `input_inserters` is 2), since they come down from the band: for a stage fed raw items that takes its second belt from there; the first column of a chain only
 
 -- One column of machines in a chain.

@@ -139,6 +139,20 @@ describe("lights", function()
       assert.are.same({{x = 3, y = 4}}, lamps_after(list))
     end)
 
+    it("leaves the tile behind an inlet free, where its input is, when told it is one", function()
+      -- a pump facing east on (6, 4) and (7, 4): its input is (5, 4), the first tile the pole at (7, 6) powers
+      local pump = {name = "pump", position = grid.position(6, 4, 2, 1), direction = defines.direction.east}
+      local entities = numbered({pole_at(7, 6), pump})
+      local told = options()
+      told.inlets = {"pump"}
+      told.size_of = function(entity) return entity.name == "pump" and 2 or 1, 1 end
+
+      lights.add(entities, told)
+
+      local lamp = entities[3]
+      assert.are.same({x = 5, y = 5}, grid.top_left_tile(lamp.position)) -- the closest free tile to (5, 4), which would have it
+    end)
+
     it("does not keep the tile ahead of an inserter free, which is no belt", function()
       local inserter = {name = NAMES.inserter, position = grid.position(3, 4), direction = defines.direction.north}
 
