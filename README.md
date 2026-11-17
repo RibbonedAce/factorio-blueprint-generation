@@ -194,6 +194,8 @@ Once your force has unlocked the medium electric pole, every blueprint is built 
 
 **A column of 2 x 2 machines (the furnaces) has its poles on the output side alone.** The input inserters are three tiles from a pole in the free tile beside the output inserters, which a medium pole reaches, so that one pole powers the input inserters, the machine and the output inserters, and the input side needs none (a small pole reaches two tiles, so a small pole keeps a pole on each side). A column of furnaces takes about half the poles it did: 450 iron plates a minute from 12 poles to 6, 90 steel plates from 24 to 12 (with the fast belts, the assembling machine 2 and the steel furnace; the columns of 3 x 3 machines are as before, since a medium pole reaches only 3 tiles and their input inserters are 4 away). This is the same arrangement that the furnaces built wide use, whose input side is full.
 
+**The poles on both sides of a belt that two columns share are not both needed.** The output inserters of one column and the input inserters of the next stand on either side of the belt between them. When the poles beside the output inserters of the first column reach every input inserter of the next across the belt (two tiles away for a plain belt, which a small pole reaches, three for the winding belt of furnaces built wide, which a medium pole reaches), the next column has no input poles. If one inserter of it is out of reach, it keeps all of them.
+
 A side still takes at most one inserter fewer than the machine is wide, so that a tile beside every machine stays free for a pole (the input side of machines that take from woven belts has its poles beside the belts).
 
 ### Furnaces built wide

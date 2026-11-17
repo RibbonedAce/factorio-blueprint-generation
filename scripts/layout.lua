@@ -39,7 +39,10 @@
 -- small pole does for two rows each way and a medium pole for three (see `Builder:side_pole_plan`). When the pole reaches
 -- the input inserters from the output side (a medium pole does for a 2x2 machine: they are 3 tiles away), the poles stand
 -- on the output side alone and power the input inserters, the machine and the output inserters, which takes half the
--- poles (`Shape.powered_from_output`). When a side is full, no tile is free, so the
+-- poles (`Shape.powered_from_output`). A belt that two columns share has inserters on both sides: when the poles beside the
+-- output inserters of the first reach every input inserter of the next across it (two tiles for a plain belt, which a small
+-- pole does, three for a winding belt, which a medium pole does), the next column has no input poles (`Builder:powered_across`).
+-- When a side is full, no tile is free, so the
 -- machines are separated by a row of poles instead (a "pole row"), with one more
 -- row of poles above the first machine and below the last. A 3x3 machine with
 -- three inserters in, two out, drawn the same way:
@@ -402,6 +405,7 @@ end
 ---@field shared_belt? bpgen.SharedBelt  how the output belt runs, when the next column shares it
 ---@field winding_mirror? integer  while the winding belt that runs north is drawn: the sum of the rows a tile and its reflection are in (see `Builder:add_winding_tile`)
 ---@field pole_plan? {input: table<integer, integer>, output: table<integer, integer>}  the rows of the poles beside the machines, by machine number, once the machines are added (see `Builder:side_pole_plan`)
+---@field before? bpgen.Builder  the column before this one in its chain, whose output belt this column's input belt is
 ---@field weave? bpgen.WeavePlan  of a column that takes from woven belts: the pattern for its machines (see scripts/weave.lua)
 ---@field weave_pole_rows? integer[]  of such a column, the rows of the pattern where the poles beside the belts stand
 local Builder = {}
@@ -1065,13 +1069,57 @@ function Builder:add_pole_rows()
   end
 end
 
+-- Whether a pole in one of the `rows` powers the inserter in `row`: it is no more than `reach` rows away.
+---@param rows integer[]
+---@param row integer
+---@param reach integer
+---@return boolean
+local function reached_by(rows, row, reach)
+  for _, pole_row in ipairs(rows) do
+    if math.abs(pole_row - row) <= reach then
+      return true
+    end
+  end
+  return false
+end
+
+-- Whether the poles beside the output inserters of the column before power every input inserter of this column across the
+-- belt between them, so that this column's input side needs no poles of its own: the belt is shared, so the two columns
+-- of inserters stand one belt apart (two tiles for a belt one wide, which a small pole powers, three for the winding belt,
+-- two wide, which only a medium pole does), and a pole of the column before is within reach of the row of every inserter.
+-- Poles in rows between machines (a full side) and the poles beside woven belts are left as they are.
+---@return boolean
+function Builder:powered_across()
+  local before, geometry = self.before, self.geometry
+  if not before or geometry.has_pole_rows or before.geometry.has_pole_rows or geometry.weave or before.geometry.weave then
+    return false
+  end
+  if geometry.input_inserter_column - before.geometry.output_inserter_column > self.pole_reach then
+    return false
+  end
+  local rows = {}
+  for _, row in pairs(before.pole_plan.output) do
+    rows[#rows + 1] = row
+  end
+  local count = geometry.input_count + geometry.long_count
+  for index = 0, self.machine_count - 1 do
+    local first = self:inserter_top(index, count)
+    for row = first, first + count - 1 do
+      if not reached_by(rows, row, self.pole_reach) then
+        return false
+      end
+    end
+  end
+  return true
+end
+
 -- The machines with their inserters, and the poles: in rows between them when the
 -- sides are full, otherwise in the free tiles beside them.
 function Builder:add_machines()
   local geometry = self.geometry
   local from_output = geometry.powered_from_output
   self.pole_plan = {
-    input = (from_output or geometry.weave) and {} or self:side_pole_plan(geometry.input_count + geometry.long_count),
+    input = (from_output or geometry.weave or self:powered_across()) and {} or self:side_pole_plan(geometry.input_count + geometry.long_count),
     output = self:side_pole_plan(geometry.output_count, from_output),
   }
   for index = 0, self.machine_count - 1 do
@@ -1232,6 +1280,7 @@ local function columns_of(stages, names, entities, options)
     builders[index] = builder
     origin = builder.geometry.output_belt_column -- the next column's input belt
     if index > 1 then
+      builder.before = builders[index - 1]
       share_belt(builders[index - 1], builder)
     end
     assert(not builder.takes_fuel or (index > 1 and not builders[index - 1].geometry.has_pole_rows),

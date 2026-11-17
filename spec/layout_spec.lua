@@ -875,11 +875,11 @@ describe("layout", function()
       assert.are.same({}, belts_in_column(entities, 7))
     end)
 
-    it("joins the top output pole of a column to the top input pole of the next with one wire", function()
+    it("joins the top output pole of a column to the top output pole of the next with one wire, when the next has no input pole", function()
       local entities = gear_chain(3, 2)
 
       -- furnaces: the output pole is in column 4, beside the first furnace's inserter (row 1);
-      -- assemblers: the input pole is in column 6, below the two input inserters (row 2)
+      -- assemblers: they have no input pole, the furnaces' poles reach their input inserters across the belt; the top output pole is in column 10, below the two output inserters (row 2)
       local function pole_at(x, y)
         for _, entity in ipairs(entities_named(entities, NAMES.pole)) do
           local tile = grid.top_left_tile(entity.position)
@@ -888,15 +888,45 @@ describe("layout", function()
           end
         end
       end
-      local furnace_output_pole, assembler_input_pole = pole_at(4, 1), pole_at(6, 2)
+      local furnace_output_pole, assembler_output_pole = pole_at(4, 1), pole_at(10, 2)
 
       local wires_between = 0
       for _, wire in ipairs(furnace_output_pole.wires or {}) do
-        if wire[3] == assembler_input_pole.entity_number then
+        if wire[3] == assembler_output_pole.entity_number then
           wires_between = wires_between + 1
         end
       end
       assert.are.equal(1, wires_between)
+    end)
+
+    describe("poles on one side of the belt between two columns, when they reach the inserters on the other side", function()
+      -- The poles of the column before stand beside its output inserters; the inserters of the next column are one belt further
+      -- east: two tiles for a plain belt, which a small pole reaches, three for the winding belt of furnaces built wide, which
+      -- a medium pole does (the pictures of those chains show it). A belt between two columns is plain unless the furnaces are wide.
+      local MEDIUM_NAMES = builders.medium_pole_names()
+
+      local function poles_in_column(entities, column)
+        local count = 0
+        for _, entity in ipairs(entities_named(entities, MEDIUM_NAMES.pole)) do
+          count = count + (grid.top_left_tile(entity.position).x == column and 1 or 0)
+        end
+        for _, entity in ipairs(entities_named(entities, NAMES.pole)) do
+          count = count + (grid.top_left_tile(entity.position).x == column and 1 or 0)
+        end
+        return count
+      end
+
+      it("leaves out the input poles of the next column across a plain belt, for a small pole", function()
+        local entities = gear_chain(3, 2) -- furnace output poles in column 4, the assemblers' input inserters in 6
+
+        assert.are.same({true, 0}, {poles_in_column(entities, 4) > 0, poles_in_column(entities, 6)})
+      end)
+
+      it("keeps the input poles of the next column when it is longer, so some of its inserters are out of reach", function()
+        local entities = gear_chain(2, 6)
+
+        assert.is_true(poles_in_column(entities, 6) > 0)
+      end)
     end)
 
     -- The same chain for every pairing of column shapes, with a few machine counts each.
@@ -1633,7 +1663,7 @@ describe("layout", function()
       assert.are.same({
         "vn}FF}>^}AAA}v",
         ">v}FF+.^}AAA+v",
-        "v<}FF.>^+AAA.v",
+        "v<}FF.>^.AAA.v",
         "vu}FF}^<......",
         "vn}FF}>^......",
         ">v}FF+.^......",
@@ -1651,7 +1681,7 @@ describe("layout", function()
         "......v.......",
         "vn}FF}>v}AAA}v",
         ">v}FF+.v}AAA+v",
-        "v<}FF..v+AAA.v",
+        "v<}FF..v.AAA.v",
         "vu}FF}>v.AAA.v",
         "vn}FF}v<}AAA+v",
         ">v}FF+>v}AAA}v",
