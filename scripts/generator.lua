@@ -24,7 +24,7 @@ local FLUID_BELTS = 2
 local MOST_FLUID_ITEMS = FLUID_BELTS * LANES_OF_ONE_BELT
 
 -- Copy a recipe prototype into a plain table for the planner: the items it takes in `ingredients`, the fluids in `fluids` (the
--- layout brings them in through pipes, which only the last step of a blueprint can have: see `fluid_problem`). (A product
+-- layout brings them in through pipes, which only a step with two or more inputs can have: see `fluid_problem`). (A product
 -- that is not an item comes with an item product, and the planner refuses a recipe with more than one product.)
 ---@param prototype LuaRecipePrototype
 ---@return bpgen.Recipe
@@ -593,9 +593,9 @@ local function fluid_buildings_problem(job, stage)
   return nil
 end
 
--- The reason a step that takes a fluid cannot be built, as a message for the player, or nil. The pipes come to the last step of
--- the blueprint only, a column that takes at least two things from other steps and belts (a column between others has no room
--- for the pipes beside it); the step needs a machine, and a recipe, that the pipes are drawn for (see `is_built_with_fluid`).
+-- The reason a step that takes a fluid cannot be built, as a message for the player, or nil. The pipes come to a column that takes
+-- at least two things from other steps and belts (the column of a step in a chain has no room for the pipes beside its belt);
+-- the step needs a machine, and a recipe, that the pipes are drawn for (see `is_built_with_fluid`).
 ---@param job bpgen.Job
 ---@param stage bpgen.StageData
 ---@return LocalisedString|nil
@@ -603,8 +603,8 @@ local function fluid_problem(job, stage)
   if #stage.recipe.fluids == 0 then
     return nil
   end
-  if stage ~= job.root or inputs_of(stage) < 2 then
-    return messages.fluid_last_step(stage.item)
+  if inputs_of(stage) < 2 then
+    return messages.fluid_single_input(stage.item)
   end
   if not is_built_with_fluid(stage) then
     return messages.fluid_unsupported(stage.item)

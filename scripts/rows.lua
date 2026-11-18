@@ -51,7 +51,8 @@
 -- comes up to the first of them (`bpgen.Block.long_rows`).
 --
 -- A final column that takes a fluid (concrete eats water) has two columns for its pipes west of everything else of it: the
--- trunk of pipes (a pipe takes it on to a pump in the corner where the belts come in, where the player brings the fluid) and
+-- trunk of pipes (a pipe takes it on to a pump in the corner where the belts come in, where the player brings the fluid; one
+-- pump for all the columns that take a fluid, with an underground pipe under the belts that run over a column) and
 -- the column where the underground pipes that go under the belts to the machines start (see scripts/layout.lua). Its machines take one inserter from the belt or, for
 -- more than two items, one from each of two woven belts, with belt b in the column beside the inner one.
 --
@@ -647,35 +648,114 @@ end
 -- The most tiles of pipe that one pump serves: a pipe system longer than that needs another pump.
 local MOST_PIPES_OF_A_PUMP = 320
 
--- The water inlet of a final column that takes a fluid, in the corner where the belts come in (the top left): the trunk of pipes
--- goes up from its top end to the row above the blueprint and west along it to a pump facing east, whose input, where the
--- player brings the water, is free to the west. A pole beside the pump powers it. Returns that pole, for the wires.
+-- The farthest apart the two ends of an underground pipe may be: the game allows 10; a hop here stays under it, 9 at the most.
+local PIPE_REACH = 10
+
+-- The tops of the trunks of pipes of the columns that take a fluid, as tiles.
+---@param columns bpgen.Column[]
+---@return {x: integer, y: integer}[]
+local function trunks_of(columns)
+  local trunks = {}
+  for _, column in ipairs(columns) do
+    local trunk = column.block and column.block.pipe_trunk
+    if trunk then
+      trunks[#trunks + 1] = {x = column.x0 + trunk.column, y = column.top + trunk.row}
+    end
+  end
+  return trunks
+end
+
+-- The tiles the entities cover, as a set of "x,y", and the top left corner of the blueprint.
+---@param entities bpgen.Entity[]
+---@param columns bpgen.Column[]
+---@param names bpgen.SharedNames
+---@return table<string, true> taken
+---@return integer left
+---@return integer top
+local function covered_by(entities, columns, names)
+  local sizes = machine_sizes(columns)
+  local taken, left, top = {}, math.huge, math.huge
+  for _, entity in ipairs(entities) do
+    local width, height = inputs.footprint(entity, names, sizes)
+    local tile = grid.top_left_tile(entity.position, width, height)
+    left, top = math.min(left, tile.x), math.min(top, tile.y)
+    for dx = 0, width - 1 do
+      for dy = 0, height - 1 do
+        taken[(tile.x + dx) .. "," .. (tile.y + dy)] = true
+      end
+    end
+  end
+  return taken, left, top
+end
+
+-- Whether every tile of a column from row `first` to row `last` is free.
+---@param taken table<string, true>
+---@param x integer
+---@param first integer
+---@param last integer
+---@return boolean
+local function is_free_between(taken, x, first, last)
+  for y = first, last do
+    if taken[x .. "," .. y] then
+      return false
+    end
+  end
+  return true
+end
+
+-- The pipe from the top of a trunk up to the pipe along the top of the blueprint (the row `row`): plain pipes when the tiles
+-- between are free, else an underground pipe from the tile above the trunk to the row under the pipe along the top, under the
+-- belts that run over the column (the trunks of the belts that come in, or the belts of raw items).
+---@param add fun(entity: table)
+---@param taken table<string, true>
+---@param names bpgen.SharedNames
+---@param trunk {x: integer, y: integer}
+---@param row integer
+local function add_pipe_up(add, taken, names, trunk, row)
+  if is_free_between(taken, trunk.x, row + 1, trunk.y - 1) then
+    for y = row + 1, trunk.y - 1 do
+      add({name = names.pipe, position = grid.position(trunk.x, y), direction = north})
+    end
+    return
+  end
+  local exit = row + 1
+  assert(trunk.y - 1 - exit < PIPE_REACH and not taken[trunk.x .. "," .. exit] and not taken[trunk.x .. "," .. (trunk.y - 1)],
+    "rows: the pipe of a column that takes a fluid has to pass under more belts than an underground pipe spans")
+  add({name = names.pipe_to_ground, position = grid.position(trunk.x, trunk.y - 1), direction = south})
+  add({name = names.pipe_to_ground, position = grid.position(trunk.x, exit), direction = north})
+end
+
+-- The water inlet of a blueprint with columns that take a fluid, in the corner where the belts come in (the top left): a pipe
+-- along the row above the blueprint (two above when a trunk has belts over it), from a pump facing east, whose input, where the
+-- player brings the water, is free to the west, to the last trunk, and from every trunk up to it (see `add_pipe_up`). A pole beside the pump powers it. Returns that
+-- pole, for the wires.
 ---@param entities bpgen.Entity[]
 ---@param columns bpgen.Column[]
 ---@param names bpgen.SharedNames
 ---@return bpgen.Entity
 local function add_water_inlet(entities, columns, names)
-  local sizes = machine_sizes(columns)
-  local left, top, trunk = math.huge, math.huge, nil
-  for _, entity in ipairs(entities) do
-    local width, height = inputs.footprint(entity, names, sizes)
-    local tile = grid.top_left_tile(entity.position, width, height)
-    left, top = math.min(left, tile.x), math.min(top, tile.y)
-    if entity.name == names.pipe and (not trunk or tile.y < trunk.y) then
-      trunk = tile
-    end
+  local taken, left, top = covered_by(entities, columns, names)
+  local trunks = trunks_of(columns)
+  local last = left
+  for _, trunk in ipairs(trunks) do
+    assert(trunk.x >= left + 2, "rows: a column that takes a fluid has no room beside its pipes for a pump")
+    last = math.max(last, trunk.x)
   end
-  assert(trunk and trunk.x >= left + 2, "rows: a column that takes a fluid has no pipes, or no room beside them for a pump")
   local function add(entity)
     entities[#entities + 1] = entity
     entity.entity_number = #entities
     return entity
   end
   local row = top - 1
-  for y = row, trunk.y - 1 do
-    add({name = names.pipe, position = grid.position(trunk.x, y), direction = north})
+  for _, trunk in ipairs(trunks) do
+    if not is_free_between(taken, trunk.x, top, trunk.y - 1) then
+      row = top - 2 -- a trunk under belts: its underground pipe comes out in the row above the blueprint
+    end
   end
-  for x = left + 2, trunk.x - 1 do
+  for _, trunk in ipairs(trunks) do
+    add_pipe_up(add, taken, names, trunk, row)
+  end
+  for x = left + 2, last do
     add({name = names.pipe, position = grid.position(x, row), direction = north})
   end
   add({name = names.pump, position = grid.position(left, row, 2, 1), direction = east})
@@ -750,7 +830,7 @@ function rows.build(root, names)
   place_blocks(entities, columns, names.belt)
   add_raw_belts(entities, names.belt, runs)
   add_arcs(entities, names.belt, top)
-  local inlet_pole = top.fluid and add_water_inlet(entities, columns, names) or nil
+  local inlet_pole = #trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
   join_poles(columns, inlet_pole and pole_bridge(entities, columns, names) or nil, inlet_pole)
   return entities, raw_stages_of(runs)
 end
@@ -945,7 +1025,7 @@ function rows.build_pure(root, names, options)
   if top.kind == "final" then
     add_arcs(entities, names.belt, top)
   end
-  local inlet_pole = top.fluid and add_water_inlet(entities, columns, names) or nil
+  local inlet_pole = #trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
   join_poles(columns, pole_bridge(entities, columns, names), inlet_pole)
   return entities, supplies
 end

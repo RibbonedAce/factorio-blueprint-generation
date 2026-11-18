@@ -11,7 +11,7 @@
 --   +         a pole
 --   =         a pipe
 --   P         a pump (two tiles, facing east)
---   e w       an end of an underground pipe whose opening faces east or west
+--   e w t b   an end of an underground pipe whose opening faces east, west, north (top) or south (bottom)
 --   letters   the machines, as `machines` says: {[entity name] = {size = 2, glyph = "i"}}
 --   .         nothing
 --   ?         an entity this module does not know
@@ -40,7 +40,7 @@ local GLYPHS = {
   [builders.POLES.medium.name] = function() return "+" end,
   [NAMES.pipe] = function() return "=" end,
   [NAMES.pump] = function() return "P" end,
-  [NAMES.pipe_to_ground] = function(entity) return ({[east] = "e", [west] = "w"})[entity.direction] end,
+  [NAMES.pipe_to_ground] = function(entity) return ({[east] = "e", [west] = "w", [north] = "t", [south] = "b"})[entity.direction] end,
 }
 
 -- How many tiles the entity covers across and along the map.

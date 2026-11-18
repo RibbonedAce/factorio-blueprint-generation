@@ -2649,6 +2649,21 @@ describe("layout", function()
         assert.are.equal(9, block.height)
       end)
 
+      it("says where the trunk of pipes starts: two columns west of the belt, in the first row", function()
+        local block = block_of(3, shape_of(2))
+
+        assert.are.same({column = -2, row = 0}, block.pipe_trunk)
+      end)
+
+      it("says no trunk of pipes for a column that takes no fluid", function()
+        local shape = shape_of(2)
+        shape.fluid_input = nil
+
+        local block = block_of(3, shape)
+
+        assert.is_nil(block.pipe_trunk)
+      end)
+
       it("says no rows for belts to end on, since no belt is woven", function()
         local block = block_of(3, shape_of(2))
 
@@ -2753,6 +2768,12 @@ describe("layout", function()
           rows[#rows + 1] = machine.position.y
         end
         assert.are.same({2.5, 5.5}, rows)
+      end)
+
+      it("says where the trunk of pipes starts: three columns west of the inner column, in the first row of the machines", function()
+        local block = block_of(2, shape_of(2, TWO))
+
+        assert.are.same({column = -3, row = 1}, block.pipe_trunk)
       end)
 
       it("is a row taller than its machines", function()

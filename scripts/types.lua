@@ -211,6 +211,7 @@
 ---@field output_rows {first: integer, last: integer}  the rows where the output inserters of the last column drop onto the product belt
 ---@field long_rows? {first: integer, last: integer}  the rows of the first and the last long-handed input inserter of the first column, nil when it has none
 ---@field trunk_rows? table<string, integer>  of a column that takes from woven belts: the tile row, in the frame of the block, of the first tile of each belt (by letter "a", "b" and "c"), which the belt that brings it must end under (see `Builder:trunk_rows`); nil for a column that takes from one belt
+---@field pipe_trunk? {column: integer, row: integer}  of a column that takes a fluid: the tile column and the tile row, in the frame of the block, of the top of its trunk of pipes, which the pipe to the pump has to join; nil for a column that takes none
 ---@field raw_belts bpgen.RawBelt[]  where the belts of raw items start, from the top of the block down
 ---@field fuel_feeds bpgen.FuelFeed[]  the stages of the block that take fuel from the belt before them, left to right
 

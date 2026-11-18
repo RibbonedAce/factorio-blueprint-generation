@@ -563,6 +563,28 @@ describe("blueprint validator", function()
       assert.has_item_containing("belongs to a network of pipes that no machine takes its fluid from", problems)
     end)
 
+    -- The trunk pipe at (0, 4) goes up under the belts at (0, 1) and (0, 2): an underground pipe from (0, 3), whose opening faces
+    -- south to the trunk, to (0, 0), whose opening faces north to the pipe at (0, -1), where the fluid comes in.
+    local function machine_with_trunk(...)
+      return blueprint_of(machine(5, 3), pipe_to_ground(4, 4, east), pipe_to_ground(1, 4, west), pipe(0, 4), pipe(0, -1), belt(0, 1), belt(0, 2), ...)
+    end
+
+    it("reports no problems when an underground pipe goes up under two belts to the pipe where the fluid comes in", function()
+      local entities = machine_with_trunk(pipe_to_ground(0, 3, defines.direction.south), pipe_to_ground(0, 0, north))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports the ends of a vertical underground pipe when both face south, so that the two do not join", function()
+      local entities = machine_with_trunk(pipe_to_ground(0, 3, defines.direction.south), pipe_to_ground(0, 0, defines.direction.south))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("no other end behind it within reach", problems)
+    end)
+
     it("reports a pump that no pole powers", function()
       local entities = blueprint_of(machine(5, 0), pipe_to_ground(4, 1, east), pipe_to_ground(1, 1, west), pipe(0, 1), pump(-2, 1, east))
 

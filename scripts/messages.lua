@@ -167,12 +167,12 @@ function messages.belts_need_weave(item_name)
   return text("error-belts-need-weave", messages.item(item_name))
 end
 
--- Why a step that takes a fluid cannot be made where it stands: the pipes come to the last step of the blueprint only, and that
--- step has to take two or more ingredients from other steps or belts.
+-- Why a step that takes a fluid cannot be made where it stands: the pipes come to a column that takes two or more ingredients
+-- from other steps or belts, which has room for them beside its belt.
 ---@param item_name string  the item the step makes
 ---@return LocalisedString
-function messages.fluid_last_step(item_name)
-  return text("error-fluid-last-step", messages.item(item_name))
+function messages.fluid_single_input(item_name)
+  return text("error-fluid-single-input", messages.item(item_name))
 end
 
 -- Why a step that takes a fluid cannot be made with the machine it has: its recipe takes more than one fluid or more than four

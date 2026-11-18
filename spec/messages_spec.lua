@@ -48,7 +48,7 @@ local function every_message()
     chain_fuel = messages.chain_fuel("iron-plate"),
     fuel_needs_inputs = messages.fuel_needs_inputs("steel-plate"),
     belts_need_weave = messages.belts_need_weave("inserter"),
-    fluid_last_step = messages.fluid_last_step("concrete"),
+    fluid_single_input = messages.fluid_single_input("concrete"),
     fluid_unsupported = messages.fluid_unsupported("concrete"),
     fluid_needs_weave = messages.fluid_needs_weave("concrete"),
     fuel_mismatch = messages.fuel_mismatch({"entity-name.stone-furnace"}),

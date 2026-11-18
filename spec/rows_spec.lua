@@ -576,6 +576,11 @@ describe("rows", function()
       return fluid_assembler("concrete-assembler", count, inserters or 1, nil, {sticks, furnaces("brick-furnace", 1)})
     end
 
+    local function rows_of_refined()
+      local inner = fluid_assembler("ore-concrete-assembler", 1, 1, nil, {furnaces("brick-furnace", 1), wood_supplier()})
+      return fluid_assembler("refined-assembler", 2, 1, nil, {inner, furnaces("iron-furnace", 1)})
+    end
+
     local function drawn(entities, first_column, last_column, last_row)
       return picture.draw(entities, concrete_machines, first_column, 0, last_column, last_row)
     end
@@ -660,6 +665,30 @@ describe("rows", function()
         end)
       end)
     end
+
+    describe("a column that takes a fluid inside another that does, the belts of the iron furnaces running over it", function()
+      -- The inner column comes first, so the belts of the furnaces after it run over it and its trunk of pipes goes up under them.
+      for _, design in ipairs(designs) do
+        local entities = design.build(rows_of_refined())
+
+        it("has one pump, in " .. design.label, function()
+          assert.are.equal(1, count_named(entities, NAMES.pump))
+        end)
+
+        it("puts the pump two rows above the blueprint, in " .. design.label .. ", since the pipe comes out in the row between", function()
+          assert.are.equal(-2 + 0.5, entities_named(entities, NAMES.pump)[1].position.y)
+        end)
+
+        it("takes the pipe of the inner column up under the belts by an underground pipe, opening south above its trunk and north above the belts, in " .. design.label, function()
+          local opens = {}
+          for _, piece in ipairs(entities_named(entities, NAMES.pipe_to_ground)) do
+            opens[piece.direction] = (opens[piece.direction] or 0) + 1
+          end
+
+          assert.are.same({[south] = 1, [north] = 1}, {[south] = opens[south], [north] = opens[north]})
+        end)
+      end
+    end)
 
     it("stands the machines two columns further east than the same column without a fluid, for the pipes", function()
       local with_fluid = rows.build(concrete_tree(2), NAMES)
@@ -1386,6 +1415,8 @@ describe("rows", function()
       ["concrete-assembler"] = {size = 3, eats = {"iron-stick", "stone-brick"}, makes = "concrete", fluid_input = true},
       ["fluid-gadget-assembler"] = {size = 3, eats = {"iron-plate", "copper-cable", "stone-brick"}, makes = "fluid-gadget", fluid_input = true},
       ["ore-concrete-assembler"] = {size = 3, eats = {"wood", "stone-brick"}, makes = "concrete", fluid_input = true}, -- a raw item (wood here) next to the bricks
+      ["refined-assembler"] = {size = 3, eats = {"concrete", "iron-plate"}, makes = "refined", fluid_input = true}, -- takes the concrete of a column that takes a fluid
+      ["refined-gadget"] = {size = 3, eats = {"concrete", "iron-plate", "stone-brick"}, makes = "refined-gadget", fluid_input = true},
     }
     local raw = {["iron-furnace"] = true, ["copper-furnace"] = true, ["brick-furnace"] = true}
 
@@ -1670,6 +1701,37 @@ describe("rows", function()
 
               it_builds_soundly(label, function() return ore_concrete(brick_count, count, inserters, forward) end, "concrete", nil, nil, false, poles[2])
             end
+          end
+        end
+      end
+    end
+
+    -- Refined concrete: a column that takes a fluid inside another that takes one, which every blueprint with a pipe must join to
+    -- the one pump. The inner column makes concrete from bricks and a raw item (wood stands for the ore); the outer one eats that
+    -- and iron plates, or, woven, bricks too. Listed in either order, so that the belts of the iron furnaces run over the inner
+    -- column, which its pipe has to go under, or not.
+    local function nested_concrete(brick_count)
+      return fluid_assembler("ore-concrete-assembler", 1, 1, nil, {furnaces("brick-furnace", brick_count), wood_supplier()})
+    end
+
+    local function refined_concrete(count, brick_count, forward)
+      local inner, plates = nested_concrete(brick_count), furnaces("iron-furnace", 1)
+      return fluid_assembler("refined-assembler", count, 1, nil, forward and {inner, plates} or {plates, inner})
+    end
+
+    local function refined_gadgets(count, brick_count, forward)
+      local inner, plates, bricks = on_belt(nested_concrete(brick_count), "a"), on_belt(furnaces("iron-furnace", 1), "a"), on_belt(furnaces("brick-furnace", 1), "b")
+      return fluid_assembler("refined-gadget", count, 2, {a = 1, b = 1}, forward and {inner, plates, bricks} or {bricks, plates, inner})
+    end
+
+    for _, brick_count in ipairs({1, 3}) do
+      for _, count in ipairs({1, 2, 5}) do
+        for _, forward in ipairs({true, false}) do
+          for _, poles in ipairs({{"small", NAMES}, {"medium", builders.medium_pole_names()}}) do
+            local label = string.format("%d brick furnaces for the inner column and %d outer assemblers, the inner column %s, the %s pole", brick_count, count, forward and "first" or "last", poles[1])
+
+            it_builds_soundly("refined concrete from " .. label, function() return refined_concrete(count, brick_count, forward) end, "refined", nil, nil, false, poles[2])
+            it_builds_soundly("refined concrete on two woven belts from " .. label, function() return refined_gadgets(count, brick_count, forward) end, "refined-gadget", nil, nil, false, poles[2])
           end
         end
       end

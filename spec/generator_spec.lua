@@ -1434,7 +1434,7 @@ describe("generator", function()
     local function catalog()
       local entries = builders.a_catalog{machine_size = 2, machine_needs_power = false}
       entries["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
-      entries["assembling-machine-2"] = {kind = "machine", width = 3, height = 3, needs_power = true, fluid_input = {concrete = true}} -- it takes no fluid for the sticks
+      entries["assembling-machine-2"] = {kind = "machine", width = 3, height = 3, needs_power = true, fluid_input = {concrete = true, ["refined-concrete"] = true}} -- it takes no fluid for the sticks
       return entries
     end
 
@@ -1607,6 +1607,45 @@ describe("generator", function()
       end)
     end)
 
+    describe("a step that takes a fluid inside another that takes one: refined concrete, whose concrete is made in machines with a pipe too", function()
+      -- 20 concrete and 8 iron sticks with 100 water make 10 refined concrete in 15 s. The one machine for 20 a minute takes 28 items
+      -- for a craft through two inserters (100.8 a minute) and so makes 2.25 crafts, 22.5 a minute: 225 water, and 45 concrete,
+      -- 4.5 crafts and 450 water, which is 675 in all.
+      local refined = a_recipe{
+        energy = 15, ingredients = {amount_of(20, "concrete"), amount_of(8, "iron-stick"), fluid_of(100, "water")},
+        products = {amount_of(10, "refined-concrete")}, category = "crafting-with-fluid",
+      }
+      local refined_recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["concrete"] = concrete, ["refined-concrete"] = refined}
+
+      it("builds the machines of both steps that take the fluid, one pump for the pipes of both, and a blueprint that passes the validator", function()
+        _G.prototypes = concrete_game{recipes = refined_recipes}
+
+        local result = generator.generate("refined-concrete", 20)
+
+        assert.are.same({1, {}}, {count_named(result.entities, "pump"), validator.validate(result.entities, catalog())})
+      end)
+
+      it("builds the same in the design that brings in one belt of each material", function()
+        _G.prototypes = concrete_game{recipes = refined_recipes}
+        local entries = catalog()
+        entries[builders.POLES.medium.name] = {kind = "pole", width = 1, height = 1, supply_radius = builders.POLES.medium.supply_distance, wire_reach = builders.POLES.medium.wire_distance}
+
+        local result = generator.generate("refined-concrete", 20, fake_force{})
+
+        assert.are.same({1, {}}, {count_named(result.entities, "pump"), validator.validate(result.entities, entries)})
+      end)
+
+      it("adds the water of both steps up, after the raw items and the fuel", function()
+        _G.prototypes = concrete_game{recipes = refined_recipes}
+
+        local result = generator.generate("refined-concrete", 20)
+
+        local message = result.message
+        local water = message[4][#message[4]]
+        assert.are.same({"blueprint-generation.raw-amount", "675", {"fluid-name.water"}}, water)
+      end)
+    end)
+
     describe("more than two items: two woven belts, one inserter on each", function()
       -- A heavy concrete that takes a gear too: the stick and the brick ride belt a, the gear belt b (three lanes in all).
       local heavy = concrete_of{amount_of(1, "iron-stick"), amount_of(5, "stone-brick"), amount_of(1, "iron-gear-wheel"), fluid_of(100, "water")}
@@ -1669,14 +1708,15 @@ describe("generator", function()
         return error_message
       end
 
-      it("refuses a step that takes a fluid when it is not the last: its columns have no room for pipes beside them", function()
+      it("refuses a step that takes one made ingredient and a fluid inside another step, which is a column in a chain", function()
+        local bricks_only = concrete_of{amount_of(5, "stone-brick"), fluid_of(100, "water")}
         local wrapped = a_recipe{energy = 0.5, ingredients = {amount_of(1, "concrete"), amount_of(1, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
-        _G.prototypes = concrete_game{recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["concrete"] = concrete, ["iron-gear-wheel"] = wrapped}}
+        _G.prototypes = concrete_game{recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["concrete"] = bricks_only, ["iron-gear-wheel"] = wrapped}}
 
         local result, error_message = generator.generate("iron-gear-wheel", 10)
 
         assert.is_nil(result)
-        assert.are.same({"blueprint-generation.error-fluid-last-step", {"item-name.concrete"}}, error_message)
+        assert.are.same({"blueprint-generation.error-fluid-single-input", {"item-name.concrete"}}, error_message)
       end)
 
       it("refuses a step that takes one made ingredient and a fluid, which is a column in a chain", function()
@@ -1684,7 +1724,7 @@ describe("generator", function()
 
         local error_message = refusal_for{recipes = {["stone-brick"] = brick, ["concrete"] = bricks_only}}
 
-        assert.are.same({"blueprint-generation.error-fluid-last-step", {"item-name.concrete"}}, error_message)
+        assert.are.same({"blueprint-generation.error-fluid-single-input", {"item-name.concrete"}}, error_message)
       end)
 
       it("refuses a recipe that takes two fluids", function()
@@ -2873,7 +2913,7 @@ describe("generator", function()
       local result, error_message = generator.generate("iron-gear-wheel", 10)
 
       assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-fluid-last-step", {"item-name.iron-gear-wheel"}}, error_message)
+      assert.are.same({"blueprint-generation.error-fluid-single-input", {"item-name.iron-gear-wheel"}}, error_message)
     end)
 
     it("refuses the request when the machine of a later step has a size the layout cannot build", function()

@@ -1514,6 +1514,7 @@ function layout.chain_block(stages, names, options)
     output_rows = {first = last:machine_top(0), last = last:last_output_row()},
     long_rows = first.geometry.long_count > 0 and {first = first:first_long_row(), last = first:last_long_row()} or nil,
     trunk_rows = first.geometry.weave and first:trunk_rows() or nil,
+    pipe_trunk = first.geometry.fluid and {column = first.geometry.pipe_tunnel_column - 1, row = first.geometry.first_row} or nil,
     height = tallest_end_row(builders, stages[1].suppliers == nil or stages[1].feed ~= nil),
     raw_belts = raw_belts_of(stages[1], first),
     fuel_feeds = fuel_feeds_of(stages, builders),

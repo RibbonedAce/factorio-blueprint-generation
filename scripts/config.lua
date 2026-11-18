@@ -126,6 +126,7 @@ local config = {
     ["grenade"] = true,
     -- Takes a fluid (water): its machines have a pipe in the middle row of their input side (see scripts/layout.lua).
     ["concrete"] = true,
+    ["refined-concrete"] = true, -- concrete (a column of its own that takes water) with steel plate and iron sticks, and water
   },
 
   -- The machine that makes the recipes of each category, and the item it burns
