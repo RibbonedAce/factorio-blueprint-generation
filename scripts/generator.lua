@@ -507,6 +507,14 @@ local function in_order(stage, list)
   return list
 end
 
+-- How many things a step takes from other steps and from belts: the steps that make its ingredients, and the raw item that goes
+-- with them, if any.
+---@param stage bpgen.StageData
+---@return integer
+local function inputs_of(stage)
+  return #stage.suppliers + (stage.raw_item and 1 or 0)
+end
+
 -- The reason a step that is fed by other steps cannot burn fuel, as a message for the player, or nil. Its fuel rides the
 -- lane the product of the step before it leaves free, so it can eat only that one product; and only the design that
 -- brings in one belt of each material brings the fuel.
@@ -517,7 +525,7 @@ local function fuel_problem(stage, has_inputs)
   if #stage.suppliers == 0 or not stage.fuel then
     return nil
   end
-  if #stage.suppliers ~= 1 or #stage.recipe.ingredients ~= 1 then
+  if #stage.suppliers ~= 1 or #stage.recipe.ingredients ~= 1 or inputs_of(stage.suppliers[1]) > 1 then
     return messages.chain_fuel(stage.item)
   end
   if not has_inputs then
@@ -559,14 +567,6 @@ local function belts_problem(stage, belts)
     return nil
   end
   return messages.belts_need_weave(stage.item)
-end
-
--- How many things a step takes from other steps and from belts: the steps that make its ingredients, and the raw item that goes
--- with them, if any.
----@param stage bpgen.StageData
----@return integer
-local function inputs_of(stage)
-  return #stage.suppliers + (stage.raw_item and 1 or 0)
 end
 
 -- Whether the machine and the recipe of a step that takes a fluid are what the layout draws pipes for: one fluid, no more than

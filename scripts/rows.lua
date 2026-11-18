@@ -88,7 +88,7 @@ local north, east, south = defines.direction.north, defines.direction.east, defi
 ---@field kind "raw"|"chain"|"final"  a belt of a raw item, a chain fed raw items, or the column that eats other columns' products
 ---@field belt "a"|"b"|"c"  the input belt of the parent that its product rides
 ---@field fed bpgen.StageLayout|bpgen.RawSupplier  the stage a belt of raw items feeds (a chain: its first); the stage of a final column
----@field stages? bpgen.StageLayout[]  the stages whose machines the column holds, nil for a raw item
+---@field stages? bpgen.StageLayout[]  the stages whose machines the column holds, nil for a raw item; a final column has the stage that takes what other columns make and the steps with one ingredient after it
 ---@field feed? bpgen.Feed  of a chain or a raw column, what it takes from the belts that come in (`build_pure` only)
 ---@field drop_x? integer  of a chain or a raw column, the tile column its belt of raw items comes down (`build_pure` only)
 ---@field children bpgen.Column[]  of a final column: the columns that make what it eats, belt a first
@@ -152,19 +152,19 @@ local function add_across(entities, belt_name, first_column, last_column, row)
   end
 end
 
--- The stages of a straight chain, from the one fed raw items to `stage`. A stage with
--- several made ingredients in the middle of a chain is a mistake of the caller: the
--- generator refuses such recipes before it lays anything out.
+-- The stages of a column, from the first to `stage`: the stages down a straight chain of steps with one supplier each, which
+-- starts at a stage fed raw items, or at a stage that takes two or more things from other columns (a final column that the
+-- steps above it, each with one ingredient, stand beside).
 ---@param stage bpgen.StageLayout
 ---@return bpgen.StageLayout[]
-local function straight_chain(stage)
+local function chain_of(stage)
   local chain = {}
   local current = stage
   while current do
     table.insert(chain, 1, current)
     local suppliers = current.suppliers or {}
-    if #suppliers > 1 then
-      error("rows: a chain of stages cannot start from a stage with several made ingredients")
+    if #suppliers >= 2 then
+      break
     end
     current = suppliers[1]
   end
@@ -220,20 +220,23 @@ end
 
 local column_of -- defined below: a final column is made of the columns of its suppliers
 
----@param stage bpgen.StageLayout
+-- The column that takes what other columns make, with the columns of its suppliers, and the columns of the steps with one
+-- ingredient that stand after it, each beside the one before (`stages`, the first of which takes from the other columns).
+---@param stages bpgen.StageLayout[]  the first has two or more suppliers
 ---@param belt "a"|"b"|"c"
 ---@param names bpgen.SharedNames
 ---@param is_root boolean
 ---@return bpgen.Column
-local function final_column(stage, belt, names, is_root)
+local function final_column(stages, belt, names, is_root)
+  local first = stages[1]
   local children = {}
-  for _, supplier in ipairs(stage.suppliers or {}) do
+  for _, supplier in ipairs(first.suppliers or {}) do
     children[#children + 1] = column_of(supplier, names, false)
   end
   local final = {
-    kind = "final", belt = belt, fed = stage, children = belt_a_first(children), stages = {stage},
-    block = layout.chain_block({stage}, names, {product_belt = is_root}), woven = stage.shape.input_belts ~= nil,
-    fluid = stage.shape.fluid_input == true,
+    kind = "final", belt = belt, fed = first, children = belt_a_first(children), stages = stages,
+    block = layout.chain_block(stages, names, {product_belt = is_root}), woven = first.shape.input_belts ~= nil,
+    fluid = first.shape.fluid_input == true,
   }
   mark_arcs(final)
   return final
@@ -249,10 +252,10 @@ function column_of(stage, names, is_root)
   if stage.raw_item then
     return {kind = "raw", belt = belt, fed = stage, children = {}}
   end
-  if #(stage.suppliers or {}) >= 2 then
-    return final_column(stage, belt, names, is_root)
+  local stages = chain_of(stage)
+  if #(stages[1].suppliers or {}) >= 2 then
+    return final_column(stages, belt, names, is_root)
   end
-  local stages = straight_chain(stage)
   return {
     kind = "chain", belt = belt, fed = stages[1], children = {}, stages = stages, wide_input = stages[1].shape.second_input_belt == true,
     block = layout.chain_block(stages, names, {product_belt = is_root}),

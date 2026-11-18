@@ -569,7 +569,10 @@ describe("rows", function()
     -- the underground pipes start (W, which open west; E, beside the machines, opens east) and, one further west, the trunk of pipes
     -- (=), whose top end is open, where the player brings the water. With more than two items, belt b has its trunk in the column
     -- beside the inner one, and the tunnel and the trunk of pipes are west of it. Pictures: C the machines, x from 0.
-    local concrete_machines = {["concrete-assembler"] = {size = 3, glyph = "C"}, ["gadget-assembler"] = {size = 3, glyph = "G"}}
+    local concrete_machines = {
+      ["concrete-assembler"] = {size = 3, glyph = "C"}, ["gadget-assembler"] = {size = 3, glyph = "G"},
+      ["ore-concrete-assembler"] = {size = 3, glyph = "C"}, ["hazard-assembler"] = {size = 3, glyph = "H"},
+    }
 
     local function concrete_tree(count, inserters)
       local sticks = assemblers("stick-assembler", 1, 1, 1, {furnaces("iron-furnace", 1)})
@@ -598,6 +601,22 @@ describe("rows", function()
         "v..^......",
         ">>>^......",
       }, drawn(entities, 17, 26, 7))
+    end)
+
+    it("draws a column of machines beside the column that takes the fluid, with one ingredient: the belt between them is its input belt", function()
+      local concrete = fluid_assembler("ore-concrete-assembler", 2, 1, nil, {furnaces("brick-furnace", 1), wood_supplier()})
+      local entities = rows.build(assemblers("hazard-assembler", 2, 1, 1, {concrete}), NAMES)
+
+      assert.are.same({
+        "=.^}CCC}^}HHH}v",
+        "=w^eCCC+^.HHH+v",
+        "=+^.CCC.^.HHH.v",
+        "=.^.CCC.^.HHH.v",
+        "=w^eCCC+^.HHH+v",
+        ".+^}CCC}^}HHH}v",
+        ">>^............",
+        ">>^............",
+      }, drawn(entities, 8, 22, 7))
     end)
 
     it("draws two belts, two machines in the original design: belt b makes a detour for the rows of each pair of inserters", function()
@@ -815,11 +834,13 @@ describe("rows", function()
       assert.are.same({column}, raw_stages)
     end)
 
-    it("refuses a chain that starts from a stage with two made ingredients", function()
+    it("builds a chain that starts from a stage with two made ingredients: its column stands beside the column that takes them", function()
       local fork = assemblers("circuit-assembler", 1, 2, 1, {furnaces("iron-furnace", 1), furnaces("copper-furnace", 1)})
       local above_the_fork = assemblers("box-assembler", 1, 1, 1, {fork})
 
-      assert.has_error(function() rows.build(above_the_fork, NAMES) end)
+      local entities = rows.build(above_the_fork, NAMES)
+
+      assert.are.equal(1, #entities_named(entities, "box-assembler"))
     end)
   end)
 
@@ -1417,6 +1438,10 @@ describe("rows", function()
       ["ore-concrete-assembler"] = {size = 3, eats = {"wood", "stone-brick"}, makes = "concrete", fluid_input = true}, -- a raw item (wood here) next to the bricks
       ["refined-assembler"] = {size = 3, eats = {"concrete", "iron-plate"}, makes = "refined", fluid_input = true}, -- takes the concrete of a column that takes a fluid
       ["refined-gadget"] = {size = 3, eats = {"concrete", "iron-plate", "stone-brick"}, makes = "refined-gadget", fluid_input = true},
+      ["box-assembler"] = {size = 3, eats = {"electronic-circuit"}, makes = "box"}, -- the steps with one ingredient on top of a step with several inputs
+      ["second-box-assembler"] = {size = 3, eats = {"box"}, makes = "second-box"},
+      ["hazard-assembler"] = {size = 3, eats = {"concrete"}, makes = "hazard"},
+      ["refined-hazard-assembler"] = {size = 3, eats = {"refined-gadget"}, makes = "refined-hazard"},
     }
     local raw = {["iron-furnace"] = true, ["copper-furnace"] = true, ["brick-furnace"] = true}
 
@@ -1732,6 +1757,61 @@ describe("rows", function()
 
             it_builds_soundly("refined concrete from " .. label, function() return refined_concrete(count, brick_count, forward) end, "refined", nil, nil, false, poles[2])
             it_builds_soundly("refined concrete on two woven belts from " .. label, function() return refined_gadgets(count, brick_count, forward) end, "refined-gadget", nil, nil, false, poles[2])
+          end
+        end
+      end
+    end
+
+    -- Columns of steps with one ingredient on top of a step with several inputs: boxes from circuits (and a second box from the
+    -- boxes), hazard concrete from concrete (which takes a fluid), the same from the refined concrete of two woven belts.
+    for _, iron_count in ipairs({1, 4}) do
+      for _, circuit_count in ipairs({1, 3}) do
+        for _, box_count in ipairs({1, 3}) do
+          for _, iron_first in ipairs({true, false}) do
+            local label = string.format("%d iron furnaces, %d circuit and %d box assemblers, %s first", iron_count, circuit_count, box_count, iron_first and "iron" or "cables")
+
+            it_builds_soundly(label, function() return assemblers("box-assembler", box_count, 1, 1, {circuits(iron_count, 1, 1, circuit_count, iron_first)}) end, "box")
+          end
+        end
+      end
+    end
+
+    for _, box_count in ipairs({1, 2}) do
+      for _, second_count in ipairs({1, 2}) do
+        local label = string.format("%d box and %d second box assemblers on top of circuits", box_count, second_count)
+
+        it_builds_soundly(label, function()
+          return assemblers("second-box-assembler", second_count, 1, 1, {assemblers("box-assembler", box_count, 1, 1, {circuits(1, 1, 1, 1, true)})})
+        end, "second-box")
+      end
+    end
+
+    for _, brick_count in ipairs({1, 3}) do
+      for _, count in ipairs({1, 2, 5}) do
+        for _, hazard_count in ipairs({1, 2}) do
+          for _, forward in ipairs({true, false}) do
+            for _, poles in ipairs({{"small", NAMES}, {"medium", builders.medium_pole_names()}}) do
+              local label = string.format("%d brick furnaces, %d concrete and %d hazard assemblers, %s first, the %s pole", brick_count, count, hazard_count, forward and "bricks" or "the raw item", poles[1])
+              local function tree()
+                return assemblers("hazard-assembler", hazard_count, 1, 1, {ore_concrete(brick_count, count, 1, forward)})
+              end
+
+              it_builds_soundly("hazard concrete from " .. label, tree, "hazard", nil, nil, false, poles[2])
+            end
+          end
+        end
+      end
+    end
+
+    for _, count in ipairs({1, 3}) do
+      for _, hazard_count in ipairs({1, 2}) do
+        for _, forward in ipairs({true, false}) do
+          for _, poles in ipairs({{"small", NAMES}, {"medium", builders.medium_pole_names()}}) do
+            local label = string.format("%d refined and %d hazard assemblers, %s first, the %s pole", count, hazard_count, forward and "the concrete" or "the bricks", poles[1])
+
+            it_builds_soundly("refined hazard concrete from " .. label, function()
+              return assemblers("refined-hazard-assembler", hazard_count, 1, 1, {refined_gadgets(count, 1, forward)})
+            end, "refined-hazard", nil, nil, false, poles[2])
           end
         end
       end

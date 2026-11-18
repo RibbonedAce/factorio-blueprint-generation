@@ -205,7 +205,7 @@ describe("chain", function()
       assert.are.equal("wood", stage.raw_item)
     end)
 
-    it("reports the step that is the only ingredient of another when it has three made ingredients", function()
+    it("allows the step that is the only ingredient of another when it has three made ingredients", function()
       local lookup = lookup_in{
         ["box"] = production{"gadget"},
         ["gadget"] = production{"iron-plate", "gear", "stone-brick"},
@@ -214,11 +214,9 @@ describe("chain", function()
         ["stone-brick"] = production{"stone"},
       }
 
-      local stage, reason, item = chain.resolve("box", lookup)
+      local stage = chain.resolve("box", lookup)
 
-      assert.is_nil(stage)
-      assert.are.equal("fork-in-chain", reason)
-      assert.are.equal("box", item)
+      assert.are.same({"box", 1, 3}, {stage.item, #stage.suppliers, #stage.suppliers[1].suppliers})
     end)
 
     it("allows the step as one of the made ingredients of another", function()
@@ -274,18 +272,28 @@ describe("chain", function()
       assert.is_nil(stage.raw_item)
     end)
 
-    it("reports the step that is the only ingredient of another when it has a raw ingredient too", function()
+    it("allows the step that is the only ingredient of another when it has a raw ingredient too", function()
       local lookup = lookup_in{
         ["box"] = production{"pole"},
         ["pole"] = production{"wood", "copper-cable"},
         ["copper-cable"] = production{"copper-plate"},
       }
 
+      local stage = chain.resolve("box", lookup)
+
+      assert.are.same({"box", "pole", "wood"}, {stage.item, stage.suppliers[1].item, stage.suppliers[1].raw_item})
+    end)
+
+    it("reports the step with one made ingredient and a raw one when the made one is itself made from a made one and a raw one", function()
+      local lookup = lookup_in{
+        ["box"] = production{"pole", "nails"},
+        ["pole"] = production{"wood", "copper-cable"},
+        ["copper-cable"] = production{"copper-plate"},
+      }
+
       local stage, reason, item = chain.resolve("box", lookup)
 
-      assert.is_nil(stage)
-      assert.are.equal("fork-in-chain", reason)
-      assert.are.equal("box", item)
+      assert.are.same({nil, "fork-in-chain", "box"}, {stage, reason, item})
     end)
 
     it("allows the step as one of two made ingredients of another", function()
@@ -422,7 +430,7 @@ describe("chain", function()
       assert.are.equal("thing", item)
     end)
 
-    it("reports the step with one made ingredient that is itself made from two", function()
+    it("allows the step with one made ingredient that is itself made from two", function()
       local lookup = lookup_in{
         ["pipe-thing"] = production{"circuit"},
         ["circuit"] = production{"iron-plate", "copper-plate"},
@@ -430,14 +438,12 @@ describe("chain", function()
         ["copper-plate"] = production{"copper-ore"},
       }
 
-      local stage, reason, item = chain.resolve("pipe-thing", lookup)
+      local stage = chain.resolve("pipe-thing", lookup)
 
-      assert.is_nil(stage)
-      assert.are.equal("fork-in-chain", reason)
-      assert.are.equal("pipe-thing", item)
+      assert.are.same({"pipe-thing", "circuit", 2}, {stage.item, stage.suppliers[1].item, #stage.suppliers[1].suppliers})
     end)
 
-    it("reports the first step of a chain on top of two made ingredients, however long the chain", function()
+    it("allows a chain of steps on top of two made ingredients, however long the chain", function()
       local lookup = lookup_in{
         ["box"] = production{"pipe-thing"},
         ["pipe-thing"] = production{"circuit"},
@@ -446,10 +452,9 @@ describe("chain", function()
         ["copper-plate"] = production{"copper-ore"},
       }
 
-      local _, reason, item = chain.resolve("box", lookup)
+      local stage = chain.resolve("box", lookup)
 
-      assert.are.equal("fork-in-chain", reason)
-      assert.are.equal("pipe-thing", item)
+      assert.are.same({"box", "pipe-thing", "circuit"}, {stage.item, stage.suppliers[1].item, stage.suppliers[1].suppliers[1].item})
     end)
 
     it("reports the item where the chain starts to loop, when the item asked for is not part of the loop", function()

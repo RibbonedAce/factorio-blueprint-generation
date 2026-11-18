@@ -6,7 +6,8 @@
 --
 -- The result is a tree of steps, each with the steps that make its made ingredients. A
 -- step whose ingredients are all raw has none (the first step of a chain). A step with one
--- made ingredient is fed by a straight chain of steps. A step with two to six made
+-- made ingredient is fed by a straight chain of steps, or by a step with several inputs (a
+-- column on top of the column that takes them). A step with two to six made
 -- ingredients is fed by that many blocks, one on each lane of its input belts (two lanes
 -- a belt, and a second belt for the third and fourth, reached by long-handed inserters or
 -- woven with the first, and a third woven belt for the fifth and sixth: see
@@ -18,9 +19,9 @@
 --   * a step with made ingredients and more than six ingredients in all, or more than one
 --     raw ingredient (a belt of raw items fills both lanes, so it is side-loaded onto a
 --     lane of its own, and only one is laid out);
---   * a step with one made ingredient that is itself made from two or more, or from one
---     and a raw one (a column of machines on top of a block with several inputs is not laid
---     out yet).
+--   * a step with one made ingredient and a raw one, when the made one is itself made from
+--     two or more inputs (a column that takes two things on top of a block with several
+--     inputs is not laid out yet).
 
 local chain = {}
 
@@ -103,8 +104,8 @@ local function input_count(stage)
 end
 
 -- The step for `item` once the steps that make its made ingredients are known, or nil
--- and why not: a step with one made ingredient cannot be fed by a step with two inputs (a
--- fork further down was refused where it started).
+-- and why not: a step with one made ingredient and a raw one cannot be fed by a step with
+-- two inputs (a fork further down was refused where it started).
 ---@param item string
 ---@param production bpgen.Production
 ---@param suppliers bpgen.ChainStage[]
@@ -113,7 +114,7 @@ end
 ---@return bpgen.ChainReason|nil reason
 ---@return string|nil item  the item the reason is about
 local function stage_of(item, production, suppliers, raw_item)
-  if #suppliers == 1 and input_count(suppliers[1]) > 1 then
+  if #suppliers == 1 and raw_item and input_count(suppliers[1]) > 1 then
     return nil, "fork-in-chain", item
   end
   return {

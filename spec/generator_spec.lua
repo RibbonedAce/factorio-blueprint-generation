@@ -964,8 +964,26 @@ describe("generator", function()
       assert.are.same({"blueprint-generation.error-chain-fuel", {"item-name.electronic-circuit"}}, error_message)
     end)
 
-    it("refuses the request when a step has one made ingredient that is itself made from two, naming the item", function()
+    local function gear_recipe()
+      return a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+    end
+
+    it("builds a step with one made ingredient that is itself made from two, its column beside the column of the two", function()
       local gear_of_a_circuit = a_recipe{energy = 0.5, ingredients = {amount_of(1, "electronic-circuit")}, products = {amount_of(1, "iron-gear-wheel")}}
+      _G.prototypes = circuit_game{
+        ["iron-plate"] = iron_plate, ["copper-plate"] = copper_plate, ["copper-cable"] = cable,
+        ["electronic-circuit"] = circuit, ["iron-gear-wheel"] = gear_of_a_circuit,
+      }
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("iron-gear-wheel", 10)
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("refuses the request when a step has one made ingredient and a raw one and the made one is itself made from two, naming the item", function()
+      local gear_of_a_circuit = a_recipe{energy = 0.5, ingredients = {amount_of(1, "electronic-circuit"), amount_of(1, "stone")}, products = {amount_of(1, "iron-gear-wheel")}}
       _G.prototypes = circuit_game{
         ["iron-plate"] = iron_plate, ["copper-plate"] = copper_plate, ["copper-cable"] = cable,
         ["electronic-circuit"] = circuit, ["iron-gear-wheel"] = gear_of_a_circuit,
@@ -975,6 +993,32 @@ describe("generator", function()
 
       assert.is_nil(result)
       assert.are.same({"blueprint-generation.error-chain-too-complex", {"item-name.iron-gear-wheel"}}, error_message)
+    end)
+
+    it("still builds a furnace that burns fuel on top of a step with one input, which is a chain", function()
+      local brick_of_a_gear = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-gear-wheel")}, products = {amount_of(1, "stone-brick")}, category = "smelting"}
+      _G.prototypes = circuit_game{
+        ["iron-plate"] = iron_plate, ["iron-gear-wheel"] = gear_recipe(), ["stone-brick"] = brick_of_a_gear,
+      }
+      local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+      catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+      local result = generator.generate("stone-brick", 10, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, catalog))
+    end)
+
+    it("refuses a furnace that burns fuel on top of a step with several inputs: its fuel would have no belt of its own to ride", function()
+      local brick_of_a_circuit = a_recipe{energy = 3.2, ingredients = {amount_of(1, "electronic-circuit")}, products = {amount_of(1, "stone-brick")}, category = "smelting"}
+      _G.prototypes = circuit_game{
+        ["iron-plate"] = iron_plate, ["copper-plate"] = copper_plate, ["copper-cable"] = cable,
+        ["electronic-circuit"] = circuit, ["stone-brick"] = brick_of_a_circuit,
+      }
+
+      local result, error_message = generator.generate("stone-brick", 10, fake_force{})
+
+      assert.is_nil(result)
+      assert.are.same({"blueprint-generation.error-chain-fuel", {"item-name.stone-brick"}}, error_message)
     end)
   end)
 
@@ -1643,6 +1687,64 @@ describe("generator", function()
         local message = result.message
         local water = message[4][#message[4]]
         assert.are.same({"blueprint-generation.raw-amount", "675", {"fluid-name.water"}}, water)
+      end)
+    end)
+
+    describe("hazard concrete: one ingredient, the concrete, made in a column beside the column of the concrete", function()
+      -- 10 concrete a craft make 10 hazard concrete in 0.25 s: an assembling machine 1 (speed 0.5) crafts every 0.5 s, and its two
+      -- plain input inserters (100.8 a minute) feed it about 10 crafts a minute, which is 100 hazard concrete from 100 concrete.
+      local hazard = a_recipe{energy = 0.25, ingredients = {amount_of(10, "concrete")}, products = {amount_of(10, "hazard-concrete")}}
+      local hazard_recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["concrete"] = concrete, ["hazard-concrete"] = hazard}
+
+      it("builds the machines of the concrete and of the hazard concrete, with one pump for the pipes of the concrete", function()
+        _G.prototypes = concrete_game{recipes = hazard_recipes}
+
+        local result = generator.generate("hazard-concrete", 90)
+
+        -- two assembling machines 2 for the concrete, one assembling machine 1 for the iron sticks and one for the hazard concrete
+        assert.are.same({2, 2, 1}, {count_named(result.entities, "assembling-machine-2"), count_named(result.entities, "assembling-machine-1"), count_named(result.entities, "pump")})
+      end)
+
+      it("builds a blueprint that passes the validator", function()
+        _G.prototypes = concrete_game{recipes = hazard_recipes}
+
+        local result = generator.generate("hazard-concrete", 90)
+
+        assert.are.same({}, validator.validate(result.entities, catalog()))
+      end)
+
+      it("builds a blueprint that passes the validator in the design that brings in one belt of each material", function()
+        _G.prototypes = concrete_game{recipes = hazard_recipes}
+        local entries = catalog()
+        entries[builders.POLES.medium.name] = {kind = "pole", width = 1, height = 1, supply_radius = builders.POLES.medium.supply_distance, wire_reach = builders.POLES.medium.wire_distance}
+
+        local result = generator.generate("hazard-concrete", 90, fake_force{})
+
+        assert.are.same({}, validator.validate(result.entities, entries))
+      end)
+
+      it("adds up the water of the concrete, which is all the hazard concrete takes", function()
+        _G.prototypes = concrete_game{recipes = hazard_recipes}
+
+        local result = generator.generate("hazard-concrete", 90)
+
+        assert.are.same({"blueprint-generation.raw-amount", "900", {"fluid-name.water"}}, result.message[4][#result.message[4]])
+      end)
+
+      it("builds refined hazard concrete the same way, on top of the refined concrete of two columns that take a fluid", function()
+        local refined = a_recipe{
+          energy = 15, ingredients = {amount_of(20, "concrete"), amount_of(8, "iron-stick"), fluid_of(100, "water")},
+          products = {amount_of(10, "refined-concrete")}, category = "crafting-with-fluid",
+        }
+        local refined_hazard = a_recipe{energy = 0.25, ingredients = {amount_of(10, "refined-concrete")}, products = {amount_of(10, "refined-hazard-concrete")}}
+        _G.prototypes = concrete_game{recipes = {
+          ["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-stick"] = stick, ["concrete"] = concrete, ["refined-concrete"] = refined,
+          ["refined-hazard-concrete"] = refined_hazard,
+        }}
+
+        local result = generator.generate("refined-hazard-concrete", 20)
+
+        assert.are.same({1, {}}, {count_named(result.entities, "pump"), validator.validate(result.entities, catalog())})
       end)
     end)
 

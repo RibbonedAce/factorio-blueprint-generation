@@ -55,7 +55,7 @@
 --   "unsupported"        the recipe of an item on the way cannot be built
 --   "several-crafted"    a step has more than two ingredients that are made from others
 --   "extra-ingredient"   a step with made ingredients has more than two ingredients in all
---   "fork-in-chain"      a step with one made ingredient is fed by a step with two inputs (two made ingredients, or one made and one raw)
+--   "fork-in-chain"      a step with one made ingredient and a raw one is fed by a step with two inputs (two made ingredients, or one made and one raw)
 --   "cycle"              an item is, in the end, made from itself
 ---@alias bpgen.ChainReason "no-recipe"|"ambiguous"|"unsupported"|"several-crafted"|"extra-ingredient"|"fork-in-chain"|"cycle"
 
