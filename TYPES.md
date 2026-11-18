@@ -36,6 +36,8 @@ flowchart LR
   rows -->|"pole groups, PoleBridge"| poles["poles.lua"]
   poles -->|"wires on poles, bridge poles"| rows
   rows -->|"Entity list, Input list"| generator
+  generator -->|"Entity list, Input list, LabelOptions"| labels["labels.lua"]
+  labels -->|"display panels added to the Entity list"| generator
   generator -->|"Entity list, LightOptions"| lights["lights.lua"]
   lights -->|"lamps added to the Entity list"| generator
 
@@ -61,7 +63,10 @@ flowchart TD
   generator --> layout
   generator --> inputs
   generator --> rows
+  generator --> labels
   generator --> lights
+  labels --> lights
+  labels --> grid
   generator --> messages
   lights --> grid
   rows --> feeds
@@ -266,6 +271,7 @@ classDiagram
     long_inserter
     fast_inserter
     lamp
+    panel
     pipe
     pipe_to_ground
     splitter
@@ -470,7 +476,7 @@ The order of the work in `rows.build_pure` is: columns are made (`Column`), the 
 
 | Where | Types |
 |---|---|
-| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, NewEntity, Entity, InputOptions, LightOptions, Input, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
+| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Input, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
 | `scripts/generator.lua` | EnergySource, Candidate, StageData, Job, PlannedStage, Demand, DemandTotals |
 | `scripts/planner.lua` | Belts, InputInserters, MachineRates, StageContext, Sizes |

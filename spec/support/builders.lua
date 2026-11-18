@@ -31,6 +31,7 @@ builders.NAMES = {
   pole_supply_distance = builders.POLES.small.supply_distance,
   pole_wire_distance = builders.POLES.small.wire_distance,
   lamp = "small-lamp",
+  panel = "display-panel",
   splitter = "splitter",
   underground = "underground-belt",
   pipe = "pipe",
@@ -229,6 +230,7 @@ function builders.a_catalog(options)
       wire_reach = options.medium_pole_wire_reach or builders.POLES.medium.wire_distance,
     },
     [names.lamp] = {kind = "lamp", width = 1, height = 1, needs_power = true},
+    [names.panel] = {kind = "panel", width = 1, height = 1},
     [names.pipe] = {kind = "pipe", width = 1, height = 1},
     [names.pipe_to_ground] = {kind = "pipe_to_ground", width = 1, height = 1, reach = 10},
     [names.pump] = {kind = "pump", width = 2, height = 1, needs_power = true}, -- only facing east or west is used
@@ -425,6 +427,7 @@ function builders.fake_prototypes(options)
       supply_area_distance = medium_supply_distance or nil, max_wire_distance = medium_wire_distance or nil,
     }),
     ["small-lamp"] = entity("small-lamp"),
+    ["display-panel"] = entity("display-panel"),
     ["pipe"] = entity("pipe"),
     ["pipe-to-ground"] = entity("pipe-to-ground"),
     ["pump"] = entity("pump"),

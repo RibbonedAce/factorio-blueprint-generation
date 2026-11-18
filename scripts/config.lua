@@ -7,7 +7,7 @@
 -- once and hands that value to whoever asked for it.
 
 ---@class bpgen.Config
----@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, pipe: string, pipe_to_ground: string, pump: string, poles: string[], belts: bpgen.BeltTier[]}
+---@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, panel: string, pipe: string, pipe_to_ground: string, pump: string, poles: string[], belts: bpgen.BeltTier[]}
 ---@field products table<string, true>  the items a player may ask for, by name
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
 ---@field default_product string  the item the window starts with; must be a key of `products`
@@ -20,6 +20,7 @@ local config = {
     long_inserter = "long-handed-inserter", -- for a second input belt (recipes with three or four ingredients) when the belts cannot be woven
     fast_inserter = "fast-inserter", -- for a machine whose side needs more than one plain inserter moves, once researched
     lamp = "small-lamp", -- the lights of the blueprint, once researched (see scripts/lights.lua)
+    panel = "display-panel", -- beside each belt the player brings in, once researched, showing its item (see scripts/labels.lua)
     pipe = "pipe", -- the trunk of pipes of a step that takes a fluid (see scripts/layout.lua)
     pipe_to_ground = "pipe-to-ground", -- under the belts of that step, from the trunk to its machines
     pump = "pump", -- at the water inlet in the corner where the belts come in: one pump serves up to 320 tiles of pipe

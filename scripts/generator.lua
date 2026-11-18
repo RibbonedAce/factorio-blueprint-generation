@@ -9,6 +9,7 @@ local planner = require("scripts.planner")
 local layout = require("scripts.layout")
 local inputs = require("scripts.inputs")
 local rows = require("scripts.rows")
+local labels = require("scripts.labels")
 local lights = require("scripts.lights")
 local messages = require("scripts.messages")
 
@@ -109,7 +110,7 @@ local function shared_names(force)
     belt = belts.belt, inserter = config.entities.inserter,
     long_inserter = config.entities.long_inserter, fast_inserter = config.entities.fast_inserter,
     pole = best_tier(force, config.entities.poles),
-    lamp = config.entities.lamp,
+    lamp = config.entities.lamp, panel = config.entities.panel,
     pipe = config.entities.pipe, pipe_to_ground = config.entities.pipe_to_ground, pump = config.entities.pump,
     splitter = belts.splitter, underground = belts.underground,
   }
@@ -343,6 +344,7 @@ end
 ---@field long_inserter_rotation_speed number  the long-handed inserter's, or the plain inserter's when the game has none
 ---@field fast_inserter_rotation_speed? number  the fast inserter's, when the force has researched it and the game gives its speed; nil: plain inserters only
 ---@field lamp_supply_distance? number  how far a pole powers, when the blueprint gets lamps (the force has unlocked the small lamp); nil: no lamps
+---@field labels boolean  whether the belts the player brings in get display panels (see scripts/labels.lua)
 ---@field inputs? bpgen.InputOptions  asks for the design that brings in one belt of each material (see scripts/inputs.lua); nil for the original design, a belt of raw items for every chain
 
 -- The rotation speed of the fast inserter when the blueprint may use it: the force has unlocked its recipe (nothing is
@@ -369,6 +371,17 @@ local function lamp_distance(names, force)
     return nil
   end
   return names.pole_supply_distance
+end
+
+-- Whether the belts the player brings in get a display panel with their item: the blueprint has such belts (the design that
+-- brings in one belt of each material), the force has unlocked the display panel (nothing is known without a force) and the
+-- game has it. Otherwise the blueprint has no panels, as it never had.
+---@param names bpgen.SharedNames
+---@param force LuaForce|nil
+---@param input_design boolean  the blueprint takes the design that brings in one belt of each material
+---@return boolean
+local function wants_labels(names, force, input_design)
+  return input_design and force ~= nil and names.panel ~= nil and can_build(force, names.panel)
 end
 
 -- What the design that brings in one belt of each material is asked for, or nil when the blueprint is
@@ -450,6 +463,7 @@ local function read_job(item_name, rate_per_minute, force)
   if not root then
     return nil, problem
   end
+  local inputs_asked = input_options(names, belt_speed, force)
   return {
     item_name = item_name,
     rate_per_minute = rate_per_minute,
@@ -460,7 +474,8 @@ local function read_job(item_name, rate_per_minute, force)
     long_inserter_rotation_speed = long_rotation_speed,
     fast_inserter_rotation_speed = fast_rotation_speed(names, force),
     lamp_supply_distance = lamp_distance(names, force),
-    inputs = input_options(names, belt_speed, force),
+    inputs = inputs_asked,
+    labels = wants_labels(names, force, inputs_asked ~= nil),
   }
 end
 
@@ -1030,17 +1045,18 @@ end
 ---@return bpgen.Entity[] entities
 ---@return string[]|nil belts
 ---@return bpgen.StageLayout root  what the blueprint was laid out from
+---@return bpgen.Input[] supplies  the belts the player brings in (none for the original design)
 local function build_entities(job, planned)
   local root = layout_stage(planned, planner.lane_items_per_minute(job.belt_speed), layout.pole_reach(job.names.pole_supply_distance))
   if not job.inputs then
-    return (rows.build(root, job.names)), nil, root
+    return (rows.build(root, job.names)), nil, root, {}
   end
   local entities, supplies = rows.build_pure(root, job.names, job.inputs)
   local belts = {}
   for index, supply in ipairs(supplies) do
     belts[index] = supply.item
   end
-  return entities, belts, root
+  return entities, belts, root, supplies
 end
 
 -- The tiles on a side of the machine of each column of the layout, by machine name: the names the entities carry.
@@ -1055,6 +1071,24 @@ local function machine_sizes_of(stage, sizes)
     end
   end
   return sizes
+end
+
+-- Puts the display panels on the blueprint when the job asks for them (see scripts/labels.lua).
+---@param job bpgen.Job
+---@param entities bpgen.Entity[]
+---@param root bpgen.StageLayout  what the blueprint was laid out from
+---@param supplies bpgen.Input[]  the belts the player brings in
+local function add_labels(job, entities, root, supplies)
+  if not job.labels then
+    return
+  end
+  local sizes = machine_sizes_of(root, {})
+  labels.add(entities, supplies, {
+    panel = job.names.panel,
+    belts = {job.names.belt, job.names.underground},
+    inlets = {job.names.pump},
+    size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
+  })
 end
 
 -- Puts the lamps on the blueprint when the job asks for them (see scripts/lights.lua).
@@ -1080,7 +1114,8 @@ end
 ---@return bpgen.Generated
 local function assemble(job, planned)
   local raws = raw_amounts(planned) -- also notes what each step takes, which the layout needs
-  local entities, belts, root = build_entities(job, planned)
+  local entities, belts, root, supplies = build_entities(job, planned)
+  add_labels(job, entities, root, supplies)
   add_lights(job, entities, root)
   return {
     entities = entities,

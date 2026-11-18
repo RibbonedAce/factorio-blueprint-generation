@@ -2537,6 +2537,55 @@ describe("generator", function()
       assert.are.equal(4, count_named(result.entities, "underground-belt"))
     end)
 
+    describe("display panels, put beside the belts that come in once the force has unlocked the display panel", function()
+      -- The items the display panels show, from the top of the blueprint down.
+      local function icons_of(entities)
+        local icons = {}
+        for _, entity in ipairs(entities) do
+          if entity.name == "display-panel" then
+            icons[#icons + 1] = entity.icon.name
+          end
+        end
+        return icons
+      end
+
+      it("puts a panel with the item of each belt that comes in, from the top down", function()
+        _G.prototypes = circuit_game()
+
+        local result = generator.generate("electronic-circuit", 50, fake_force{})
+
+        assert.are.same({"coal", "copper-ore", "iron-ore"}, icons_of(result.entities))
+      end)
+
+      it("builds a blueprint with the panels that passes the validator", function()
+        _G.prototypes = circuit_game()
+        local catalog = builders.a_catalog{machine_size = 2, machine_needs_power = false}
+        catalog["assembling-machine-1"] = {kind = "machine", width = 3, height = 3, needs_power = true}
+
+        local result = generator.generate("electronic-circuit", 100, fake_force{})
+
+        assert.are.same({}, validator.validate(result.entities, catalog))
+      end)
+
+      local without_panels = {
+        {label = "the force has not unlocked the display panel", force = fake_force{locked = {"display-panel"}}},
+        {label = "the force does not know the recipe of the display panel", force = fake_force{absent = {"display-panel"}}},
+        {label = "the game has no display panel", force = fake_force{}, game = {missing_entities = {"display-panel"}}},
+        {label = "the blueprint takes the original design, which has no entries to label", force = fake_force{locked = {"splitter"}}},
+        {label = "no force is given, so nothing is known to be researched", force = nil},
+      }
+
+      for _, case in ipairs(without_panels) do
+        it("puts no panel on the blueprint when " .. case.label, function()
+          _G.prototypes = circuit_game(case.game)
+
+          local result = generator.generate("electronic-circuit", 50, case.force)
+
+          assert.are.same({}, icons_of(result.entities))
+        end)
+      end
+    end)
+
     it("tells the player the items of the belts that come in, from the top of the blueprint down", function()
       _G.prototypes = circuit_game()
 

@@ -40,7 +40,7 @@ end
 ---@param entities bpgen.Entity[]
 ---@param options bpgen.LightOptions
 ---@return table<string, true>
-local function taken_tiles(entities, options)
+function lights.taken_tiles(entities, options)
   local belts, taken, step = {}, {}, steps()
   for _, name in ipairs(options.belts or {}) do
     belts[name] = true
@@ -149,7 +149,7 @@ end
 ---@param entities bpgen.Entity[]  the finished blueprint; the lamps are appended
 ---@param options bpgen.LightOptions
 function lights.add(entities, options)
-  local taken = taken_tiles(entities, options)
+  local taken = lights.taken_tiles(entities, options)
   local list, powered = powered_tiles(entities, options)
   local function free(x, y)
     return powered[key(x, y)] and not taken[key(x, y)]

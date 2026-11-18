@@ -21,6 +21,7 @@
 ---@field pipe? string  the pipe, for the trunk of pipes of a step that takes a fluid
 ---@field pipe_to_ground? string  the underground pipe, which brings the fluid under the belts to the machines of such a step
 ---@field pump? string  the pump at the water inlet, which moves the fluid through the pipes
+---@field panel? string  the display panel that labels a belt the player brings in (see scripts/labels.lua)
 
 -- What `lights.add` needs to know of the game.
 ---@class bpgen.LightOptions
@@ -30,6 +31,13 @@
 ---@field size_of fun(entity: bpgen.Entity): integer, integer  how many tiles across and along the map an entity covers
 ---@field belts? string[]  prototype names of belts, whose tile ahead of them stays free for the belt to go on
 ---@field inlets? string[]  prototype names of things whose input is the tile behind them (a pump, facing east, where the fluid comes in), which stays free
+
+-- What `labels.add` needs to know of the game.
+---@class bpgen.LabelOptions
+---@field panel string  prototype name of the display panel
+---@field size_of fun(entity: bpgen.Entity): integer, integer  how many tiles across and along the map an entity covers
+---@field belts? string[]  prototype names of belts, whose tile ahead of them stays free for the belt to go on
+---@field inlets? string[]  prototype names of things whose input is the tile behind them, which stays free
 
 ---@class bpgen.Names : bpgen.SharedNames  prototype names one column of the layout builds with
 ---@field machine string
