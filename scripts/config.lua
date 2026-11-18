@@ -130,6 +130,8 @@ local config = {
     -- A step with one ingredient on top of a step with several inputs: the column of machines stands beside the column that takes them.
     ["hazard-concrete"] = true,
     ["refined-hazard-concrete"] = true,
+    -- Three made ingredients (piercing rounds, a grenade and walls), one belt of each material only (steel, and coal for the grenade).
+    ["military-science-pack"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns
