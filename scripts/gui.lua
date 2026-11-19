@@ -71,7 +71,7 @@ local function open_window(player)
   }
   frame.auto_center = true
 
-  frame.add{type = "label", caption = messages.item_caption()}
+  frame.add{type = "label", caption = messages.item_label()}
   local unlocked = generator.unlocked_products(player.force)
   local item_button = frame.add{
     type = "choose-elem-button",
@@ -86,7 +86,7 @@ local function open_window(player)
     end
   end
 
-  frame.add{type = "label", caption = messages.rate_caption()}
+  frame.add{type = "label", caption = messages.rate_label()}
   frame.add{type = "label", name = MAX_RATE_LABEL_NAME}
   frame.add{
     type = "textfield",
@@ -99,8 +99,8 @@ local function open_window(player)
   update_max_rate(frame, player.force)
 
   local buttons = frame.add{type = "flow", direction = "horizontal"}
-  buttons.add{type = "button", name = CLOSE_BUTTON_NAME, caption = messages.close_caption()}
-  buttons.add{type = "button", name = GENERATE_BUTTON_NAME, caption = messages.generate_caption()}
+  buttons.add{type = "button", name = CLOSE_BUTTON_NAME, caption = messages.close()}
+  buttons.add{type = "button", name = GENERATE_BUTTON_NAME, caption = messages.generate()}
 
   -- Makes the Esc and E keys close our window (this raises on_gui_closed).
   player.opened = frame

@@ -461,8 +461,8 @@ local function add_unlocked(job, force)
   local names = job.names
   job.fast_inserter_rotation_speed = fast_rotation_speed(names, force)
   job.lamp_supply_distance = lamp_distance(names, force)
-  job.inputs = input_options(names, job.belt_speed, force)
-  job.labels = wants_labels(names, force, job.inputs ~= nil)
+  job.input_options = input_options(names, job.belt_speed, force)
+  job.labels = wants_labels(names, force, job.input_options ~= nil)
   return job
 end
 
@@ -567,7 +567,7 @@ end
 ---@param job bpgen.Job
 ---@return boolean
 local function can_weave(job)
-  return job.inputs ~= nil and job.inputs.underground_reach >= layout.WEAVE_REACH
+  return job.input_options ~= nil and job.input_options.underground_reach >= layout.WEAVE_REACH
     and layout.most_woven_belts(layout.pole_reach(job.names.pole_supply_distance)) >= 2
 end
 
@@ -644,7 +644,7 @@ end
 ---@param stage bpgen.StageData
 ---@return LocalisedString|nil
 local function recipe_problem(job, stage)
-  return fuel_problem(stage, job.inputs ~= nil) or fluid_problem(job, stage) or belts_problem(stage, most_input_belts(job))
+  return fuel_problem(stage, job.input_options ~= nil) or fluid_problem(job, stage) or belts_problem(stage, most_input_belts(job))
 end
 
 -- The reason this step's machine cannot be built with, as a message for the player, or nil.
@@ -706,24 +706,24 @@ end
 
 -- The machines of every step, from the first to the last, for the blueprint's description.
 ---@param planned bpgen.PlannedStage
----@return bpgen.StepSummary[]
-local function step_summaries(planned)
-  local steps = {}
-  for _, step in ipairs(in_order(planned, {})) do
-    steps[#steps + 1] = {machines = step.plan.machines, machine = step.stage.machine}
+---@return bpgen.StageSummary[]
+local function stage_summaries(planned)
+  local summaries = {}
+  for _, planned_stage in ipairs(in_order(planned, {})) do
+    summaries[#summaries + 1] = {machines = planned_stage.plan.machines, machine = planned_stage.stage.machine}
   end
-  return steps
+  return summaries
 end
 
 -- What one step takes itself a minute when it makes `crafts` crafts a minute: the ingredients
 -- no step makes, which are raw, then, in a machine that burns fuel, the fuel the machines burn
 -- while crafting, then the fluids the recipe takes.
----@param step bpgen.PlannedStage
+---@param planned bpgen.PlannedStage
 ---@param crafts number
 ---@param made_by table<string, bpgen.PlannedStage>  the steps below it, by the item they make
 ---@return bpgen.Demand[]
-local function own_demand(step, crafts, made_by)
-  local stage, demand = step.stage, {}
+local function own_demand(planned, crafts, made_by)
+  local stage, demand = planned.stage, {}
   for _, ingredient in ipairs(stage.recipe.ingredients) do
     if not made_by[ingredient.name] then
       demand[#demand + 1] = {name = ingredient.name, amount = crafts * ingredient.amount}
@@ -768,22 +768,22 @@ end
 -- ingredient no step makes is raw) and, in a machine that burns fuel, the fuel the machines
 -- burn while crafting (see `own_demand`). `totals.order` lists the raw items in the order the
 -- steps need them, from the first step; `totals.fuel_order` the fuels, which go after them, and `totals.fluid_order` the fluids.
----@param step bpgen.PlannedStage  gets its `demand`
+---@param planned bpgen.PlannedStage  gets its `demand`
 ---@param makes number  how many of the step's item it is asked for
 ---@param totals bpgen.DemandTotals
-local function add_demand(step, makes, totals)
-  local crafts = makes / planner.amount_made(step.stage.recipe, step.stage.item)
+local function add_demand(planned, makes, totals)
+  local crafts = makes / planner.amount_made(planned.stage.recipe, planned.stage.item)
   local made_by = {}
-  for _, supplier in ipairs(step.suppliers) do
+  for _, supplier in ipairs(planned.suppliers) do
     made_by[supplier.stage.item] = supplier
   end
-  for _, ingredient in ipairs(step.stage.recipe.ingredients) do
+  for _, ingredient in ipairs(planned.stage.recipe.ingredients) do
     if made_by[ingredient.name] then
       add_demand(made_by[ingredient.name], crafts * ingredient.amount, totals)
     end
   end
-  step.demand = own_demand(step, crafts, made_by)
-  for _, entry in ipairs(step.demand) do
+  planned.demand = own_demand(planned, crafts, made_by)
+  for _, entry in ipairs(planned.demand) do
     add_to_totals(totals, entry)
   end
 end
@@ -821,7 +821,7 @@ end
 ---@param machine_size integer
 ---@return boolean
 local function may_be_wide(job, stage, machine_size)
-  return job.inputs ~= nil and stage.raw_item == nil
+  return job.input_options ~= nil and stage.raw_item == nil
     and stage.fuel ~= nil and layout.pole_reach(job.names.pole_supply_distance) > machine_size
 end
 
@@ -935,11 +935,11 @@ end
 -- material: its raw ingredients, then the fuel. A step with made ingredients takes either one raw
 -- item and no fuel (the feed of its raw column), or only fuel (`fuel_problem` allows nothing else). A fluid does not
 -- come in on a belt: the pipes bring it.
----@param step bpgen.PlannedStage  with its `demand`
+---@param planned bpgen.PlannedStage  with its `demand`
 ---@return bpgen.Feed
-local function feed_of(step)
+local function feed_of(planned)
   local items = {}
-  for _, entry in ipairs(step.demand) do
+  for _, entry in ipairs(planned.demand) do
     if not entry.is_fluid then
       items[#items + 1] = {name = entry.name, amount = entry.amount}
     end
@@ -949,13 +949,13 @@ end
 
 -- What a step built wide takes from its two input belts: of its ingredient, as much as one lane carries on the first belt
 -- (the fuel on the other lane) and the rest on both lanes of the second.
----@param step bpgen.PlannedStage  with its `demand`
+---@param planned bpgen.PlannedStage  with its `demand`
 ---@param lane number  what one lane of a belt carries a minute
 ---@return bpgen.Feed first
 ---@return bpgen.Feed second
-local function wide_feeds(step, lane)
+local function wide_feeds(planned, lane)
   local first, second = {}, {}
-  for _, entry in ipairs(step.demand) do
+  for _, entry in ipairs(planned.demand) do
     local on_first = entry.is_fuel and entry.amount or math.min(entry.amount, lane)
     first[#first + 1] = {name = entry.name, amount = on_first}
     if not entry.is_fuel then
@@ -969,20 +969,20 @@ end
 -- belt of raw items that ends in it (the first result; for a step built wide, on two belts: the second result is what
 -- the second one carries), a step that eats what another step makes and burns fuel takes the fuel on the free lane of
 -- the belt between them (the third).
----@param step bpgen.PlannedStage  with its `demand`
+---@param planned bpgen.PlannedStage  with its `demand`
 ---@param lane number  what one lane of a belt carries a minute
 ---@return bpgen.Feed|nil feed
 ---@return bpgen.Feed|nil second_feed
 ---@return bpgen.Feed|nil fuel_feed
-local function feeds_of(step, lane)
-  if #step.suppliers > 0 then
-    return nil, nil, step.stage.fuel and feed_of(step) or nil
+local function feeds_of(planned, lane)
+  if #planned.suppliers > 0 then
+    return nil, nil, planned.stage.fuel and feed_of(planned) or nil
   end
-  if step.plan.wide then
-    local feed, second_feed = wide_feeds(step, lane)
+  if planned.plan.wide then
+    local feed, second_feed = wide_feeds(planned, lane)
     return feed, second_feed, nil
   end
-  return feed_of(step), nil, nil
+  return feed_of(planned), nil, nil
 end
 
 -- The size of a step's machines and how many inserters each has, as the layout wants it: a step built wide has its second
@@ -992,22 +992,22 @@ end
 -- does for a 2 x 2 machine: they are 3 tiles away) and so also powers the machine and the output inserters, which
 -- takes half the poles; a column built wide needs it, as its input side is full (it is only built wide when the pole
 -- reaches, see `may_be_wide`). A column that takes a fluid keeps poles of its own beside its pipes, whatever the pole reaches.
----@param step bpgen.PlannedStage
+---@param planned bpgen.PlannedStage
 ---@param pole_reach integer  how many tiles away from its own a pole of the blueprint powers (`layout.pole_reach`)
 ---@return bpgen.Shape
-local function shape_of(step, pole_reach)
-  local wide = step.plan.wide
-  local fuel_belt = wide and #step.suppliers > 0
-  local machine_size = machine_size_of(step.stage)
-  local fluid = #step.stage.recipe.fluids > 0
+local function shape_of(planned, pole_reach)
+  local wide = planned.plan.wide
+  local fuel_belt = wide and #planned.suppliers > 0
+  local machine_size = machine_size_of(planned.stage)
+  local fluid = #planned.stage.recipe.fluids > 0
   return {
     machine_size = machine_size,
-    input_inserters = step.plan.input_inserters,
-    input_fast = step.plan.input_fast,
-    long_inserters = step.plan.long_inserters,
-    input_belts = step.plan.belt_inserters,
-    output_inserters = step.plan.output_inserters,
-    output_fast = step.plan.output_fast,
+    input_inserters = planned.plan.input_inserters,
+    input_fast = planned.plan.input_fast,
+    long_inserters = planned.plan.long_inserters,
+    input_belts = planned.plan.belt_inserters,
+    output_inserters = planned.plan.output_inserters,
+    output_fast = planned.plan.output_fast,
     output_paired = wide,
     powered_from_output = pole_reach > machine_size and not fluid,
     second_input_belt = wide and not fuel_belt,
@@ -1020,27 +1020,27 @@ end
 -- ingredients, each saying which belt of this step it rides, then the raw item that goes
 -- with them, if any, which has no machines and only a belt (on belt a). A step that eats only
 -- raw items also says what it takes of them (`feed`), which `rows.build_pure` uses.
----@param step bpgen.PlannedStage  with its `demand`
+---@param planned bpgen.PlannedStage  with its `demand`
 ---@param lane number  what one lane of a belt carries a minute
 ---@param pole_reach integer  how many tiles away from its own a pole of the blueprint powers (`layout.pole_reach`)
 ---@return bpgen.StageLayout
-local function layout_stage(step, lane, pole_reach)
+local function layout_stage(planned, lane, pole_reach)
   local suppliers = {}
-  for index, supplier in ipairs(step.suppliers) do
+  for index, supplier in ipairs(planned.suppliers) do
     suppliers[index] = layout_stage(supplier, lane, pole_reach)
-    suppliers[index].belt = planner.belt_of(step.plan.belts, supplier.stage.item)
+    suppliers[index].belt = planner.belt_of(planned.plan.belts, supplier.stage.item)
   end
-  local raw_item = step.stage.raw_item
+  local raw_item = planned.stage.raw_item
   if raw_item then
-    suppliers[#suppliers + 1] = {raw_item = raw_item, feed = feed_of(step)}
+    suppliers[#suppliers + 1] = {raw_item = raw_item, feed = feed_of(planned)}
   end
-  local feed, second_feed, fuel_feed = feeds_of(step, lane)
+  local feed, second_feed, fuel_feed = feeds_of(planned, lane)
   return {
-    machine_count = step.plan.machines,
-    load = step.plan.load,
-    machine = step.stage.machine,
-    recipe = recipe_to_set(step.stage),
-    shape = shape_of(step, pole_reach),
+    machine_count = planned.plan.machines,
+    load = planned.plan.load,
+    machine = planned.stage.machine,
+    recipe = recipe_to_set(planned.stage),
+    shape = shape_of(planned, pole_reach),
     suppliers = suppliers,
     feed = feed,
     second_feed = second_feed,
@@ -1056,13 +1056,13 @@ end
 ---@return bpgen.Entity[] entities
 ---@return string[]|nil belts
 ---@return bpgen.StageLayout root  what the blueprint was laid out from
----@return bpgen.Input[] supplies  the belts the player brings in (none for the original design)
+---@return bpgen.Supply[] supplies  the belts the player brings in (none for the original design)
 local function build_entities(job, planned)
   local root = layout_stage(planned, planner.lane_items_per_minute(job.belt_speed), layout.pole_reach(job.names.pole_supply_distance))
-  if not job.inputs then
+  if not job.input_options then
     return (rows.build(root, job.names)), nil, root, {}
   end
-  local entities, supplies = rows.build_pure(root, job.names, job.inputs)
+  local entities, supplies = rows.build_pure(root, job.names, job.input_options)
   local belts = {}
   for index, supply in ipairs(supplies) do
     belts[index] = supply.item
@@ -1088,7 +1088,7 @@ end
 ---@param job bpgen.Job
 ---@param entities bpgen.Entity[]
 ---@param root bpgen.StageLayout  what the blueprint was laid out from
----@param supplies bpgen.Input[]  the belts the player brings in
+---@param supplies bpgen.Supply[]  the belts the player brings in
 local function add_labels(job, entities, root, supplies)
   if not job.labels then
     return
@@ -1130,7 +1130,7 @@ local function assemble(job, planned)
   add_lights(job, entities, root)
   return {
     entities = entities,
-    description = messages.description(job.item_name, planned.plan.output_per_minute, step_summaries(planned)),
+    description = messages.description(job.item_name, planned.plan.output_per_minute, stage_summaries(planned)),
     message = messages.ready(planned.plan.output_per_minute, planned.stage.item, raws, belts),
   }
 end

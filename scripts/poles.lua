@@ -83,7 +83,7 @@ end
 -- How far apart two poles of a bridge may be and still be wired.
 ---@param bridge bpgen.PoleBridge
 ---@return number
-local function wire_reach(bridge)
+local function bridge_reach(bridge)
   return bridge.wire_distance - WIRE_MARGIN
 end
 
@@ -117,7 +117,7 @@ end
 ---@param to bpgen.Entity
 ---@return bpgen.Entity
 local function add_bridge_pole(bridge, from, to)
-  local centre = free_tile_toward(bridge.taken, wire_reach(bridge), from.position, to.position)
+  local centre = free_tile_toward(bridge.taken, bridge_reach(bridge), from.position, to.position)
   assert(centre and distance(centre, to.position) < distance(from.position, to.position), "poles: no room for a pole between two poles")
   local tile = grid.top_left_tile(centre)
   bridge.taken[grid.key(tile.x, tile.y)] = true
@@ -131,7 +131,7 @@ end
 ---@param bridge bpgen.PoleBridge|nil
 local function connect(from, to, bridge)
   local previous = from
-  while bridge and distance(previous.position, to.position) > wire_reach(bridge) do
+  while bridge and distance(previous.position, to.position) > bridge_reach(bridge) do
     local pole = add_bridge_pole(bridge, previous, to)
     layout.connect_poles(previous, pole)
     previous = pole

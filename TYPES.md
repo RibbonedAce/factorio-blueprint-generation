@@ -32,16 +32,16 @@ flowchart LR
   rows -->|"FeedLeaf list, lane size"| feeds["feeds.lua"]
   feeds -->|"FeedPlan"| rows
   rows -->|"FeedPlan, SharedNames, reach"| inputs["inputs.lua"]
-  inputs -->|"NewEntity list, Input list, row where each belt ends"| rows
+  inputs -->|"NewEntity list, Supply list, row where each belt ends"| rows
   rows -->|"pole groups, PoleBridge"| poles["poles.lua"]
   poles -->|"wires on poles, bridge poles"| rows
-  rows -->|"Entity list, Input list"| generator
-  generator -->|"Entity list, Input list, LabelOptions"| labels["labels.lua"]
+  rows -->|"Entity list, Supply list"| generator
+  generator -->|"Entity list, Supply list, LabelOptions"| labels["labels.lua"]
   labels -->|"display panels added to the Entity list"| generator
   generator -->|"Entity list, LightOptions"| lights["lights.lua"]
   lights -->|"lamps added to the Entity list"| generator
 
-  generator -->|"RawAmount, StepSummary, belts"| messages["messages.lua"]
+  generator -->|"RawAmount, StageSummary, belts"| messages["messages.lua"]
   messages -->|"LocalisedString, description"| generator
   generator -->|"Generated"| gui
   gui -->|"blueprint on the cursor"| player
@@ -453,7 +453,7 @@ classDiagram
   FeedPlan *-- PureBelt : belts and buses
 
   class Band
-  class Input {
+  class Supply {
     x
     y
     item
@@ -461,7 +461,7 @@ classDiagram
 
   Band ..> FeedPlan : inputs.lay
   Band o-- NewEntity : entities
-  Band o-- Input : supplies
+  Band o-- Supply : supplies
 
   class PolePair {
     distance
@@ -482,7 +482,7 @@ The order of the work in `rows.build_pure` is: columns are made (`Column`), the 
 
 | Where | Types |
 |---|---|
-| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StepSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Input, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
+| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
 | `scripts/generator.lua` | EnergySource, Candidate, StageData, Job, PlannedStage, Demand, DemandTotals |
 | `scripts/planner.lua` | InputInserters, MachineRates, StageContext, Sizes |

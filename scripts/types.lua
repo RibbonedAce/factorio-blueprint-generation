@@ -268,7 +268,7 @@
 ---@field underground_reach integer  the most tiles an underground belt spans, from its entrance to its exit
 
 -- A belt of one material that the player brings in: the tile where it starts, at the west edge. The item rides both lanes.
----@class bpgen.Input
+---@class bpgen.Supply  a belt the player brings in
 ---@field x integer  tile column
 ---@field y integer  tile row
 ---@field item string
@@ -350,7 +350,7 @@
 ---@field name string
 ---@field amount number  a minute
 
----@class bpgen.StepSummary  the machines of one step
+---@class bpgen.StageSummary  the machines of one stage
 ---@field machines integer
 ---@field machine string  prototype name
 

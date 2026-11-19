@@ -676,7 +676,7 @@ local PIPE_REACH = 10
 -- The tops of the trunks of pipes of the columns that take a fluid, as tiles.
 ---@param columns bpgen.Column[]
 ---@return {x: integer, y: integer}[]
-local function trunks_of(columns)
+local function pipe_trunks_of(columns)
   local trunks = {}
   for _, column in ipairs(columns) do
     local trunk = column.block and column.block.pipe_trunk
@@ -791,7 +791,7 @@ end
 ---@return bpgen.Entity
 local function add_water_inlet(entities, columns, names)
   local taken, left, top = covered_by(entities, columns, names)
-  local trunks = trunks_of(columns)
+  local trunks = pipe_trunks_of(columns)
   local last = last_trunk_column(trunks, left)
   local row = pipe_row_of(taken, trunks, top)
   local function add(entity)
@@ -871,7 +871,7 @@ function rows.build(root, names)
   place_blocks(entities, columns, names)
   add_raw_belts(entities, names, runs)
   add_arcs(entities, names, top)
-  local inlet_pole = #trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
+  local inlet_pole = #pipe_trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
   join_poles(columns, inlet_pole and pole_bridge(entities, columns, names) or nil, inlet_pole)
   return entities, raw_stages_of(runs)
 end
@@ -1042,7 +1042,7 @@ end
 ---@param names bpgen.SharedNames
 ---@param options bpgen.InputOptions
 ---@return bpgen.Entity[] entities
----@return bpgen.Input[] inputs
+---@return bpgen.Supply[] supplies
 function rows.build_pure(root, names, options)
   local top = column_of(root, names, true)
   local columns = {}
@@ -1064,7 +1064,7 @@ function rows.build_pure(root, names, options)
   if top.kind == "final" then
     add_arcs(entities, names, top)
   end
-  local inlet_pole = #trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
+  local inlet_pole = #pipe_trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
   join_poles(columns, pole_bridge(entities, columns, names), inlet_pole)
   return entities, supplies
 end

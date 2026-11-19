@@ -61,7 +61,7 @@ local FEEDER_OFFSET = {a = -1, b = 1, pure = 0}
 ---@field entities bpgen.NewEntity[]
 ---@field names bpgen.SharedNames
 ---@field buses bpgen.PureBelt[]
----@field supplies bpgen.Input[]
+---@field supplies bpgen.Supply[]
 local Band = {}
 Band.__index = Band
 
@@ -410,7 +410,7 @@ end
 ---@param names bpgen.SharedNames
 ---@param reach integer  the most tiles an underground belt spans
 ---@return bpgen.NewEntity[] entities
----@return bpgen.Input[] supplies
+---@return bpgen.Supply[] supplies
 ---@return table<bpgen.FeedLeaf, integer> ends
 function inputs.lay(plan, names, reach)
   assert(reach >= MIN_REACH, "inputs: the underground belt does not span enough tiles")

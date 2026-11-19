@@ -47,22 +47,22 @@ function messages.window_title()
 end
 
 ---@return LocalisedString
-function messages.item_caption()
+function messages.item_label()
   return text("item-label")
 end
 
 ---@return LocalisedString
-function messages.rate_caption()
+function messages.rate_label()
   return text("rate-label")
 end
 
 ---@return LocalisedString
-function messages.close_caption()
+function messages.close()
   return text("close")
 end
 
 ---@return LocalisedString
-function messages.generate_caption()
+function messages.generate()
   return text("generate")
 end
 
@@ -271,12 +271,12 @@ end
 -- string, not a LocalisedString: a blueprint's description is stored as written.
 ---@param item_name string
 ---@param made number  what the machines really make a minute
----@param steps bpgen.StepSummary[]  from the first step to the last
+---@param stages bpgen.StageSummary[]  from the first stage to the last
 ---@return string
-function messages.description(item_name, made, steps)
+function messages.description(item_name, made, stages)
   local machines = {}
-  for _, step in ipairs(steps) do
-    machines[#machines + 1] = string.format("%d x %s", step.machines, step.machine)
+  for _, stage in ipairs(stages) do
+    machines[#machines + 1] = string.format("%d x %s", stage.machines, stage.machine)
   end
   return string.format("%s: %s per minute from %s", item_name, messages.number(made), table.concat(machines, ", "))
 end

@@ -24,8 +24,8 @@ local TRIES = {{x = 0, y = -1}, {x = 0, y = 1}, {x = -1, y = -1}, {x = -1, y = 1
 
 -- Whether a tile is in the row of an entry other than `supply` (where the belt the player brings in arrives) or right above
 -- or under it.
----@param supply bpgen.Input
----@param supplies bpgen.Input[]
+---@param supply bpgen.Supply
+---@param supplies bpgen.Supply[]
 ---@param y integer  the row of the tile
 ---@return boolean
 local function next_to_another(supply, supplies, y)
@@ -38,8 +38,8 @@ local function next_to_another(supply, supplies, y)
 end
 
 -- The first free tile among those tried for `supply`, or nil.
----@param supply bpgen.Input
----@param supplies bpgen.Input[]
+---@param supply bpgen.Supply
+---@param supplies bpgen.Supply[]
 ---@param blocked table<string, true>
 ---@return {x: integer, y: integer}|nil
 local function spot_for(supply, supplies, blocked)
@@ -54,7 +54,7 @@ end
 
 -- Adds a display panel for each entry of `supplies` that has room for one, numbered after the entities there are.
 ---@param entities bpgen.Entity[]  the finished blueprint; the panels are appended
----@param supplies bpgen.Input[]  the belts the player brings in
+---@param supplies bpgen.Supply[]  the belts the player brings in
 ---@param options bpgen.LabelOptions
 function labels.add(entities, supplies, options)
   local blocked = lights.taken_tiles(entities, {belts = options.belts, inlets = options.inlets, size_of = options.size_of})

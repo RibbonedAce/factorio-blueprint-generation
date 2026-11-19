@@ -30,10 +30,10 @@ end
 local function every_message()
   return {
     window_title = messages.window_title(),
-    item_caption = messages.item_caption(),
-    rate_caption = messages.rate_caption(),
-    close_caption = messages.close_caption(),
-    generate_caption = messages.generate_caption(),
+    item_label = messages.item_label(),
+    rate_label = messages.rate_label(),
+    close = messages.close(),
+    generate = messages.generate(),
     max_rate_no_item = messages.max_rate_no_item(),
     max_rate = messages.max_rate(450),
     no_item = messages.no_item(),
