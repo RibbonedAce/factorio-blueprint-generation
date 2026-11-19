@@ -477,7 +477,7 @@ end
 ---@param belt_name string
 local function face_north(final, belt_name)
   for _, entity in ipairs(final.block.entities) do
-    if entity.name == belt_name and entity.position.x - 0.5 == final.x0 then
+    if entity.name == belt_name and grid.top_left_tile(entity.position).x == final.x0 then
       entity.direction = north
     end
   end
@@ -527,8 +527,9 @@ end
 local function input_belt_end(final, belt_name)
   local last = -1
   for _, entity in ipairs(final.block.entities) do
-    if entity.name == belt_name and entity.position.x - 0.5 == final.x0 then
-      last = math.max(last, entity.position.y - 0.5)
+    local tile = grid.top_left_tile(entity.position)
+    if entity.name == belt_name and tile.x == final.x0 then
+      last = math.max(last, tile.y)
     end
   end
   return last
@@ -632,18 +633,25 @@ local function machine_sizes(columns)
   return sizes
 end
 
+-- How many tiles each entity of the blueprint covers across and along the map.
+---@param columns bpgen.Column[]
+---@param names bpgen.SharedNames
+---@return fun(entity: bpgen.Entity): integer, integer
+local function footprint_of(columns, names)
+  local sizes = machine_sizes(columns)
+  return function(entity)
+    return inputs.footprint(entity, names, sizes)
+  end
+end
+
 -- What the bridge poles need to know of the blueprint: where they go (after its entities) and which tiles those cover.
 ---@param entities bpgen.Entity[]
 ---@param columns bpgen.Column[]
 ---@param names bpgen.SharedNames
 ---@return bpgen.PoleBridge
 local function pole_bridge(entities, columns, names)
-  local sizes = machine_sizes(columns)
-  local function size_of(entity)
-    return inputs.footprint(entity, names, sizes)
-  end
   return {
-    entities = entities, taken = poles.taken_tiles(entities, size_of),
+    entities = entities, taken = grid.taken_tiles(entities, footprint_of(columns, names)),
     pole = names.pole, wire_distance = assert(names.pole_wire_distance, "rows: the names give no wire distance for the pole"),
   }
 end
@@ -668,7 +676,7 @@ local function trunks_of(columns)
   return trunks
 end
 
--- The tiles the entities cover, as a set of "x,y", and the top left corner of the blueprint.
+-- The tiles the entities cover, as a set of `grid.key`s, and the top left corner of the blueprint.
 ---@param entities bpgen.Entity[]
 ---@param columns bpgen.Column[]
 ---@param names bpgen.SharedNames
@@ -676,19 +684,13 @@ end
 ---@return integer left
 ---@return integer top
 local function covered_by(entities, columns, names)
-  local sizes = machine_sizes(columns)
-  local taken, left, top = {}, math.huge, math.huge
+  local size_of = footprint_of(columns, names)
+  local left, top = math.huge, math.huge
   for _, entity in ipairs(entities) do
-    local width, height = inputs.footprint(entity, names, sizes)
-    local tile = grid.top_left_tile(entity.position, width, height)
+    local tile = grid.top_left_tile(entity.position, size_of(entity))
     left, top = math.min(left, tile.x), math.min(top, tile.y)
-    for dx = 0, width - 1 do
-      for dy = 0, height - 1 do
-        taken[(tile.x + dx) .. "," .. (tile.y + dy)] = true
-      end
-    end
   end
-  return taken, left, top
+  return grid.taken_tiles(entities, size_of), left, top
 end
 
 -- Whether every tile of a column from row `first` to row `last` is free.
@@ -699,7 +701,7 @@ end
 ---@return boolean
 local function is_free_between(taken, x, first, last)
   for y = first, last do
-    if taken[x .. "," .. y] then
+    if taken[grid.key(x, y)] then
       return false
     end
   end
@@ -722,7 +724,7 @@ local function add_pipe_up(add, taken, names, trunk, row)
     return
   end
   local exit = row + 1
-  assert(trunk.y - 1 - exit < PIPE_REACH and not taken[trunk.x .. "," .. exit] and not taken[trunk.x .. "," .. (trunk.y - 1)],
+  assert(trunk.y - 1 - exit < PIPE_REACH and not taken[grid.key(trunk.x, exit)] and not taken[grid.key(trunk.x, trunk.y - 1)],
     "rows: the pipe of a column that takes a fluid has to pass under more belts than an underground pipe spans")
   add({name = names.pipe_to_ground, position = grid.position(trunk.x, trunk.y - 1), direction = south})
   add({name = names.pipe_to_ground, position = grid.position(trunk.x, exit), direction = north})

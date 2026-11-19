@@ -21,13 +21,6 @@ local labels = {}
 -- The tiles tried for the panel of an entry, as steps from the entry tile, the first free one taken.
 local TRIES = {{x = 0, y = -1}, {x = 0, y = 1}, {x = -1, y = -1}, {x = -1, y = 1}}
 
----@param x integer
----@param y integer
----@return string
-local function key(x, y)
-  return x .. "," .. y
-end
-
 -- Whether a tile is in the row of an entry other than `supply` (where the belt the player brings in arrives) or right above
 -- or under it.
 ---@param supply bpgen.Input
@@ -51,7 +44,7 @@ end
 local function spot_for(supply, supplies, blocked)
   for _, step in ipairs(TRIES) do
     local x, y = supply.x + step.x, supply.y + step.y
-    if not blocked[key(x, y)] and not next_to_another(supply, supplies, y) then
+    if not blocked[grid.key(x, y)] and not next_to_another(supply, supplies, y) then
       return {x = x, y = y}
     end
   end

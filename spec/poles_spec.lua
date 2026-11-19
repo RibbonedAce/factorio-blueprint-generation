@@ -5,6 +5,7 @@
 ---@diagnostic disable: undefined-field  -- luassert's `assert` has fields (`assert.are`, `assert.is_nil`, ...) the editor cannot see
 
 local builders = require("spec.support.builders")
+local grid = require("scripts.grid")
 local poles = require("scripts.poles")
 
 local NAMES = builders.NAMES
@@ -193,7 +194,7 @@ describe("poles", function()
       local taken = {}
       for x = -8, 16 do
         for y = -8, 8 do
-          taken[x .. "," .. y] = true
+          taken[grid.key(x, y)] = true
         end
       end
 
@@ -201,27 +202,4 @@ describe("poles", function()
     end)
   end)
 
-  describe("the tiles that hold something", function()
-    it("marks every tile an entity covers, from its top-left tile", function()
-      local furnace = builders.furnace(2, 3)
-
-      local taken = poles.taken_tiles({furnace}, function() return 2, 2 end)
-
-      assert.are.same({["2,3"] = true, ["3,3"] = true, ["2,4"] = true, ["3,4"] = true}, taken)
-    end)
-
-    it("asks for the size of each entity separately", function()
-      local belt, splitter = builders.belt(0, 0), builders.splitter(5, 5, defines.direction.south)
-      local function size_of(entity)
-        if entity.name == NAMES.splitter then
-          return 2, 1
-        end
-        return 1, 1
-      end
-
-      local taken = poles.taken_tiles({belt, splitter}, size_of)
-
-      assert.are.same({["0,0"] = true, ["5,5"] = true, ["6,5"] = true}, taken)
-    end)
-  end)
 end)

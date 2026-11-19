@@ -29,41 +29,43 @@ local function steps()
   }
 end
 
----@param x integer
----@param y integer
----@return string
-local function key(x, y)
-  return x .. "," .. y
+-- The set of names in a list, or an empty one for no list.
+---@param list string[]|nil
+---@return table<string, true>
+local function set_of(list)
+  local set = {}
+  for _, name in ipairs(list or {}) do
+    set[name] = true
+  end
+  return set
 end
 
--- The tiles that hold something, and the tiles ahead of the belts.
+-- Marks the tile next to each entity whose name is in `names`, on the way it faces: the tile ahead of it for a `sign` of 1,
+-- the tile behind it for -1.
+---@param taken table<string, true>
+---@param entities bpgen.Entity[]
+---@param names table<string, true>
+---@param size_of fun(entity: bpgen.Entity): integer, integer
+---@param sign integer
+local function mark_next_to(taken, entities, names, size_of, sign)
+  local step = steps()
+  for _, entity in ipairs(entities) do
+    local way = step[entity.direction]
+    if names[entity.name] and way then
+      local tile = grid.top_left_tile(entity.position, size_of(entity))
+      taken[grid.key(tile.x + sign * way.x, tile.y + sign * way.y)] = true
+    end
+  end
+end
+
+-- The tiles that hold something, the tiles ahead of the belts and the tiles behind the inlets.
 ---@param entities bpgen.Entity[]
 ---@param options bpgen.LightOptions
 ---@return table<string, true>
 function lights.taken_tiles(entities, options)
-  local belts, taken, step = {}, {}, steps()
-  for _, name in ipairs(options.belts or {}) do
-    belts[name] = true
-  end
-  local inlets = {}
-  for _, name in ipairs(options.inlets or {}) do
-    inlets[name] = true
-  end
-  for _, entity in ipairs(entities) do
-    local width, height = options.size_of(entity)
-    local tile = grid.top_left_tile(entity.position, width, height)
-    for dx = 0, width - 1 do
-      for dy = 0, height - 1 do
-        taken[key(tile.x + dx, tile.y + dy)] = true
-      end
-    end
-    if belts[entity.name] and step[entity.direction] then
-      taken[key(tile.x + step[entity.direction].x, tile.y + step[entity.direction].y)] = true
-    end
-    if inlets[entity.name] and step[entity.direction] then -- the tile behind it, where its input is
-      taken[key(tile.x - step[entity.direction].x, tile.y - step[entity.direction].y)] = true
-    end
-  end
+  local taken = grid.taken_tiles(entities, options.size_of)
+  mark_next_to(taken, entities, set_of(options.belts), options.size_of, 1)
+  mark_next_to(taken, entities, set_of(options.inlets), options.size_of, -1) -- where its input is
   return taken
 end
 
@@ -81,8 +83,8 @@ local function powered_tiles(entities, options)
       for dx = -reach, reach do
         for dy = -reach, reach do
           local x, y = centre.x + dx, centre.y + dy
-          if not set[key(x, y)] then
-            set[key(x, y)] = true
+          if not set[grid.key(x, y)] then
+            set[grid.key(x, y)] = true
             list[#list + 1] = {x = x, y = y}
           end
         end
@@ -152,7 +154,7 @@ function lights.add(entities, options)
   local taken = lights.taken_tiles(entities, options)
   local list, powered = powered_tiles(entities, options)
   local function free(x, y)
-    return powered[key(x, y)] and not taken[key(x, y)]
+    return powered[grid.key(x, y)] and not taken[grid.key(x, y)]
   end
   local lamps = {}
   for _, tile in ipairs(list) do

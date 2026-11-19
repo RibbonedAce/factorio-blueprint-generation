@@ -72,4 +72,43 @@ describe("grid", function()
       assert.are.same({x = 6, y = 9}, tile)
     end)
   end)
+
+  describe("key", function()
+    it("names a tile by its column and its row", function()
+      local key = grid.key(3, -2)
+
+      assert.are.equal("3,-2", key)
+    end)
+
+    it("names a tile with a fraction by the fraction", function()
+      local key = grid.key(0.5, 1)
+
+      assert.are.equal("0.5,1", key)
+    end)
+  end)
+
+  describe("taken_tiles", function()
+    it("marks every tile an entity covers, from its top-left tile", function()
+      local furnace = {name = "furnace", position = grid.position(2, 3, 2, 2)}
+
+      local taken = grid.taken_tiles({furnace}, function() return 2, 2 end)
+
+      assert.are.same({["2,3"] = true, ["3,3"] = true, ["2,4"] = true, ["3,4"] = true}, taken)
+    end)
+
+    it("asks for the size of each entity separately", function()
+      local belt = {name = "belt", position = grid.position(0, 0)}
+      local splitter = {name = "splitter", position = grid.position(5, 5, 2, 1)}
+      local function size_of(entity)
+        if entity.name == "splitter" then
+          return 2, 1
+        end
+        return 1, 1
+      end
+
+      local taken = grid.taken_tiles({belt, splitter}, size_of)
+
+      assert.are.same({["0,0"] = true, ["5,5"] = true, ["6,5"] = true}, taken)
+    end)
+  end)
 end)

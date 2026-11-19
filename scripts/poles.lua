@@ -25,13 +25,6 @@ local WIRE_MARGIN = 0.5
 ---@field to bpgen.Entity
 ---@field distance number
 
----@param x number
----@param y number
----@return string
-local function tile_key(x, y)
-  return string.format("%g,%g", x, y)
-end
-
 -- Appends the items of `more` to `list`, and gives back `list`.
 ---@generic T
 ---@param list T[]
@@ -101,12 +94,12 @@ end
 ---@return bpgen.Position|nil
 local function free_tile_toward(taken, reach, from, to)
   local best, best_apart
-  local span = math.floor(reach)
+  local span, origin = math.floor(reach), grid.top_left_tile(from)
   for dx = -span, span do
     for dy = -span, span do
-      local x, y = math.floor(from.x) + dx, math.floor(from.y) + dy
+      local x, y = origin.x + dx, origin.y + dy
       local centre = grid.position(x, y)
-      if not taken[tile_key(x, y)] and distance(centre, from) <= reach then
+      if not taken[grid.key(x, y)] and distance(centre, from) <= reach then
         local apart = distance(centre, to)
         if not best or apart < best_apart then
           best, best_apart = centre, apart
@@ -125,7 +118,8 @@ end
 local function add_bridge_pole(bridge, from, to)
   local centre = free_tile_toward(bridge.taken, wire_reach(bridge), from.position, to.position)
   assert(centre and distance(centre, to.position) < distance(from.position, to.position), "poles: no room for a pole between two poles")
-  bridge.taken[tile_key(centre.x - 0.5, centre.y - 0.5)] = true
+  local tile = grid.top_left_tile(centre)
+  bridge.taken[grid.key(tile.x, tile.y)] = true
   local pole = {name = bridge.pole, position = centre} --[[@as bpgen.Entity]]
   bridge.entities[#bridge.entities + 1] = pole
   pole.entity_number = #bridge.entities
@@ -145,25 +139,6 @@ local function connect(from, to, bridge)
     previous = pole
   end
   layout.connect_poles(previous, to)
-end
-
--- The tiles that hold something, for the bridge poles to keep off. `size_of` says how many tiles
--- an entity covers across and along the map.
----@param entities bpgen.Entity[]
----@param size_of fun(entity: bpgen.Entity): integer, integer
----@return table<string, true>
-function poles.taken_tiles(entities, size_of)
-  local taken = {}
-  for _, entity in ipairs(entities) do
-    local width, height = size_of(entity)
-    local tile = grid.top_left_tile(entity.position, width, height)
-    for dx = 0, width - 1 do
-      for dy = 0, height - 1 do
-        taken[tile_key(tile.x + dx, tile.y + dy)] = true
-      end
-    end
-  end
-  return taken
 end
 
 -- Joins groups of poles into one network. Each group is already wired inside; the nearest group

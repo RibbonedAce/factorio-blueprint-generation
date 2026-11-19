@@ -266,7 +266,7 @@
 -- entities to add them to, which tiles are taken, and the pole's name and wire.
 ---@class bpgen.PoleBridge
 ---@field entities bpgen.Entity[]  the poles are added after the ones there, numbered
----@field taken table<string, true>  the tiles that hold something, by "x,y" (see `poles.taken_tiles`)
+---@field taken table<string, true>  the tiles that hold something, by "x,y" (see `grid.taken_tiles`)
 ---@field pole string  prototype name of the pole
 ---@field wire_distance number  the longest wire the pole holds, in tiles (see `bpgen.SharedNames.pole_wire_distance`)
 
