@@ -197,14 +197,22 @@ local function belts_used_of(counts)
   return counts.b > 0 and 2 or 1
 end
 
+-- How many of the children of a final column ride each belt.
+---@param children bpgen.Column[]
+---@return table<string, integer> counts  by belt letter
+local function children_per_belt(children)
+  local counts = {a = 0, b = 0, c = 0}
+  for _, child in ipairs(children) do
+    counts[child.belt] = counts[child.belt] + 1
+  end
+  return counts
+end
+
 -- Says how each child of a final column reaches it: the first product of a belt is its head, and
 -- a head that has company on its belt goes through the lane gadget.
 ---@param final bpgen.Column
 local function mark_arcs(final)
-  local counts, seen = {a = 0, b = 0, c = 0}, {}
-  for _, child in ipairs(final.children) do
-    counts[child.belt] = counts[child.belt] + 1
-  end
+  local counts, seen = children_per_belt(final.children), {}
   for _, child in ipairs(final.children) do
     local head = not seen[child.belt]
     local gadget = head and counts[child.belt] >= 2
@@ -415,6 +423,29 @@ local function joins_head(children, index)
   return not child.arc.head and child.kind ~= "raw" and head ~= nil and head.belt == child.belt
 end
 
+-- Gives the arc of `children[index]` of a final column its row, from how deep the arcs east of it go (`deepest`), and returns how
+-- deep they go now. The second product of a belt (`joins_head`) has no arc of its own, so it leaves `deepest` as it is.
+---@param final bpgen.Column
+---@param columns bpgen.Column[]
+---@param depths integer[]  how deep the final columns inside each child go
+---@param index integer
+---@param deepest integer
+---@return integer
+local function place_arc(final, columns, depths, index, deepest)
+  local children = final.children
+  if joins_head(children, index) then
+    return math.max(deepest, depths[index])
+  end
+  local child, second = children[index], children[index + 1]
+  local arc = child.arc
+  local joined = second and joins_head(children, index + 1)
+  arc.row = math.max(deepest, lowest_arc_row(child, final, columns), joined and lowest_arc_row(second, final, columns) + 1 or 0)
+  if joined then
+    second.arc.row, second.arc.rows, second.arc.joins = arc.row, 0, true
+  end
+  return math.max(arc.row + arc.rows, depths[index], deepest, joined and depths[index + 1] or 0)
+end
+
 -- Gives the arcs of the columns that a final column eats their rows, from the east: an arc runs
 -- deeper than the arcs of the columns east of it and than everything inside them. The second product of a belt has no arc
 -- of its own: it comes down onto the arc of its head (`joins_head`), which runs a row below where its own arc would have, so
@@ -430,18 +461,7 @@ local function assign_arcs(final, columns)
   end
   local deepest = 0
   for index = #children, 1, -1 do
-    local child = children[index]
-    local arc, second = child.arc, children[index + 1]
-    local joined = second and joins_head(children, index + 1)
-    if joins_head(children, index) then
-      deepest = math.max(deepest, depths[index])
-    else
-      arc.row = math.max(deepest, lowest_arc_row(child, final, columns), joined and lowest_arc_row(second, final, columns) + 1 or 0)
-      deepest = math.max(arc.row + arc.rows, depths[index], deepest, joined and depths[index + 1] or 0)
-      if joined then
-        second.arc.row, second.arc.rows, second.arc.joins = arc.row, 0, true
-      end
-    end
+    deepest = place_arc(final, columns, depths, index, deepest)
   end
   return deepest
 end
@@ -721,6 +741,46 @@ local function add_pipe_up(add, taken, names, trunk, row)
   add({name = names.pipe_to_ground, position = grid.position(trunk.x, exit), direction = north})
 end
 
+-- The column of the last trunk of pipes, or `left` (the first column of the blueprint) when there are none: the pump stands west
+-- of the pipes, so each trunk needs room for it.
+---@param trunks {x: integer, y: integer}[]
+---@param left integer
+---@return integer
+local function last_trunk_column(trunks, left)
+  local last = left
+  for _, trunk in ipairs(trunks) do
+    assert(trunk.x >= left + 2, "rows: a column that takes a fluid has no room beside its pipes for a pump")
+    last = math.max(last, trunk.x)
+  end
+  return last
+end
+
+-- The row of the pipe along the top of the blueprint: the row above it, or two above when a trunk has belts over it (its
+-- underground pipe comes out in the row above the blueprint).
+---@param taken table<string, true>
+---@param trunks {x: integer, y: integer}[]
+---@param top integer  the first row of the blueprint
+---@return integer
+local function pipe_row_of(taken, trunks, top)
+  for _, trunk in ipairs(trunks) do
+    if not is_free_between(taken, trunk.x, top, trunk.y - 1) then
+      return top - 2
+    end
+  end
+  return top - 1
+end
+
+-- Stops when the pipes of the blueprint are more than one pump serves.
+---@param entities bpgen.Entity[]
+---@param names bpgen.SharedNames
+local function assert_one_pump_serves(entities, names)
+  local pipes = 0
+  for _, entity in ipairs(entities) do
+    pipes = pipes + ((entity.name == names.pipe or entity.name == names.pipe_to_ground) and 1 or 0)
+  end
+  assert(pipes <= MOST_PIPES_OF_A_PUMP, "rows: the pipes of the blueprint are more than one pump serves")
+end
+
 -- The water inlet of a blueprint with columns that take a fluid, in the corner where the belts come in (the top left): a pipe
 -- along the row above the blueprint (two above when a trunk has belts over it), from a pump facing east, whose input, where the
 -- player brings the water, is free to the west, to the last trunk, and from every trunk up to it (see `add_pipe_up`). A pole beside the pump powers it. Returns that
@@ -732,19 +792,10 @@ end
 local function add_water_inlet(entities, columns, names)
   local taken, left, top = covered_by(entities, columns, names)
   local trunks = trunks_of(columns)
-  local last = left
-  for _, trunk in ipairs(trunks) do
-    assert(trunk.x >= left + 2, "rows: a column that takes a fluid has no room beside its pipes for a pump")
-    last = math.max(last, trunk.x)
-  end
+  local last = last_trunk_column(trunks, left)
+  local row = pipe_row_of(taken, trunks, top)
   local function add(entity)
     return entity_list.append(entities, entity)
-  end
-  local row = top - 1
-  for _, trunk in ipairs(trunks) do
-    if not is_free_between(taken, trunk.x, top, trunk.y - 1) then
-      row = top - 2 -- a trunk under belts: its underground pipe comes out in the row above the blueprint
-    end
   end
   for _, trunk in ipairs(trunks) do
     add_pipe_up(add, taken, names, trunk, row)
@@ -753,11 +804,7 @@ local function add_water_inlet(entities, columns, names)
     add({name = names.pipe, position = grid.position(x, row), direction = north})
   end
   add({name = names.pump, position = grid.position(left, row, 2, 1), direction = east})
-  local pipes = 0
-  for _, entity in ipairs(entities) do
-    pipes = pipes + ((entity.name == names.pipe or entity.name == names.pipe_to_ground) and 1 or 0)
-  end
-  assert(pipes <= MOST_PIPES_OF_A_PUMP, "rows: the pipes of the blueprint are more than one pump serves")
+  assert_one_pump_serves(entities, names)
   return add({name = names.pole, position = grid.position(left, row - 1)})
 end
 

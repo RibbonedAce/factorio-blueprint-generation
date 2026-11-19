@@ -142,6 +142,15 @@ function Band:add_route(row, first, last)
   end
 end
 
+-- How many tiles a splitter covers across and along the map: two across the way it faces.
+---@param splitter bpgen.Entity
+---@return integer width
+---@return integer height
+local function splitter_footprint(splitter)
+  local across_x = splitter.direction == north or splitter.direction == south
+  return across_x and 2 or 1, across_x and 1 or 2
+end
+
 -- How many tiles an entity of the blueprint covers across and along the map: a splitter two across the way it faces,
 -- a machine as many as `machine_sizes` says of its name, anything else (belts, inserters, poles) one.
 ---@param entity bpgen.Entity
@@ -151,8 +160,7 @@ end
 ---@return integer height
 function inputs.footprint(entity, names, machine_sizes)
   if entity.name == names.splitter then
-    local across_x = entity.direction == north or entity.direction == south
-    return across_x and 2 or 1, across_x and 1 or 2
+    return splitter_footprint(entity)
   end
   if entity.name == names.pump then -- two tiles long, facing east
     return 2, 1

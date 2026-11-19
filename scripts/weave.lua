@@ -96,16 +96,26 @@ local PATTERNS = {
   bba = {{"b", "b", "a"}, {"a", "b", "b"}},
 }
 
+-- How many inserters each machine has on belt a, b and c: 0 for a belt that carries nothing.
+---@param counts table<string, integer>  by belt, "a", "b" and "c" (nil or 0 for a belt that carries nothing)
+---@return integer a
+---@return integer b
+---@return integer c
+local function inserters_by_belt(counts)
+  return counts.a or 0, counts.b or 0, counts.c or 0
+end
+
 -- The pattern for the inserters each machine has on each belt.
 ---@param counts table<string, integer>  by belt, "a", "b" and "c" (nil or 0 for a belt that carries nothing)
 ---@return "abc"|"aba"|"bba"
 local function kind_of(counts)
-  if (counts.c or 0) > 0 then
-    assert(counts.a == 1 and counts.b == 1 and counts.c == 1, "weave: three belts get one inserter each")
+  local a, b, c = inserters_by_belt(counts)
+  if c > 0 then
+    assert(a == 1 and b == 1 and c == 1, "weave: three belts get one inserter each")
     return "abc"
   end
-  assert((counts.b or 0) > 0 and (counts.a or 0) > 0 and counts.a + counts.b <= weave.MACHINE_SIZE, "weave: two belts need an inserter each and at most three in all")
-  return counts.b > counts.a and "bba" or "aba"
+  assert(b > 0 and a > 0 and a + b <= weave.MACHINE_SIZE, "weave: two belts need an inserter each and at most three in all")
+  return b > a and "bba" or "aba"
 end
 
 -- The belt each row shows, for `machine_count` machines.
@@ -182,6 +192,38 @@ local function hops_of(rows, row_count)
   return hops, shown
 end
 
+-- What belt a has in a row that shows it: the exit of a hop, the entrance of one, or plain belt.
+---@param entrances table<integer, true>  the rows where a hop starts
+---@param exits table<integer, true>  the rows where a hop ends
+---@param row integer
+---@return "exit"|"entrance"|"belt"
+local function kind_of_tile(entrances, exits, row)
+  assert(not (entrances[row] and exits[row]), "weave: a row of belt a would be the exit of one hop and the entrance of the next")
+  if exits[row] then
+    return "exit"
+  end
+  return entrances[row] and "entrance" or "belt"
+end
+
+-- The tile of belt a in `row` of the inner column, which must not feed a tile of another belt below it.
+---@param tiles bpgen.WeaveTile[]
+---@param rows table<integer, string>
+---@param row_count integer
+---@param row integer
+---@param kind "exit"|"entrance"|"belt"
+---@param is_last boolean  the last row that shows belt a, where it turns east
+local function add_tile_of_belt_a(tiles, rows, row_count, row, kind, is_last)
+  if kind == "exit" then
+    assert(row == row_count - 1 or rows[row + 1] == "a", "weave: an exit of belt a would feed a tile of another belt")
+    tile(tiles, weave.INNER, row, "exit", "flow")
+  elseif kind == "entrance" then
+    tile(tiles, weave.INNER, row, "entrance", "flow")
+  else
+    assert(is_last or rows[row + 1] == "a", "weave: a plain tile of belt a would feed a tile of another belt")
+    tile(tiles, weave.INNER, row, "belt", is_last and "east" or "flow")
+  end
+end
+
 -- The tiles of belt a in the inner column: the entrances and exits of its hops, and plain belt for rows that are neither,
 -- the last of which turns east so that it feeds no tile of another belt below it.
 ---@param tiles bpgen.WeaveTile[]
@@ -197,17 +239,7 @@ local function add_belt_a(tiles, rows, row_count)
     tile(tiles, weave.INNER, -1, "entrance", "flow")
   end
   for index, row in ipairs(shown) do
-    assert(not (entrances[row] and exits[row]), "weave: a row of belt a would be the exit of one hop and the entrance of the next")
-    local is_last = index == #shown
-    if exits[row] then
-      assert(row == row_count - 1 or rows[row + 1] == "a", "weave: an exit of belt a would feed a tile of another belt")
-      tile(tiles, weave.INNER, row, "exit", "flow")
-    elseif entrances[row] then
-      tile(tiles, weave.INNER, row, "entrance", "flow")
-    else
-      assert(is_last or rows[row + 1] == "a", "weave: a plain tile of belt a would feed a tile of another belt")
-      tile(tiles, weave.INNER, row, "belt", is_last and "east" or "flow")
-    end
+    add_tile_of_belt_a(tiles, rows, row_count, row, kind_of_tile(entrances, exits, row), index == #shown)
   end
 end
 

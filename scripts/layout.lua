@@ -368,40 +368,49 @@ local function input_columns(shape, origin)
   return origin + INPUT_INSERTER_OFFSET + shift, origin + MACHINE_OFFSET + shift
 end
 
+-- Puts the tile columns of a column of machines in `geometry`, from its input belt east to its output belt, and the column
+-- where the underground pipes of a fluid start, west of the belts.
+---@param geometry bpgen.Geometry  with its `size` and `output_winds`
+---@param shape bpgen.Shape
+---@param place bpgen.Place
+local function set_columns(geometry, shape, place)
+  local inserter_column, machine_column = input_columns(shape, place.origin)
+  geometry.input_belt_column = place.origin
+  geometry.input_inserter_column = inserter_column
+  geometry.machine_column = machine_column
+  geometry.output_inserter_column = machine_column + geometry.size
+  geometry.output_belt_column = machine_column + geometry.size + (geometry.output_winds and 2 or 1)
+  geometry.pipe_tunnel_column = place.origin - (shape.input_belts and weave.PIPED_WIDTH or 0) - 1
+end
+
 ---@param shape bpgen.Shape
 ---@param place bpgen.Place
 ---@param machine_count integer
 ---@return bpgen.Geometry
 local function geometry_of(shape, place, machine_count)
   local has_pole_rows = needs_pole_rows(shape)
-  local output_winds = winds_output(shape, place, has_pole_rows, machine_count)
-  local inserter_column, machine_column = input_columns(shape, place.origin)
   local size = shape.machine_size
-  return {
+  local geometry = {
     size = size,
     input_count = shape.input_inserters,
     input_fast = shape.input_fast == true,
     long_count = shape.long_inserters or 0,
     output_count = shape.output_inserters,
     output_fast = shape.output_fast == true,
-    input_belt_column = place.origin,
-    input_inserter_column = inserter_column,
-    machine_column = machine_column,
-    output_inserter_column = machine_column + size,
-    output_belt_column = machine_column + size + (output_winds and 2 or 1),
-    output_winds = output_winds,
+    output_winds = winds_output(shape, place, has_pole_rows, machine_count),
     has_pole_rows = has_pole_rows,
     powered_from_output = shape.powered_from_output == true,
     belt_counts = shape.input_belts,
     weave = shape.input_belts ~= nil,
     fluid = shape.fluid_input == true,
-    pipe_tunnel_column = place.origin - (shape.input_belts and weave.PIPED_WIDTH or 0) - 1,
     second_belt = shape.second_input_belt == true,
     fuel_weave = shape.fuel_belt == true,
     first_row = place.first_row,
     first_machine_row = place.first_row + (shape.fuel_belt and size or 0),
     spacing = has_pole_rows and size + 1 or size,
-  }
+  } --[[@as bpgen.Geometry]] -- the tile columns are set just below
+  set_columns(geometry, shape, place)
+  return geometry
 end
 
 -- The poles added so far, on each side of the machines, top to bottom.
@@ -1177,6 +1186,17 @@ local function reached_by(rows, row, reach)
   return false
 end
 
+-- Whether there is a column before this one whose poles could power its input inserters across the belt between them: neither
+-- has poles in rows between its machines or beside woven belts, and the two columns of inserters are within reach of a pole.
+---@return boolean
+function Builder:could_be_powered_across()
+  local before, geometry = self.before, self.geometry
+  if not before or geometry.has_pole_rows or before.geometry.has_pole_rows or geometry.weave or before.geometry.weave then
+    return false
+  end
+  return geometry.input_inserter_column - before.geometry.output_inserter_column <= self.pole_reach
+end
+
 -- Whether the poles beside the output inserters of the column before power every input inserter of this column across the
 -- belt between them, so that this column's input side needs no poles of its own: the belt is shared, so the two columns
 -- of inserters stand one belt apart (two tiles for a belt one wide, which a small pole powers, three for the winding belt,
@@ -1184,15 +1204,12 @@ end
 -- Poles in rows between machines (a full side) and the poles beside woven belts are left as they are.
 ---@return boolean
 function Builder:powered_across()
-  local before, geometry = self.before, self.geometry
-  if not before or geometry.has_pole_rows or before.geometry.has_pole_rows or geometry.weave or before.geometry.weave then
+  if not self:could_be_powered_across() then
     return false
   end
-  if geometry.input_inserter_column - before.geometry.output_inserter_column > self.pole_reach then
-    return false
-  end
+  local geometry = self.geometry
   local rows = {}
-  for _, row in pairs(before.pole_plan.output) do
+  for _, row in pairs(self.before.pole_plan.output) do
     rows[#rows + 1] = row
   end
   local count = geometry.input_count + geometry.long_count
@@ -1233,18 +1250,22 @@ function Builder:add_tunnel_poles()
   end
 end
 
--- The machines with their inserters, and the poles: in rows between them when the
--- sides are full, otherwise in the free tiles beside them.
-function Builder:add_machines()
+-- Where the poles of the two sides of the machines go, when they stand in the free tiles beside them: the input side has none
+-- when the output side powers it, when woven belts or pipes have poles of their own, or when the column before powers it across
+-- the belt.
+function Builder:plan_side_poles()
   local geometry = self.geometry
   local from_output = geometry.powered_from_output
   self.pole_plan = {
     input = (from_output or geometry.weave or geometry.fluid or self:powered_across()) and {} or self:side_pole_plan(geometry.input_count + geometry.long_count),
     output = self:side_pole_plan(geometry.output_count, from_output),
   }
-  for index = 0, self.machine_count - 1 do
-    self:add_machine_row(index)
-  end
+end
+
+-- What goes with the machines of a column that takes woven belts or a fluid: the inserters and poles of the weave, the pipes
+-- and, beside one belt, the poles in the tunnel column.
+function Builder:add_input_extras()
+  local geometry = self.geometry
   if geometry.weave then
     self:add_weave_inserters()
     self:add_weave_poles()
@@ -1255,6 +1276,16 @@ function Builder:add_machines()
       self:add_tunnel_poles()
     end
   end
+end
+
+-- The machines with their inserters, and the poles: in rows between them when the
+-- sides are full, otherwise in the free tiles beside them.
+function Builder:add_machines()
+  self:plan_side_poles()
+  for index = 0, self.machine_count - 1 do
+    self:add_machine_row(index)
+  end
+  self:add_input_extras()
   if self.geometry.has_pole_rows then
     self:add_pole_rows()
   end
@@ -1485,6 +1516,18 @@ local function raw_belts_of(stage, first)
   return belts
 end
 
+-- Where what the first column of a chain takes in comes from, in the block's frame (see `bpgen.Block`): the rows of its second
+-- input belt (of a column with long-handed inserters), the rows of the trunks of its woven belts, and the top of its trunk of
+-- pipes. A column without them leaves them out.
+---@param block bpgen.Block
+---@param first bpgen.Builder  the builder of the first column
+local function add_input_rows(block, first)
+  local geometry = first.geometry
+  block.long_rows = geometry.long_count > 0 and {first = first:first_long_row(), last = first:last_long_row()} or nil
+  block.trunk_rows = geometry.weave and first:trunk_rows() or nil
+  block.pipe_trunk = geometry.fluid and {column = geometry.pipe_tunnel_column - 1, row = geometry.first_row} or nil
+end
+
 -- `stages` go from the one fed raw items (or, for a column that eats what other columns
 -- make, that column alone, whose input belt whoever uses it extends) to the last. Returns the
 -- chain as a block: its entities, which are numbered from 1 in
@@ -1506,18 +1549,17 @@ function layout.chain_block(stages, names, options)
   end
   wire_columns(builders)
   local first, last = builders[1], builders[#builders]
-  return {
+  local block = {
     entities = entities,
     poles = poles_of(builders),
     product_column = last.geometry.output_belt_column,
     output_rows = {first = last:machine_top(0), last = last:last_output_row()},
-    long_rows = first.geometry.long_count > 0 and {first = first:first_long_row(), last = first:last_long_row()} or nil,
-    trunk_rows = first.geometry.weave and first:trunk_rows() or nil,
-    pipe_trunk = first.geometry.fluid and {column = first.geometry.pipe_tunnel_column - 1, row = first.geometry.first_row} or nil,
     height = tallest_end_row(builders, stages[1].suppliers == nil or stages[1].feed ~= nil),
     raw_belts = raw_belts_of(stages[1], first),
     fuel_feeds = fuel_feeds_of(stages, builders),
-  }
+  } --[[@as bpgen.Block]] -- the rows of what the first column takes in are added just below
+  add_input_rows(block, first)
+  return block
 end
 
 -- The columns of a chain, from the raw items to the final product, which is drawn

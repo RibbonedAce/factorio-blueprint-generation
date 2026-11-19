@@ -452,6 +452,20 @@ local function read_speeds(names)
   return prototypes.entity[names.belt].belt_speed, inserter_speed, long_speed
 end
 
+-- Adds to a job what the force has unlocked: the fast inserter, the lamp, the design with one belt of each material and the
+-- display panel for its belts.
+---@param job bpgen.Job  with what the game says
+---@param force LuaForce|nil
+---@return bpgen.Job
+local function add_unlocked(job, force)
+  local names = job.names
+  job.fast_inserter_rotation_speed = fast_rotation_speed(names, force)
+  job.lamp_supply_distance = lamp_distance(names, force)
+  job.inputs = input_options(names, job.belt_speed, force)
+  job.labels = wants_labels(names, force, job.inputs ~= nil)
+  return job
+end
+
 -- The job for this request, or nil and the message for the player when the item is
 -- not supported or something it needs is missing from the game.
 ---@param item_name string
@@ -473,8 +487,7 @@ local function read_job(item_name, rate_per_minute, force)
   if not root then
     return nil, problem
   end
-  local inputs_asked = input_options(names, belt_speed, force)
-  return {
+  return add_unlocked({
     item_name = item_name,
     rate_per_minute = rate_per_minute,
     root = root,
@@ -482,11 +495,7 @@ local function read_job(item_name, rate_per_minute, force)
     belt_speed = belt_speed,
     inserter_rotation_speed = rotation_speed,
     long_inserter_rotation_speed = long_rotation_speed,
-    fast_inserter_rotation_speed = fast_rotation_speed(names, force),
-    lamp_supply_distance = lamp_distance(names, force),
-    inputs = inputs_asked,
-    labels = wants_labels(names, force, inputs_asked ~= nil),
-  }
+  } --[[@as bpgen.Job]], force) -- what the force has unlocked is added just below
 end
 
 -- The item whose recipe the force has not unlocked yet, or nil when the force has it. Only
