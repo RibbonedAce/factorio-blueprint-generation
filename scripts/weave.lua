@@ -77,6 +77,11 @@ weave.TRUNK_C = -4
 -- The trunk of belt b in the pattern for machines with a pipe, which has no taps column: next to the inner column.
 weave.NEAR_TRUNK_B = -1
 
+-- How many tile columns west of the inner column the weave takes, by the number of belts woven: belt b's trunk and the taps
+-- column for two, and the two columns of belt c besides for three. The pattern for machines with a pipe takes belt b's trunk alone.
+weave.WIDTH = {[2] = -weave.TRUNK_B, [3] = -weave.TRUNK_C}
+weave.PIPED_WIDTH = -weave.NEAR_TRUNK_B
+
 -- The most tiles from an entrance of belt a to its exit: what a basic underground belt spans.
 weave.REACH = 5
 

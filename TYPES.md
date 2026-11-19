@@ -58,6 +58,7 @@ flowchart TD
   gui --> config
   gui --> messages
   generator --> config
+  generator --> constants
   generator --> chain
   generator --> planner
   generator --> layout
@@ -68,20 +69,25 @@ flowchart TD
   labels --> lights
   labels --> grid
   generator --> messages
+  lights --> constants
   lights --> grid
   rows --> feeds
   rows --> inputs
   rows --> layout
   rows --> poles
+  rows --> weave
   rows --> grid
   poles --> layout
   poles --> grid
+  layout --> constants
   layout --> grid
   layout --> weave
+  planner --> constants
+  feeds --> constants
   inputs --> grid
 ```
 
-`chain`, `planner`, `feeds`, `messages`, `weave` and `config` require nothing: they work on plain tables. `types.lua` is never required; it only feeds the editor.
+`chain`, `messages`, `weave`, `config`, `grid` and `constants` require nothing: they work on plain tables; `planner` and `feeds` need only `constants`. `types.lua` is never required; it only feeds the editor.
 
 ## 3. Class diagrams
 

@@ -506,4 +506,18 @@ describe("weave", function()
       assert.has_error(function() weave.plan({a = 0, b = 2}, 2) end, TWO_BELTS)
     end)
   end)
+
+  describe("the tile columns the weave takes west of the inner column", function()
+    it("takes two for two belts: the trunk of belt b and the taps", function()
+      assert.are.equal(2, weave.WIDTH[2])
+    end)
+
+    it("takes four for three belts: the two columns of belt c besides", function()
+      assert.are.equal(4, weave.WIDTH[3])
+    end)
+
+    it("takes one beside a pipe: the trunk of belt b alone", function()
+      assert.are.equal(1, weave.PIPED_WIDTH)
+    end)
+  end)
 end)

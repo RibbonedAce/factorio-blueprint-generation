@@ -71,6 +71,7 @@ local grid = require("scripts.grid")
 local inputs = require("scripts.inputs")
 local layout = require("scripts.layout")
 local poles = require("scripts.poles")
+local weave = require("scripts.weave")
 
 local rows = {}
 
@@ -273,15 +274,6 @@ local function flatten(column, columns)
   column.index = #columns
 end
 
--- The tile columns a final column takes west of its inner column for its woven belts, by how many belts there are: belt b's
--- trunk and the column of the taps for two, and the two columns of belt c for three (see scripts/weave.lua).
-local WOVEN_WIDTH = {[2] = 2, [3] = 4}
-
--- The tile columns of the pipes of a column that takes a fluid, west of everything else of it: the trunk and the column of
--- the underground pipes that start there. The weave of a column with a pipe has belt b's trunk alone, beside the inner column.
-local PIPE_COLUMNS = 2
-local PIPED_WEAVE_WIDTH = 1
-
 -- Where the trunks of the woven belts of a column stand, when its first tile column is `cursor`: how many columns they take,
 -- and the columns of belt b and of belt c (nil for two belts).
 ---@param column bpgen.Column  a final column that takes from woven belts
@@ -291,9 +283,9 @@ local PIPED_WEAVE_WIDTH = 1
 ---@return integer|nil x_c
 local function woven_columns(column, cursor)
   if column.fluid then
-    return PIPED_WEAVE_WIDTH, cursor, nil
+    return weave.PIPED_WIDTH, cursor, nil
   end
-  local width = WOVEN_WIDTH[column.belts_used]
+  local width = weave.WIDTH[column.belts_used]
   return width, cursor + width - 2, column.belts_used == 3 and cursor or nil
 end
 
@@ -305,7 +297,7 @@ end
 ---@return integer
 local function place_beside_belt_a(column, cursor)
   if column.fluid then
-    cursor = cursor + PIPE_COLUMNS
+    cursor = cursor + layout.PIPE_COLUMNS
   end
   if column.woven then
     local width

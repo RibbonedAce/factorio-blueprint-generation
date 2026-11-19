@@ -95,11 +95,11 @@ local function raw_ingredient(production, crafted)
   return nil
 end
 
--- How many belts of items feed a step: one for each step that makes an ingredient, and one
+-- How many things a step takes from other steps and from belts: one for each step that makes an ingredient, and one
 -- for a raw ingredient that goes with them.
----@param stage bpgen.ChainStage
+---@param stage bpgen.ChainStage|bpgen.StageData  anything with `suppliers` and `raw_item`
 ---@return integer
-local function input_count(stage)
+function chain.input_count(stage)
   return #stage.suppliers + (stage.raw_item and 1 or 0)
 end
 
@@ -114,7 +114,7 @@ end
 ---@return bpgen.ChainReason|nil reason
 ---@return string|nil item  the item the reason is about
 local function stage_of(item, production, suppliers, raw_item)
-  if #suppliers == 1 and raw_item and input_count(suppliers[1]) > 1 then
+  if #suppliers == 1 and raw_item and chain.input_count(suppliers[1]) > 1 then
     return nil, "fork-in-chain", item
   end
   return {

@@ -14,10 +14,12 @@
 -- The trunk whose last leaf is furthest east is on top, so that the belt that comes down to a leaf
 -- only has to cross the trunks below that reach further east.
 
+local constants = require("scripts.constants")
+
 local feeds = {}
 
 -- Amounts are sums of fractions, so a lane that is exactly full can add up to a hair more than it carries; that is not over.
-local ROUNDING = 1e-9
+local EPSILON = constants.EPSILON
 
 -- The names of the items of a feed, and one name for the kind of feed they make.
 ---@param feed bpgen.Feed
@@ -38,9 +40,9 @@ end
 ---@param lane number  what one lane carries a minute
 ---@return boolean
 local function fits(trunk, leaf, lane)
-  local limit = trunk.mixed and lane or 2 * lane
+  local limit = trunk.mixed and lane or constants.LANES_PER_BELT * lane
   for _, item in ipairs(leaf.feed.items) do
-    if trunk.demand[item.name] + item.amount > limit + ROUNDING then
+    if trunk.demand[item.name] + item.amount > limit + EPSILON then
       return false
     end
   end
@@ -142,7 +144,7 @@ end
 local function pack_belts(item, feeders, lane)
   local belts, current, load = {}, nil, 0
   for _, feeder in ipairs(feeders) do
-    if not current or load + feeder.flow > 2 * lane + ROUNDING then
+    if not current or load + feeder.flow > constants.LANES_PER_BELT * lane + EPSILON then
       current, load = {item = item, feeders = {}}, 0
       belts[#belts + 1] = current
     end

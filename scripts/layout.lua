@@ -175,6 +175,7 @@
 --        v   >  [F F]  >  ^
 --               [F F]     ^                  <- the belt starts here
 
+local constants = require("scripts.constants")
 local grid = require("scripts.grid")
 local weave = require("scripts.weave")
 
@@ -187,11 +188,9 @@ local layout = {}
 local INPUT_INSERTER_OFFSET = 1
 local MACHINE_OFFSET = 2
 
-local LENGTH_TOLERANCE = 1e-9  -- two lengths this close (relative) are equal
-
 -- The output belt winds (see the diagram above) for machines of this size with this many output inserters.
-local WINDING_MACHINE_SIZE = 3
-local WINDING_OUTPUT_INSERTERS = 2
+local WINDING_MACHINE_SIZE = constants.WINDING_MACHINE_SIZE
+local WINDING_OUTPUT_INSERTERS = constants.WINDING_OUTPUT_INSERTERS
 
 -- The rows of the pattern of the two input belts of a column built wide: a pair of furnaces (see the diagram above).
 local WEAVE_ROWS = 4
@@ -276,6 +275,10 @@ layout.WEAVE_REACH = weave.REACH
 -- How many belts a column of machines takes from when they are not woven: the belt next to the machines (belt a), and one
 -- column further out (belt b), which long-handed inserters reach over belt a.
 layout.LONG_HANDED_BELTS = 2
+
+-- The tile columns of the pipes of a column that takes a fluid, west of everything else of it: the trunk of pipes and, beside
+-- it, the column where the underground pipes start (see `Geometry.pipe_tunnel_column`).
+layout.PIPE_COLUMNS = 2
 
 -- Where things go, worked out once from the shape.
 ---@class bpgen.Geometry
@@ -389,7 +392,7 @@ local function geometry_of(shape, place, machine_count)
     belt_counts = shape.input_belts,
     weave = shape.input_belts ~= nil,
     fluid = shape.fluid_input == true,
-    pipe_tunnel_column = place.origin - (shape.input_belts and 2 or 1),
+    pipe_tunnel_column = place.origin - (shape.input_belts and weave.PIPED_WIDTH or 0) - 1,
     second_belt = shape.second_input_belt == true,
     fuel_weave = shape.fuel_belt == true,
     first_row = place.first_row,
@@ -1337,7 +1340,7 @@ end
 local function share_belt(builder, next_builder)
   local last_pickup_row = next_builder:last_input_row()
   local runs_north = not next_builder.takes_fuel -- fuel is side-loaded at the head, which has to be the top
-    and builder:length_for_load() >= next_builder:length_for_load() * (1 - LENGTH_TOLERANCE)
+    and builder:length_for_load() >= next_builder:length_for_load() * (1 - constants.EPSILON) -- two lengths this close (relative) are equal
     and builder:last_output_row() >= last_pickup_row -- else a plate dropped on it would have no inserter ahead of it
   -- A belt that runs south only reaches the inserters under the first drop: a column that starts lower (`first_machine_row`) than the
   -- next one must not leave an inserter of it above that.

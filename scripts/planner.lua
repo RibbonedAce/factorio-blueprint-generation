@@ -3,12 +3,14 @@
 -- It never touches the game (no `game`, no `prototypes`), so it can be tested
 -- outside Factorio. The caller passes in plain tables with the numbers.
 
+local constants = require("scripts.constants")
+
 local planner = {}
 
 -- Decimal numbers like 3.2 cannot be stored exactly, so 18.75 / 18.749999999999996
 -- can come out as 1.0000000000000002 and round up to a whole extra machine.
 -- Subtracting a tiny amount before rounding up avoids that.
-local EPSILON = 1e-9
+local EPSILON = constants.EPSILON
 
 -- An inserter drops items on the FAR lane of a belt that runs across its line (on a
 -- curve, the inside lane; on a belt in line with it, the lane on the side to the right of
@@ -16,14 +18,14 @@ local EPSILON = 1e-9
 -- lane of a plain output belt. The layout winds the belt when a machine has
 -- exactly this many output inserters, so that each fills a different lane (see
 -- layout.lua); the product then travels on both lanes.
-local WINDING_OUTPUT_INSERTERS = 2
-local WINDING_MACHINE_SIZE = 3
+local WINDING_OUTPUT_INSERTERS = constants.WINDING_OUTPUT_INSERTERS
+local WINDING_MACHINE_SIZE = constants.WINDING_MACHINE_SIZE
 
 -- The input belt of a stage has two lanes, so a stage fed raw items takes at most this
 -- many items from it: its ingredients and its fuel. A stage fed by other stages has up to
 -- three belts, woven (see `bpgen.Belts` and scripts/weave.lua), so it takes at most three
 -- times as many ingredients, one on each lane.
-local INPUT_LANES = 2
+local LANES_PER_BELT = constants.LANES_PER_BELT
 local MOST_BELTS = 3
 
 -- The names of the input belts of a stage, in order.
@@ -113,7 +115,7 @@ local function assign_lanes(ingredients, fuel)
   if fuel then
     items[#items + 1] = fuel
   end
-  if #ingredients == 0 or #items > INPUT_LANES then
+  if #ingredients == 0 or #items > LANES_PER_BELT then
     return nil
   end
   return {items[1], items[2] or items[1]}
@@ -778,7 +780,7 @@ local function stage_lanes(stage, suppliers)
   if stage.fuel then
     return fuel_lanes(stage, suppliers)
   end
-  if #ingredients > most_belts(stage) * INPUT_LANES then
+  if #ingredients > most_belts(stage) * LANES_PER_BELT then
     return nil
   end
   local lanes, unmade = {}, {}
@@ -862,7 +864,7 @@ end
 ---@return boolean
 local function fits_lanes(belts)
   for _, letter in ipairs(BELT_LETTERS) do
-    if belts[letter] and #belts[letter] > INPUT_LANES then
+    if belts[letter] and #belts[letter] > LANES_PER_BELT then
       return false
     end
   end
@@ -949,7 +951,7 @@ end
 ---@param raw table<string, true>
 ---@return bpgen.Belts|nil
 local function choose_belts(stage, lanes, raw)
-  if #lanes <= INPUT_LANES then
+  if #lanes <= LANES_PER_BELT then
     return {a = lanes, b = {}}
   end
   local inputs = full_speed(stage)

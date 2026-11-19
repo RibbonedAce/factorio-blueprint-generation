@@ -4,6 +4,7 @@
 -- handlers: `prototypes` does not exist while control.lua is first loading.
 
 local config = require("scripts.config")
+local constants = require("scripts.constants")
 local chain = require("scripts.chain")
 local planner = require("scripts.planner")
 local layout = require("scripts.layout")
@@ -17,12 +18,12 @@ local generator = {}
 
 -- How many ingredients one input belt carries: two, one on each lane. A step with more takes them from more belts: two
 -- reached by long-handed inserters, or two or three woven.
-local LANES_OF_ONE_BELT = 2
+local LANES_PER_BELT = constants.LANES_PER_BELT
 
 -- How many belts a step whose machines take a fluid takes from, at most: the two woven belts that have room beside the pipe of its
 -- machines (see scripts/layout.lua), so four items.
 local FLUID_BELTS = 2
-local MOST_FLUID_ITEMS = FLUID_BELTS * LANES_OF_ONE_BELT
+local MOST_FLUID_ITEMS = FLUID_BELTS * LANES_PER_BELT
 
 -- Copy a recipe prototype into a plain table for the planner: the items it takes in `ingredients`, the fluids in `fluids` (the
 -- layout brings them in through pipes, which only a step with two or more inputs can have: see `fluid_problem`). (A product
@@ -522,14 +523,6 @@ local function in_order(stage, list)
   return list
 end
 
--- How many things a step takes from other steps and from belts: the steps that make its ingredients, and the raw item that goes
--- with them, if any.
----@param stage bpgen.StageData
----@return integer
-local function inputs_of(stage)
-  return #stage.suppliers + (stage.raw_item and 1 or 0)
-end
-
 -- The reason a step that is fed by other steps cannot burn fuel, as a message for the player, or nil. Its fuel rides the
 -- lane the product of the step before it leaves free, so it can eat only that one product; and only the design that
 -- brings in one belt of each material brings the fuel.
@@ -540,7 +533,7 @@ local function fuel_problem(stage, has_inputs)
   if #stage.suppliers == 0 or not stage.fuel then
     return nil
   end
-  if #stage.suppliers ~= 1 or #stage.recipe.ingredients ~= 1 or inputs_of(stage.suppliers[1]) > 1 then
+  if #stage.suppliers ~= 1 or #stage.recipe.ingredients ~= 1 or chain.input_count(stage.suppliers[1]) > 1 then
     return messages.chain_fuel(stage.item)
   end
   if not has_inputs then
@@ -578,7 +571,7 @@ end
 ---@param belts integer  the most belts the blueprint takes from (see `most_belts`)
 ---@return LocalisedString|nil
 local function belts_problem(stage, belts)
-  if #stage.suppliers == 0 or #stage.recipe.ingredients <= belts * LANES_OF_ONE_BELT then
+  if #stage.suppliers == 0 or #stage.recipe.ingredients <= belts * LANES_PER_BELT then
     return nil
   end
   return messages.belts_need_weave(stage.item)
@@ -599,7 +592,7 @@ end
 ---@param stage bpgen.StageData
 ---@return LocalisedString|nil
 local function fluid_buildings_problem(job, stage)
-  if #stage.recipe.ingredients > LANES_OF_ONE_BELT and not can_weave(job) then
+  if #stage.recipe.ingredients > LANES_PER_BELT and not can_weave(job) then
     return messages.fluid_needs_weave(stage.item)
   end
   if not (prototypes.entity[job.names.pipe] and prototypes.entity[job.names.pipe_to_ground] and prototypes.entity[job.names.pump]) then
@@ -618,7 +611,7 @@ local function fluid_problem(job, stage)
   if #stage.recipe.fluids == 0 then
     return nil
   end
-  if inputs_of(stage) < 2 then
+  if chain.input_count(stage) < 2 then
     return messages.fluid_single_input(stage.item)
   end
   if not is_built_with_fluid(stage) then

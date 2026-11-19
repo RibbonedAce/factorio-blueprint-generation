@@ -12,6 +12,7 @@
 -- is left to put a lamp on. A tile that something stands on, and the tile a belt runs on to, are not free
 -- (the player goes on with the belts that leave the blueprint).
 
+local constants = require("scripts.constants")
 local grid = require("scripts.grid")
 
 local lights = {}
@@ -75,7 +76,7 @@ end
 ---@return {x: integer, y: integer}[] list
 ---@return table<string, true> set
 local function powered_tiles(entities, options)
-  local reach = math.floor(options.supply_distance + 0.5 - 1e-9) -- a tile is powered when the area covers part of it
+  local reach = math.floor(options.supply_distance + 0.5 - constants.EPSILON) -- a tile is powered when the area covers part of it
   local set, list = {}, {}
   for _, entity in ipairs(entities) do
     if entity.name == options.pole then
