@@ -13,6 +13,7 @@
 -- (the player goes on with the belts that leave the blueprint).
 
 local constants = require("scripts.constants")
+local entity_list = require("scripts.entity_list")
 local grid = require("scripts.grid")
 
 local lights = {}
@@ -20,15 +21,14 @@ local lights = {}
 local MIN_GAP = 10  -- tiles: no two lamps are closer than this
 local COVER = 10  -- tiles: every powered tile has a lamp this close
 
+local north, east, south, west = defines.direction.north, defines.direction.east, defines.direction.south, defines.direction.west
+
 -- The tile a belt runs on to, by the direction it faces, as a step in tiles.
----@return table<integer, {x: integer, y: integer}>
-local function steps()
-  local directions = defines.direction
-  return {
-    [directions.north] = {x = 0, y = -1}, [directions.south] = {x = 0, y = 1},
-    [directions.east] = {x = 1, y = 0}, [directions.west] = {x = -1, y = 0},
-  }
-end
+---@type table<integer, {x: integer, y: integer}>
+local STEPS = {
+  [north] = {x = 0, y = -1}, [south] = {x = 0, y = 1},
+  [east] = {x = 1, y = 0}, [west] = {x = -1, y = 0},
+}
 
 -- The set of names in a list, or an empty one for no list.
 ---@param list string[]|nil
@@ -49,9 +49,8 @@ end
 ---@param size_of fun(entity: bpgen.Entity): integer, integer
 ---@param sign integer
 local function mark_next_to(taken, entities, names, size_of, sign)
-  local step = steps()
   for _, entity in ipairs(entities) do
-    local way = step[entity.direction]
+    local way = STEPS[entity.direction]
     if names[entity.name] and way then
       local tile = grid.top_left_tile(entity.position, size_of(entity))
       taken[grid.key(tile.x + sign * way.x, tile.y + sign * way.y)] = true
@@ -162,7 +161,7 @@ function lights.add(entities, options)
     local spot = not has_lamp_within_reach(lamps, tile) and spot_for(tile, lamps, free)
     if spot then
       lamps[#lamps + 1] = spot
-      entities[#entities + 1] = {name = options.lamp, position = grid.position(spot.x, spot.y), entity_number = #entities + 1}
+      entity_list.append(entities, {name = options.lamp, position = grid.position(spot.x, spot.y)})
     end
   end
 end

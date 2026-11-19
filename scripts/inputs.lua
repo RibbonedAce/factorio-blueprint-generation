@@ -75,7 +75,7 @@ end
 ---@param column integer
 ---@param row integer
 ---@param way defines.direction
-function Band:belt(column, row, way)
+function Band:add_belt(column, row, way)
   self.entities[#self.entities + 1] = {name = self.names.belt, position = grid.position(column, row), direction = way}
 end
 
@@ -84,7 +84,7 @@ end
 ---@param column integer
 ---@param row integer
 ---@param way defines.direction
-function Band:splitter(column, row, way)
+function Band:add_splitter(column, row, way)
   local width, height = 1, 2
   if way == north or way == south then
     width, height = 2, 1
@@ -96,7 +96,7 @@ end
 ---@param row integer
 ---@param way defines.direction
 ---@param kind "input"|"output"  the entrance or the exit
-function Band:underground(column, row, way, kind)
+function Band:add_underground(column, row, way, kind)
   self.entities[#self.entities + 1] = {name = self.names.underground, position = grid.position(column, row), direction = way, type = kind}
 end
 
@@ -104,9 +104,9 @@ end
 ---@param first integer
 ---@param last integer
 ---@param row integer
-function Band:across(first, last, row)
+function Band:add_across(first, last, row)
   for column = first, last do
-    self:belt(column, row, east)
+    self:add_belt(column, row, east)
   end
 end
 
@@ -127,16 +127,16 @@ end
 ---@param row integer
 ---@param first integer
 ---@param last integer
-function Band:route(row, first, last)
+function Band:add_route(row, first, last)
   local column = first
   while column <= last do
     local bus = self:bus_ahead(column, row)
     if bus then
-      self:underground(column, row, east, "input")
-      self:underground(bus.column + 2, row, east, "output")
+      self:add_underground(column, row, east, "input")
+      self:add_underground(bus.column + 2, row, east, "output")
       column = bus.column + 3
     else
-      self:belt(column, row, east)
+      self:add_belt(column, row, east)
       column = column + 1
     end
   end
@@ -244,7 +244,7 @@ end
 -- Notes a belt that the player brings in, at the west edge.
 ---@param row integer
 ---@param item string
-function Band:supply(row, item)
+function Band:add_supply(row, item)
   self.supplies[#self.supplies + 1] = {x = 0, y = row, item = item}
 end
 
@@ -254,24 +254,24 @@ end
 ---@param row integer
 ---@param peel table<integer, true>  the rows where a feeder leaves
 ---@param split table<integer, true>  the rows of the splitters
-function Band:bus_tile(column, row, peel, split)
+function Band:add_bus_tile(column, row, peel, split)
   if split[row] then
-    self:splitter(column, row, south)
+    self:add_splitter(column, row, south)
     return
   end
-  self:belt(column, row, south)
+  self:add_belt(column, row, south)
   if peel[row] then
-    self:belt(column + 1, row, east)
+    self:add_belt(column + 1, row, east)
   end
 end
 
 -- A bus: it comes in from the west, runs down its column with a splitter above every feeder but the last, and ends
 -- turning east in the row of the last feeder.
 ---@param bus bpgen.PureBelt
-function Band:draw_bus(bus)
-  self:supply(bus.entry, bus.item)
-  self:across(0, bus.column - 1, bus.entry)
-  self:belt(bus.column, bus.entry, south)
+function Band:add_bus(bus)
+  self:add_supply(bus.entry, bus.item)
+  self:add_across(0, bus.column - 1, bus.entry)
+  self:add_belt(bus.column, bus.entry, south)
   local rows_of_feeders = feeder_rows(bus)
   local peel, split = {}, {}
   for index = 1, #rows_of_feeders - 1 do
@@ -279,35 +279,35 @@ function Band:draw_bus(bus)
     split[rows_of_feeders[index] - 1] = true
   end
   for row = bus.entry + 1, bus.last - 1 do
-    self:bus_tile(bus.column, row, peel, split)
+    self:add_bus_tile(bus.column, row, peel, split)
   end
-  self:belt(bus.column, bus.last, east)
+  self:add_belt(bus.column, bus.last, east)
 end
 
 -- A feeder from where it leaves its bus (or comes in, for a pure belt that feeds one trunk) to the column before the mixer.
 ---@param belt bpgen.PureBelt
 ---@param feeder bpgen.Feeder
 ---@param mixer integer  the tile column of the mixers
-function Band:draw_feeder(belt, feeder, mixer)
+function Band:add_feeder(belt, feeder, mixer)
   if belt.bus == nil then
-    self:supply(feeder.row, belt.item)
-    self:route(feeder.row, 0, mixer - 1)
+    self:add_supply(feeder.row, belt.item)
+    self:add_route(feeder.row, 0, mixer - 1)
     return
   end
   local starts_at = feeder.row == belt.last and belt.column + 1 or belt.column + 2 -- the last feeder is the end of the bus itself
-  self:route(feeder.row, starts_at, mixer - 1)
+  self:add_route(feeder.row, starts_at, mixer - 1)
 end
 
 -- The first tiles of a trunk with two items: the mixer, where the ore feeder turns into the north side of the
 -- trunk's first tile and the fuel feeder into its south side. A trunk with one item starts as a belt east.
 ---@param trunk bpgen.Trunk
 ---@param mixer integer
-function Band:draw_mixer(trunk, mixer)
+function Band:add_mixer(trunk, mixer)
   if trunk.mixed then
-    self:belt(mixer, trunk.row - 1, south)
-    self:belt(mixer, trunk.row + 1, north)
+    self:add_belt(mixer, trunk.row - 1, south)
+    self:add_belt(mixer, trunk.row + 1, north)
   end
-  self:belt(mixer, trunk.row, east)
+  self:add_belt(mixer, trunk.row, east)
 end
 
 -- The rows of the trunks below `trunk` that reach further east than `leaf`, from the top: its belt goes under them.
@@ -333,13 +333,13 @@ end
 ---@param trunk bpgen.Trunk
 ---@param leaf bpgen.FeedLeaf
 ---@return integer
-function Band:descend(plan, trunk, leaf)
+function Band:add_descent(plan, trunk, leaf)
   local column, last = leaf.drop_x, trunk.row + 1
-  self:belt(column, last, south)
+  self:add_belt(column, last, south)
   for _, row in ipairs(rows_to_cross(plan, trunk, leaf)) do
     assert(row - 1 == last + 1, "inputs: the trunks in the way are not right below each other")
-    self:underground(column, row - 1, south, "input")
-    self:underground(column, row + 1, south, "output")
+    self:add_underground(column, row - 1, south, "input")
+    self:add_underground(column, row + 1, south, "output")
     last = row + 1
   end
   return last
@@ -351,19 +351,19 @@ end
 ---@param trunk bpgen.Trunk
 ---@param mixer integer
 ---@param ends table<bpgen.FeedLeaf, integer>
-function Band:draw_trunk(plan, trunk, mixer, ends)
+function Band:add_trunk(plan, trunk, mixer, ends)
   local column = mixer + 1
   for index, leaf in ipairs(trunk.leaves) do
     local is_last = index == #trunk.leaves
-    self:across(column, leaf.drop_x - (is_last and 1 or 2), trunk.row)
+    self:add_across(column, leaf.drop_x - (is_last and 1 or 2), trunk.row)
     if is_last then
-      self:belt(leaf.drop_x, trunk.row, south)
+      self:add_belt(leaf.drop_x, trunk.row, south)
     else
-      self:splitter(leaf.drop_x - 1, trunk.row, east)
-      self:belt(leaf.drop_x, trunk.row, east)
+      self:add_splitter(leaf.drop_x - 1, trunk.row, east)
+      self:add_belt(leaf.drop_x, trunk.row, east)
       column = leaf.drop_x + 1
     end
-    ends[leaf] = self:descend(plan, trunk, leaf)
+    ends[leaf] = self:add_descent(plan, trunk, leaf)
   end
 end
 
@@ -387,11 +387,11 @@ function inputs.fuel_tail(names, column, last, head)
   assert(head >= last + 2, "inputs: no room for the fuel to turn into the head of the belt")
   local band = new_band(names, {})
   for row = last + 1, head - 2 do
-    band:belt(column, row, south)
+    band:add_belt(column, row, south)
   end
-  band:belt(column, head - 1, east)
-  band:belt(column + 1, head - 2, south)
-  band:belt(column + 1, head - 1, south)
+  band:add_belt(column, head - 1, east)
+  band:add_belt(column + 1, head - 2, south)
+  band:add_belt(column + 1, head - 1, south)
   return band.entities
 end
 
@@ -413,17 +413,17 @@ function inputs.lay(plan, names, reach)
     place_bus(bus, #plan.buses)
   end
   for _, bus in ipairs(plan.buses) do
-    band:draw_bus(bus)
+    band:add_bus(bus)
   end
   local mixer, ends = mixer_column(plan), {}
   for _, belt in ipairs(plan.belts) do
     for _, feeder in ipairs(belt.feeders) do
-      band:draw_feeder(belt, feeder, mixer)
+      band:add_feeder(belt, feeder, mixer)
     end
   end
   for _, trunk in ipairs(plan.trunks) do
-    band:draw_mixer(trunk, mixer)
-    band:draw_trunk(plan, trunk, mixer, ends)
+    band:add_mixer(trunk, mixer)
+    band:add_trunk(plan, trunk, mixer, ends)
   end
   table.sort(band.supplies, function(first, second) return first.y < second.y end)
   return band.entities, band.supplies, ends

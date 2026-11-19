@@ -13,6 +13,7 @@
 --     > > >      the belt the player brings in comes from the west, along this row
 --     . P .
 
+local entity_list = require("scripts.entity_list")
 local grid = require("scripts.grid")
 local lights = require("scripts.lights")
 
@@ -60,10 +61,10 @@ function labels.add(entities, supplies, options)
   for _, supply in ipairs(supplies) do
     local spot = spot_for(supply, supplies, blocked)
     if spot then
-      entities[#entities + 1] = {
-        name = options.panel, position = grid.position(spot.x, spot.y), entity_number = #entities + 1,
+      entity_list.append(entities, {
+        name = options.panel, position = grid.position(spot.x, spot.y),
         icon = {type = "item", name = supply.item}, always_show = true,
-      }
+      })
     end
   end
 end

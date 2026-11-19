@@ -46,11 +46,14 @@ local function read_recipe(prototype)
 end
 
 -- Whether the force can build a building: it has unlocked the recipe, which the game names like the
--- building, and the building exists.
----@param force LuaForce
----@param name string
+-- building, and the building exists. Without a force (nothing is known to be researched) or without a name, nothing can be built.
+---@param force LuaForce|nil
+---@param name string|nil
 ---@return boolean
 local function can_build(force, name)
+  if not (force and name) then
+    return false
+  end
   local recipe = force.recipes[name]
   return recipe ~= nil and recipe.enabled and prototypes.entity[name] ~= nil
 end
@@ -133,15 +136,21 @@ end
 -- without one is not refused (it gets the plain inserter's speed for it). Nor are the fast inserter, the splitter and the
 -- underground belt: a blueprint takes them only when the force has them. Whether the
 -- player has UNLOCKED these recipes is a separate question (see `locked_item`).
----@param names bpgen.SharedNames
+---@param entity_names string[]
 ---@return boolean
-local function all_entities_exist(names)
-  for _, entity_name in ipairs({names.belt, names.inserter, names.pole}) do
+local function all_exist(entity_names)
+  for _, entity_name in ipairs(entity_names) do
     if not prototypes.entity[entity_name] then
       return false
     end
   end
   return true
+end
+
+---@param names bpgen.SharedNames
+---@return boolean
+local function all_entities_exist(names)
+  return all_exist({names.belt, names.inserter, names.pole})
 end
 
 -- The machine's size in tiles, when it is square (the layout only handles square machines).
@@ -355,7 +364,7 @@ end
 ---@param force LuaForce|nil
 ---@return number|nil
 local function fast_rotation_speed(names, force)
-  if not (force and names.fast_inserter and can_build(force, names.fast_inserter)) then
+  if not can_build(force, names.fast_inserter) then
     return nil
   end
   return prototypes.entity[names.fast_inserter].get_inserter_rotation_speed()
@@ -368,7 +377,7 @@ end
 ---@param force LuaForce|nil
 ---@return number|nil
 local function lamp_distance(names, force)
-  if not (force and names.lamp and can_build(force, names.lamp)) then
+  if not can_build(force, names.lamp) then
     return nil
   end
   return names.pole_supply_distance
@@ -382,7 +391,7 @@ end
 ---@param input_design boolean  the blueprint takes the design that brings in one belt of each material
 ---@return boolean
 local function wants_labels(names, force, input_design)
-  return input_design and force ~= nil and names.panel ~= nil and can_build(force, names.panel)
+  return input_design and can_build(force, names.panel)
 end
 
 -- What the design that brings in one belt of each material is asked for, or nil when the blueprint is
@@ -394,7 +403,7 @@ end
 ---@param force LuaForce|nil
 ---@return bpgen.InputOptions|nil
 local function input_options(names, belt_speed, force)
-  if not (force and can_build(force, names.splitter) and can_build(force, names.underground)) then
+  if not (can_build(force, names.splitter) and can_build(force, names.underground)) then
     return nil
   end
   local reach = prototypes.entity[names.underground].max_underground_distance
@@ -558,7 +567,7 @@ end
 -- inserters over the first.
 ---@param job bpgen.Job
 ---@return integer
-local function most_belts(job)
+local function most_input_belts(job)
   if can_weave(job) then
     return layout.most_woven_belts(layout.pole_reach(job.names.pole_supply_distance))
   end
@@ -568,7 +577,7 @@ end
 -- The reason a step with more ingredients than `belts` belts carry (two each, one on each lane) cannot be built, as a message
 -- for the player, or nil: it needs three woven belts, which the blueprint has to be able to weave.
 ---@param stage bpgen.StageData
----@param belts integer  the most belts the blueprint takes from (see `most_belts`)
+---@param belts integer  the most belts the blueprint takes from (see `most_input_belts`)
 ---@return LocalisedString|nil
 local function belts_problem(stage, belts)
   if #stage.suppliers == 0 or #stage.recipe.ingredients <= belts * LANES_PER_BELT then
@@ -595,7 +604,7 @@ local function fluid_buildings_problem(job, stage)
   if #stage.recipe.ingredients > LANES_PER_BELT and not can_weave(job) then
     return messages.fluid_needs_weave(stage.item)
   end
-  if not (prototypes.entity[job.names.pipe] and prototypes.entity[job.names.pipe_to_ground] and prototypes.entity[job.names.pump]) then
+  if not all_exist({job.names.pipe, job.names.pipe_to_ground, job.names.pump}) then
     return messages.missing_prototype()
   end
   return nil
@@ -626,7 +635,7 @@ end
 ---@param stage bpgen.StageData
 ---@return LocalisedString|nil
 local function recipe_problem(job, stage)
-  return fuel_problem(stage, job.inputs ~= nil) or fluid_problem(job, stage) or belts_problem(stage, most_belts(job))
+  return fuel_problem(stage, job.inputs ~= nil) or fluid_problem(job, stage) or belts_problem(stage, most_input_belts(job))
 end
 
 -- The reason this step's machine cannot be built with, as a message for the player, or nil.
@@ -822,7 +831,7 @@ local function input_slots(job, stage, machine_size)
     local slots = assert(layout.max_fluid_inserters(machine_size), "generator: no room for inserters beside the pipe of a machine of size " .. machine_size)
     return slots, weaves and slots or nil, weaves and FLUID_BELTS or 1
   end
-  return layout.max_input_inserters(machine_size), weaves and layout.max_woven_inserters(machine_size) or nil, most_belts(job)
+  return layout.max_input_inserters(machine_size), weaves and layout.max_woven_inserters(machine_size) or nil, most_input_belts(job)
 end
 
 -- What the planner is told about one step: the inserters that feed and empty each

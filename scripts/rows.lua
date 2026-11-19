@@ -66,6 +66,7 @@
 -- lower, under a band along the top (scripts/inputs.lua) where scripts/feeds.lua's trunks are made from
 -- the belts that come in, with splitters and underground belts. It needs both of those researched.
 
+local entity_list = require("scripts.entity_list")
 local feeds = require("scripts.feeds")
 local grid = require("scripts.grid")
 local inputs = require("scripts.inputs")
@@ -118,38 +119,36 @@ local north, east, south = defines.direction.north, defines.direction.east, defi
 ---@field row integer
 
 ---@param entities bpgen.Entity[]
----@param belt_name string
+---@param names bpgen.SharedNames
 ---@param column integer
 ---@param row integer
 ---@param direction defines.direction
-local function add_belt(entities, belt_name, column, row, direction)
-  local belt = {name = belt_name, position = grid.position(column, row), direction = direction}
-  entities[#entities + 1] = belt
-  belt.entity_number = #entities
+local function add_belt(entities, names, column, row, direction)
+  entity_list.append(entities, {name = names.belt, position = grid.position(column, row), direction = direction})
 end
 
 -- A run of belt tiles down one column, all running the same way (nothing when `last_row` is above `first_row`).
 ---@param entities bpgen.Entity[]
----@param belt_name string
+---@param names bpgen.SharedNames
 ---@param column integer
 ---@param first_row integer
 ---@param last_row integer
 ---@param direction defines.direction
-local function add_run(entities, belt_name, column, first_row, last_row, direction)
+local function add_run(entities, names, column, first_row, last_row, direction)
   for row = first_row, last_row do
-    add_belt(entities, belt_name, column, row, direction)
+    add_belt(entities, names, column, row, direction)
   end
 end
 
 -- A run of belt tiles east along one row.
 ---@param entities bpgen.Entity[]
----@param belt_name string
+---@param names bpgen.SharedNames
 ---@param first_column integer
 ---@param last_column integer
 ---@param row integer
-local function add_across(entities, belt_name, first_column, last_column, row)
+local function add_across(entities, names, first_column, last_column, row)
   for column = first_column, last_column do
-    add_belt(entities, belt_name, column, row, east)
+    add_belt(entities, names, column, row, east)
   end
 end
 
@@ -466,10 +465,10 @@ end
 -- The belt of a final column that feeds its machines runs north, towards the top of the blueprint,
 -- where the products arrive from the bottom.
 ---@param final bpgen.Column
----@param belt_name string
-local function face_north(final, belt_name)
+---@param names bpgen.SharedNames
+local function face_north(final, names)
   for _, entity in ipairs(final.block.entities) do
-    if entity.name == belt_name and grid.top_left_tile(entity.position).x == final.x0 then
+    if entity.name == names.belt and grid.top_left_tile(entity.position).x == final.x0 then
       entity.direction = north
     end
   end
@@ -478,8 +477,8 @@ end
 -- Moves the block of every column to its place and adds its entities.
 ---@param entities bpgen.Entity[]
 ---@param columns bpgen.Column[]
----@param belt_name string
-local function place_blocks(entities, columns, belt_name)
+---@param names bpgen.SharedNames
+local function place_blocks(entities, columns, names)
   for _, column in ipairs(columns) do
     if column.block then
       for _, entity in ipairs(column.block.entities) do
@@ -487,7 +486,7 @@ local function place_blocks(entities, columns, belt_name)
         entity.position.y = entity.position.y + column.top
       end
       if column.kind == "final" and not column.woven then
-        face_north(column, belt_name)
+        face_north(column, names)
       end
       absorb(entities, column.block)
     end
@@ -497,30 +496,30 @@ end
 -- The belts of raw items: from the west edge east along their row, then down their column into
 -- the first row of the chain (a belt of a raw item that goes with a made one is its arc).
 ---@param entities bpgen.Entity[]
----@param belt_name string
+---@param names bpgen.SharedNames
 ---@param runs bpgen.RawRun[]
-local function add_raw_belts(entities, belt_name, runs)
+local function add_raw_belts(entities, names, runs)
   local west = runs[#runs].x - 1
   for _, run in ipairs(runs) do
-    add_across(entities, belt_name, west, run.x - 1, run.row)
-    add_belt(entities, belt_name, run.x, run.row, south)
+    add_across(entities, names, west, run.x - 1, run.row)
+    add_belt(entities, names, run.x, run.row, south)
     local column = run.column
     if column.kind == "chain" then
       local last = column.top + column.block.raw_belts[1].row - 1
-      add_run(entities, belt_name, run.x, run.row + 1, last, south)
+      add_run(entities, names, run.x, run.row + 1, last, south)
     end
   end
 end
 
 -- The tile row of the last tile of the input belt that a final column draws itself.
 ---@param final bpgen.Column
----@param belt_name string
+---@param names bpgen.SharedNames
 ---@return integer
-local function input_belt_end(final, belt_name)
+local function input_belt_end(final, names)
   local last = -1
   for _, entity in ipairs(final.block.entities) do
     local tile = grid.top_left_tile(entity.position)
-    if entity.name == belt_name and tile.x == final.x0 then
+    if entity.name == names.belt and tile.x == final.x0 then
       last = math.max(last, tile.y)
     end
   end
@@ -530,33 +529,33 @@ end
 -- The lane gadget: the belt of the head goes one row past the row of its arc, east for two tiles and
 -- north into the side of the arc, whose first two tiles are a stub and the tile it feeds.
 ---@param entities bpgen.Entity[]
----@param belt_name string
+---@param names bpgen.SharedNames
 ---@param x integer  tile column of the belt coming down
 ---@param row integer  the row of the arc
-local function add_gadget(entities, belt_name, x, row)
-  add_belt(entities, belt_name, x, row + 1, east)
-  add_belt(entities, belt_name, x + 1, row + 1, east)
-  add_belt(entities, belt_name, x + 2, row + 1, north)
-  add_belt(entities, belt_name, x + 1, row, east)
-  add_belt(entities, belt_name, x + 2, row, east)
+local function add_gadget(entities, names, x, row)
+  add_belt(entities, names, x, row + 1, east)
+  add_belt(entities, names, x + 1, row + 1, east)
+  add_belt(entities, names, x + 2, row + 1, north)
+  add_belt(entities, names, x + 1, row, east)
+  add_belt(entities, names, x + 2, row, east)
 end
 
 -- The belt of a column from its last output down and east to the tile before `target`, the column of the belt that eats it.
 ---@param entities bpgen.Entity[]
----@param belt_name string
+---@param names bpgen.SharedNames
 ---@param child bpgen.Column
 ---@param target integer
-local function add_arc(entities, belt_name, child, target)
+local function add_arc(entities, names, child, target)
   local arc, x = child.arc, child.x_source
   if arc.gadget then
-    add_run(entities, belt_name, x, output_start(child), arc.row, south)
-    add_gadget(entities, belt_name, x, arc.row)
-    add_across(entities, belt_name, x + 3, target - 1, arc.row)
+    add_run(entities, names, x, output_start(child), arc.row, south)
+    add_gadget(entities, names, x, arc.row)
+    add_across(entities, names, x + 3, target - 1, arc.row)
   elseif arc.joins then
-    add_run(entities, belt_name, x, output_start(child), arc.row - 1, south) -- the last tile feeds the side of the head's arc
+    add_run(entities, names, x, output_start(child), arc.row - 1, south) -- the last tile feeds the side of the head's arc
   else
-    add_run(entities, belt_name, x, output_start(child), arc.row - 1, south)
-    add_across(entities, belt_name, x, target - 1, arc.row)
+    add_run(entities, names, x, output_start(child), arc.row - 1, south)
+    add_across(entities, names, x, target - 1, arc.row)
   end
 end
 
@@ -575,9 +574,9 @@ end
 -- belts begin: the tile under the first tile of each woven belt; where the belts are not woven, the end of belt a, and
 -- the first long-handed inserter for belt b.
 ---@param entities bpgen.Entity[]
----@param belt_name string
+---@param names bpgen.SharedNames
 ---@param final bpgen.Column
-local function add_risers(entities, belt_name, final)
+local function add_risers(entities, names, final)
   local heads = {}
   for _, child in ipairs(final.children) do
     if child.arc.head then
@@ -586,30 +585,30 @@ local function add_risers(entities, belt_name, final)
   end
   if final.woven then
     for belt, arc_row in pairs(heads) do
-      add_run(entities, belt_name, column_of_belt(final, belt), final.top + final.block.trunk_rows[belt] + 1, arc_row, north)
+      add_run(entities, names, column_of_belt(final, belt), final.top + final.block.trunk_rows[belt] + 1, arc_row, north)
     end
     return
   end
   if heads.a then
-    add_run(entities, belt_name, final.x0, input_belt_end(final, belt_name) + 1, heads.a, north)
+    add_run(entities, names, final.x0, input_belt_end(final, names) + 1, heads.a, north)
   end
   if heads.b then
-    add_run(entities, belt_name, final.x_b, final.top + final.block.long_rows.first, heads.b, north)
+    add_run(entities, names, final.x_b, final.top + final.block.long_rows.first, heads.b, north)
   end
 end
 
 -- The arcs and the belts that take the products up, of a final column and of the final columns inside it.
 ---@param entities bpgen.Entity[]
----@param belt_name string
+---@param names bpgen.SharedNames
 ---@param final bpgen.Column
-local function add_arcs(entities, belt_name, final)
+local function add_arcs(entities, names, final)
   for _, child in ipairs(final.children) do
     if child.kind == "final" then
-      add_arcs(entities, belt_name, child)
+      add_arcs(entities, names, child)
     end
-    add_arc(entities, belt_name, child, column_of_belt(final, child.belt))
+    add_arc(entities, names, child, column_of_belt(final, child.belt))
   end
-  add_risers(entities, belt_name, final)
+  add_risers(entities, names, final)
 end
 
 -- The tiles a machine covers on a side, by the machine's name.
@@ -739,9 +738,7 @@ local function add_water_inlet(entities, columns, names)
     last = math.max(last, trunk.x)
   end
   local function add(entity)
-    entities[#entities + 1] = entity
-    entity.entity_number = #entities
-    return entity
+    return entity_list.append(entities, entity)
   end
   local row = top - 1
   for _, trunk in ipairs(trunks) do
@@ -824,9 +821,9 @@ function rows.build(root, names)
   set_rows(columns, runs)
   assign_arcs(top, columns)
   local entities = {}
-  place_blocks(entities, columns, names.belt)
-  add_raw_belts(entities, names.belt, runs)
-  add_arcs(entities, names.belt, top)
+  place_blocks(entities, columns, names)
+  add_raw_belts(entities, names, runs)
+  add_arcs(entities, names, top)
   local inlet_pole = #trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
   join_poles(columns, inlet_pole and pole_bridge(entities, columns, names) or nil, inlet_pole)
   return entities, raw_stages_of(runs)
@@ -951,13 +948,13 @@ end
 -- built wide, which comes down straight into its own belt.
 ---@param entities bpgen.Entity[]
 ---@param columns bpgen.Column[]
----@param belt_name string
+---@param names bpgen.SharedNames
 ---@param ends table<bpgen.FeedLeaf, integer>
-local function add_chain_descents(entities, columns, belt_name, ends)
+local function add_chain_descents(entities, columns, names, ends)
   for _, column in ipairs(columns) do
     if column.block and column.kind ~= "final" then
       for _, descent in ipairs(descents_of(column)) do
-        add_run(entities, belt_name, descent.leaf.drop_x, ends[descent.leaf] + 1, column.top + descent.row - 1, south)
+        add_run(entities, names, descent.leaf.drop_x, ends[descent.leaf] + 1, column.top + descent.row - 1, south)
       end
     end
   end
@@ -968,9 +965,7 @@ end
 ---@param band bpgen.NewEntity[]
 local function add_band(entities, band)
   for _, entity in ipairs(band) do
-    local numbered = entity --[[@as bpgen.Entity]] -- it gets its number just below
-    entities[#entities + 1] = numbered
-    numbered.entity_number = #entities
+    entity_list.append(entities, entity)
   end
 end
 
@@ -1015,12 +1010,12 @@ function rows.build_pure(root, names, options)
     assign_arcs(top, columns)
   end
   local entities = {}
-  place_blocks(entities, columns, names.belt)
+  place_blocks(entities, columns, names)
   add_band(entities, band)
-  add_chain_descents(entities, columns, names.belt, ends)
+  add_chain_descents(entities, columns, names, ends)
   add_band(entities, fuel_tails(columns, names, ends))
   if top.kind == "final" then
-    add_arcs(entities, names.belt, top)
+    add_arcs(entities, names, top)
   end
   local inlet_pole = #trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
   join_poles(columns, pole_bridge(entities, columns, names), inlet_pole)

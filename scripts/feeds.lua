@@ -77,7 +77,8 @@ local function group_by_kind(leaves)
       by_key[key] = {names = names, leaves = {}}
       groups[#groups + 1] = by_key[key]
     end
-    table.insert(by_key[key].leaves, leaf)
+    local leaves = by_key[key].leaves
+    leaves[#leaves + 1] = leaf
   end
   return groups
 end
@@ -129,7 +130,8 @@ local function feeders_by_item(trunks)
         order[#order + 1] = name
       end
       local role = trunk.mixed and (position == 1 and "a" or "b") or "pure"
-      table.insert(feeders[name], {trunk = trunk, role = role, flow = trunk.demand[name]})
+      local list = feeders[name]
+      list[#list + 1] = {trunk = trunk, role = role, flow = trunk.demand[name]}
     end
   end
   return feeders, order
@@ -148,7 +150,8 @@ local function pack_belts(item, feeders, lane)
       current, load = {item = item, feeders = {}}, 0
       belts[#belts + 1] = current
     end
-    table.insert(current.feeders, feeder)
+    local list = current.feeders
+    list[#list + 1] = feeder
     load = load + feeder.flow
   end
   return belts

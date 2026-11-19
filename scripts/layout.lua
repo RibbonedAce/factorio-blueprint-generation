@@ -176,10 +176,13 @@
 --               [F F]     ^                  <- the belt starts here
 
 local constants = require("scripts.constants")
+local entity_list = require("scripts.entity_list")
 local grid = require("scripts.grid")
 local weave = require("scripts.weave")
 
 local layout = {}
+
+local north, east, south, west = defines.direction.north, defines.direction.east, defines.direction.south, defines.direction.west
 
 -- The tile column of each part of a column of machines, counted from the column's
 -- own input belt (the x numbers in the diagrams above). The machine starts at
@@ -536,10 +539,7 @@ end
 ---@param entity bpgen.NewEntity
 ---@return bpgen.Entity
 function Builder:add(entity)
-  local numbered = entity --[[@as bpgen.Entity]] -- it gets its number just below
-  self.entities[#self.entities + 1] = numbered
-  numbered.entity_number = #self.entities
-  return numbered
+  return entity_list.append(self.entities, entity)
 end
 
 -- Records a copper wire. Each wire is stored once, on the pole it starts from, as
@@ -676,7 +676,7 @@ end
 -- Whether the output belt runs north, to the next column, which needs the plates of the lowest machines.
 ---@return boolean
 function Builder:output_runs_north()
-  return self.shared_belt ~= nil and self.shared_belt.direction == defines.direction.north
+  return self.shared_belt ~= nil and self.shared_belt.direction == north
 end
 
 -- One past the last row that the column takes with its belts: the winding belt that runs north starts a tile past the
@@ -722,7 +722,6 @@ end
 function Builder:add_winding_tile(column, row, direction)
   local mirror = self.winding_mirror
   if mirror then
-    local south, north = defines.direction.south, defines.direction.north
     row = mirror - row
     direction = (direction == south and north) or (direction == north and south) or direction
   end
@@ -735,7 +734,7 @@ end
 ---@param length integer  how many tiles
 function Builder:add_winding_column(column, first_row, length)
   for row = first_row, first_row + length - 1 do
-    self:add_winding_tile(column, row, defines.direction.south)
+    self:add_winding_tile(column, row, south)
   end
 end
 
@@ -754,7 +753,6 @@ end
 function Builder:add_seam(row, column, has_lower)
   local inner = self.geometry.output_inserter_column + 1
   local outer = self.geometry.output_belt_column
-  local south, east, west = defines.direction.south, defines.direction.east, defines.direction.west
   self:add_winding_tile(inner, row, east)
   self:add_winding_tile(outer, row, south)
   if not has_lower then
@@ -793,8 +791,8 @@ function Builder:add_winding_run(row, column, stop)
   local inner = self.geometry.output_inserter_column + 1
   local outer = self.geometry.output_belt_column
   if column == inner and stop >= row then
-    self:add_winding_tile(inner, row, defines.direction.east)
-    self:add_winding_tile(outer, row, defines.direction.south)
+    self:add_winding_tile(inner, row, east)
+    self:add_winding_tile(outer, row, south)
     self:add_winding_column(outer, row + 1, stop - row)
     return outer
   end
@@ -868,7 +866,7 @@ end
 function Builder:continue_belt_north()
   local geometry = self.geometry
   if self:output_runs_north() then
-    self:add_belt_column(geometry.output_belt_column, geometry.first_row, self:machine_top(0) - geometry.first_row, defines.direction.north)
+    self:add_belt_column(geometry.output_belt_column, geometry.first_row, self:machine_top(0) - geometry.first_row, north)
   end
 end
 
@@ -879,7 +877,7 @@ end
 function Builder:add_input_belt()
   local geometry = self.geometry
   local first_row = geometry.first_row
-  self:add_belt_column(geometry.input_belt_column, first_row, self:last_input_row() - first_row + 1, defines.direction.south)
+  self:add_belt_column(geometry.input_belt_column, first_row, self:last_input_row() - first_row + 1, south)
 end
 
 ---@param column integer  tile column
@@ -887,7 +885,7 @@ end
 ---@param kind "input"|"output"  the entrance or the exit
 function Builder:add_underground(column, row, kind)
   local name = assert(self.names.underground, "layout: the names give no underground belt for the woven input belts")
-  self:add({name = name, position = grid.position(column, row), direction = defines.direction.south, type = kind})
+  self:add({name = name, position = grid.position(column, row), direction = south, type = kind})
 end
 
 -- The place of a row in the weave of the input belts: 0 to `WEAVE_ROWS` - 1, from the first row of the column.
@@ -903,7 +901,7 @@ end
 -- in step 1, where an entrance would have no exit: an exit follows two rows under the last inserter.
 ---@param inner integer  tile column
 function Builder:add_weave_hop(inner)
-  local first_row, direction = self.geometry.first_row, defines.direction
+  local first_row = self.geometry.first_row
   for row = first_row, self:last_input_row() do
     local step = self:weave_step(row)
     if step == 0 then
@@ -911,7 +909,7 @@ function Builder:add_weave_hop(inner)
     elseif step == 3 then
       self:add_underground(inner, row, "output")
     else
-      self:add_belt(inner, row, step == 1 and direction.south or direction.west)
+      self:add_belt(inner, row, step == 1 and south or west)
     end
   end
   if self:last_input_belt_row() > self:last_input_row() then
@@ -929,7 +927,7 @@ function Builder:add_woven_input_belts()
   local geometry = self.geometry
   self:add_weave_hop(geometry.input_belt_column)
   for row = geometry.first_row, self:last_input_row() do
-    self:add_belt(geometry.input_belt_column - 1, row, self:weave_step(row) == 1 and defines.direction.east or defines.direction.south)
+    self:add_belt(geometry.input_belt_column - 1, row, self:weave_step(row) == 1 and east or south)
   end
 end
 
@@ -941,8 +939,8 @@ function Builder:turn_shared_belt(row)
   for _, entity in ipairs(self.entities) do
     local tile = grid.top_left_tile(entity.position)
     if entity.name == self.names.belt and tile.x == column and tile.y == row then
-      assert(entity.direction == defines.direction.south, "layout: the belt before a stage with a belt of fuel does not run south there")
-      entity.direction = defines.direction.east
+      assert(entity.direction == south, "layout: the belt before a stage with a belt of fuel does not run south there")
+      entity.direction = east
       return
     end
   end
@@ -978,10 +976,9 @@ function Builder:add_input_weave()
   local names, geometry = self.names, self.geometry
   local splitter = assert(names.splitter, "layout: the names give no splitter for the woven input belts")
   local underground = assert(names.underground, "layout: the names give no underground belt for the woven input belts")
-  local directions = defines.direction
   for _, entry in ipairs(self.weave.tiles) do
     local column, row = geometry.input_belt_column + entry.column, self:weave_row(entry.row)
-    local way = ({east = directions.east, west = directions.west})[entry.way] or directions.north
+    local way = ({east = east, west = west})[entry.way] or north
     if entry.kind == "belt" then
       self:add_belt(column, row, way)
     elseif entry.kind == "splitter" then
@@ -1007,7 +1004,7 @@ function Builder:add_weave_inserters()
   local geometry = self.geometry
   local name = self:inserter_name(geometry.input_fast)
   for _, inserter in ipairs(self.weave.inserters) do
-    self:add({name = name, position = grid.position(geometry.input_inserter_column, self:weave_row(inserter.row)), direction = defines.direction.west})
+    self:add({name = name, position = grid.position(geometry.input_inserter_column, self:weave_row(inserter.row)), direction = west})
   end
 end
 
@@ -1033,7 +1030,7 @@ function Builder:add_output_belt()
     return
   end
   local shared = self.shared_belt
-  local direction = shared and shared.direction or defines.direction.south
+  local direction = shared and shared.direction or south
   self:add_belt_column(geometry.output_belt_column, geometry.first_row, self:output_belt_end_row() - geometry.first_row, direction)
 end
 
@@ -1074,7 +1071,7 @@ end
 ---@param count integer
 function Builder:add_inserters(name, column, top, count)
   for row = top, top + count - 1 do
-    self:add({name = name, position = grid.position(column, row), direction = defines.direction.west})
+    self:add({name = name, position = grid.position(column, row), direction = west})
   end
 end
 
@@ -1147,7 +1144,7 @@ function Builder:add_machine_row(index)
   local geometry = self.geometry
   local size = geometry.size
 
-  local direction = geometry.fluid and defines.direction.west or nil -- its fluid connection is on the side it faces
+  local direction = geometry.fluid and west or nil -- its fluid connection is on the side it faces
   self:add({name = self.names.machine, position = grid.position(geometry.machine_column, self:machine_top(index), size, size), recipe = self.names.recipe, direction = direction})
   self:add_input_inserters(index)
   self:add_inserters(self:inserter_name(geometry.output_fast), geometry.output_inserter_column, self:output_inserter_row(index), geometry.output_count)
@@ -1218,14 +1215,13 @@ function Builder:add_fluid_pipes()
   local geometry, names = self.geometry, self.names
   local pipe = assert(names.pipe, "layout: the names give no pipe for the fluid")
   local underground = assert(names.pipe_to_ground, "layout: the names give no underground pipe for the fluid")
-  local directions = defines.direction
   for index = 0, self.machine_count - 1 do
     local row = self:machine_top(index) + 1
-    self:add({name = underground, position = grid.position(geometry.input_inserter_column, row), direction = directions.east})
-    self:add({name = underground, position = grid.position(geometry.pipe_tunnel_column, row), direction = directions.west})
+    self:add({name = underground, position = grid.position(geometry.input_inserter_column, row), direction = east})
+    self:add({name = underground, position = grid.position(geometry.pipe_tunnel_column, row), direction = west})
   end
   for row = geometry.first_row, self:machine_top(self.machine_count - 1) + 1 do
-    self:add({name = pipe, position = grid.position(geometry.pipe_tunnel_column - 1, row), direction = directions.north})
+    self:add({name = pipe, position = grid.position(geometry.pipe_tunnel_column - 1, row), direction = north})
   end
 end
 
@@ -1348,7 +1344,7 @@ local function share_belt(builder, next_builder)
     "layout: a column that starts lower than the next one, whose belt runs south, leaves the inserters above it without plates")
   builder.shared_belt = {
     end_row = math.max(builder:last_output_row(), last_pickup_row) + 1, -- no tail below the last inserter that uses the belt
-    direction = runs_north and defines.direction.north or defines.direction.south,
+    direction = runs_north and north or south,
   }
 end
 

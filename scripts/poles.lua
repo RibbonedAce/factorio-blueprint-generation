@@ -10,6 +10,7 @@
 -- `bridge`, the module then puts poles on free tiles between them, each as far toward the other end as a
 -- wire reaches.
 
+local entity_list = require("scripts.entity_list")
 local grid = require("scripts.grid")
 local layout = require("scripts.layout")
 
@@ -120,10 +121,7 @@ local function add_bridge_pole(bridge, from, to)
   assert(centre and distance(centre, to.position) < distance(from.position, to.position), "poles: no room for a pole between two poles")
   local tile = grid.top_left_tile(centre)
   bridge.taken[grid.key(tile.x, tile.y)] = true
-  local pole = {name = bridge.pole, position = centre} --[[@as bpgen.Entity]]
-  bridge.entities[#bridge.entities + 1] = pole
-  pole.entity_number = #bridge.entities
-  return pole
+  return entity_list.append(bridge.entities, {name = bridge.pole, position = centre})
 end
 
 -- Wires `from` to `to`, with bridge poles between them when they are further apart than a wire reaches
