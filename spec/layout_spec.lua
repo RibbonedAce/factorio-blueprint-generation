@@ -7,6 +7,7 @@
 ---@diagnostic disable: undefined-field  -- luassert's `assert` has fields (`assert.are`, `assert.is_nil`, ...) the editor cannot see
 
 local builders = require("spec.support.builders")
+local constants = require("scripts.constants")
 local layout = require("scripts.layout")
 local grid = require("scripts.grid")
 local picture = require("spec.support.picture")
@@ -615,6 +616,18 @@ describe("layout", function()
       assert.are.equal(2, layout.max_output_inserters(3))
       assert.are.equal(2, layout.max_output_inserters(4))
       assert.are.equal(2, layout.max_output_inserters(5))
+    end)
+
+    it("gives a 3 x 3 machine the output inserters the planner counts on for the winding belt", function()
+      local inserters = layout.max_output_inserters(constants.WINDING_MACHINE_SIZE)
+
+      assert.are.equal(constants.WINDING_OUTPUT_INSERTERS, inserters)
+    end)
+  end)
+
+  describe("PIPE_COLUMNS", function()
+    it("gives a column that takes a fluid two tile columns for its pipes: the trunk and the column of the underground pipes", function()
+      assert.are.equal(2, layout.PIPE_COLUMNS)
     end)
   end)
 
