@@ -38,7 +38,7 @@ A Factorio 2.1 mod where the player gives only an item to produce and a rate of 
 
 The owner wants the mod built very iteratively: for each step, the simplest solution that is still good code, meeting only the current criteria. The order follows a normal playthrough, with products getting more complex over time. First-tier belts and inserters are hardcoded.
 
-The steps of the ladder, 1 to 5ak, are in [feature-log.md](feature-log.md), oldest first. What comes next:
+The steps of the ladder, 1 to 5al, are in [feature-log.md](feature-log.md), oldest first. What comes next:
 
 6. Next criteria are for the owner to set. Candidates the assistant could suggest when asked (not decided): assembler recipes with several ingredients, higher rates (more than one belt lane), better machines and belts chosen from research. Steel plate (a furnace step after the iron plate step) is NOT buildable yet: only the first step may burn fuel (see "Chains").
 

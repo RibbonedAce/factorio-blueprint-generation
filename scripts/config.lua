@@ -134,6 +134,11 @@ local config = {
     ["refined-hazard-concrete"] = true,
     -- Three made ingredients (piercing rounds, a grenade and walls), one belt of each material only (steel, and coal for the grenade).
     ["military-science-pack"] = true,
+    -- Made through steel plate (and engine units for the turret), so one belt of each material only.
+    ["chemical-plant"] = true,
+    ["flamethrower"] = true,
+    ["defender-capsule"] = true, -- piercing rounds magazines, electronic circuits and gear wheels
+    ["flamethrower-turret"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns
