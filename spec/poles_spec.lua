@@ -14,7 +14,7 @@ local SMALL_WIRE = NAMES.pole_wire_distance -- 7.5: poles are put at most 7 apar
 local MEDIUM_WIRE = builders.POLES.medium.wire_distance -- 9: poles are put at most 8.5 apart
 
 -- A pole with the number it has in the blueprint.
-local function pole_at(number, tile_x, tile_y)
+local function numbered_pole(number, tile_x, tile_y)
   local pole = builders.pole(tile_x, tile_y)
   pole.entity_number = number
   return pole
@@ -29,8 +29,8 @@ end
 describe("poles", function()
   describe("joining groups of poles", function()
     it("wires the nearest pair of poles of two groups", function()
-      local near_end, far_end = pole_at(2, 3, 0), pole_at(1, 0, 0)
-      local first, second = pole_at(3, 6, 0), pole_at(4, 20, 0)
+      local near_end, far_end = numbered_pole(2, 3, 0), numbered_pole(1, 0, 0)
+      local first, second = numbered_pole(3, 6, 0), numbered_pole(4, 20, 0)
 
       poles.join({{far_end, near_end}, {first, second}})
 
@@ -38,8 +38,8 @@ describe("poles", function()
     end)
 
     it("wires nothing else", function()
-      local far_end, near_end = pole_at(1, 0, 0), pole_at(2, 3, 0)
-      local first, second = pole_at(3, 6, 0), pole_at(4, 20, 0)
+      local far_end, near_end = numbered_pole(1, 0, 0), numbered_pole(2, 3, 0)
+      local first, second = numbered_pole(3, 6, 0), numbered_pole(4, 20, 0)
 
       poles.join({{far_end, near_end}, {first, second}})
 
@@ -49,7 +49,7 @@ describe("poles", function()
     end)
 
     it("joins the nearest group first, and the next to the nearest pole of the poles joined so far", function()
-      local west, middle, east = pole_at(1, 0, 0), pole_at(2, 5, 0), pole_at(3, 10, 0)
+      local west, middle, east = numbered_pole(1, 0, 0), numbered_pole(2, 5, 0), numbered_pole(3, 10, 0)
 
       poles.join({{west}, {east}, {middle}})
 
@@ -57,7 +57,7 @@ describe("poles", function()
     end)
 
     it("leaves out a group with no pole", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 5, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 5, 0)
 
       poles.join({{west}, {}, {east}})
 
@@ -65,8 +65,8 @@ describe("poles", function()
     end)
 
     it("keeps the first of two pairs that are equally near", function()
-      local first, second = pole_at(1, 0, 0), pole_at(2, 0, 10)
-      local between = pole_at(3, 5, 5) -- 7.07 tiles from both
+      local first, second = numbered_pole(1, 0, 0), numbered_pole(2, 0, 10)
+      local between = numbered_pole(3, 5, 5) -- 7.07 tiles from both
 
       poles.join({{first, second}, {between}})
 
@@ -75,7 +75,7 @@ describe("poles", function()
     end)
 
     it("joins the first of two groups that are equally near first", function()
-      local middle, east, west = pole_at(1, 0, 0), pole_at(2, 5, 0), pole_at(3, -5, 0)
+      local middle, east, west = numbered_pole(1, 0, 0), numbered_pole(2, 5, 0), numbered_pole(3, -5, 0)
 
       poles.join({{middle}, {east}, {west}})
 
@@ -83,7 +83,7 @@ describe("poles", function()
     end)
 
     it("starts from the first group that has a pole when the groups before it have none", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 5, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 5, 0)
 
       poles.join({{}, {west}, {east}})
 
@@ -91,7 +91,7 @@ describe("poles", function()
     end)
 
     it("wires nothing for one group", function()
-      local only = pole_at(1, 0, 0)
+      local only = numbered_pole(1, 0, 0)
 
       poles.join({{only}})
 
@@ -99,7 +99,7 @@ describe("poles", function()
     end)
 
     it("wires poles that are far apart when there is no bridge, as the original design does", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 30, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 30, 0)
 
       poles.join({{west}, {east}})
 
@@ -109,7 +109,7 @@ describe("poles", function()
 
   describe("bridging poles that are further apart than a wire reaches", function()
     it("wires poles that are exactly as far apart as a wire reaches without a pole between", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 7, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 7, 0)
       local entities = {west, east}
 
       poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE))
@@ -118,7 +118,7 @@ describe("poles", function()
     end)
 
     it("puts a pole as far toward the other pole as a wire reaches when they are further apart than that", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 8, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 8, 0)
       local entities = {west, east}
 
       poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE))
@@ -127,7 +127,7 @@ describe("poles", function()
     end)
 
     it("names and numbers the pole it adds after the entities already there", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 14, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 14, 0)
       local entities = {west, east}
 
       poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE))
@@ -136,7 +136,7 @@ describe("poles", function()
     end)
 
     it("wires the first pole to the new one and the new one to the second", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 14, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 14, 0)
       local entities = {west, east}
 
       poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE))
@@ -145,7 +145,7 @@ describe("poles", function()
     end)
 
     it("keeps the pole off a tile that holds something and goes as far as it can on a free one", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 14, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 14, 0)
       local entities = {west, east}
 
       poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE, {["7,0"] = true})) -- the tile it would have used
@@ -154,7 +154,7 @@ describe("poles", function()
     end)
 
     it("chains as many poles as the gap needs", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 21, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 21, 0)
       local entities = {west, east}
 
       poles.join({{west}, {east}}, bridge_for(entities, SMALL_WIRE))
@@ -163,7 +163,7 @@ describe("poles", function()
     end)
 
     it("does not put a second pole on the tile of the first", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 14, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 14, 0)
       local taken = {}
 
       poles.join({{west}, {east}}, bridge_for({west, east}, SMALL_WIRE, taken))
@@ -172,7 +172,7 @@ describe("poles", function()
     end)
 
     it("wires medium poles that are 8 tiles apart without a pole between, which a small pole's wire would not hold", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 8, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 8, 0)
       local entities = {west, east}
 
       poles.join({{west}, {east}}, bridge_for(entities, MEDIUM_WIRE))
@@ -181,7 +181,7 @@ describe("poles", function()
     end)
 
     it("puts a pole as far toward the other pole as a medium pole's wire reaches, 8 tiles of the 9 it holds", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 10, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 10, 0)
       local entities = {west, east}
 
       poles.join({{west}, {east}}, bridge_for(entities, MEDIUM_WIRE))
@@ -190,7 +190,7 @@ describe("poles", function()
     end)
 
     it("gives up, saying so, when no free tile within reach is nearer to the other pole", function()
-      local west, east = pole_at(1, 0, 0), pole_at(2, 14, 0)
+      local west, east = numbered_pole(1, 0, 0), numbered_pole(2, 14, 0)
       local taken = {}
       for x = -8, 16 do
         for y = -8, 8 do

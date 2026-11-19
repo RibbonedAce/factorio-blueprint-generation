@@ -165,16 +165,123 @@ function builders.pole(tile_x, tile_y, name)
   return {name = name or builders.NAMES.pole, position = grid.position(tile_x, tile_y)}
 end
 
+-- Gives the entities of a list their numbers (1, 2, 3, ... in the order of the list) and gives the list back.
+---@param list table[]  entities from the builders above
+---@return bpgen.Entity[]
+function builders.numbered(list)
+  for index, entity in ipairs(list) do
+    entity.entity_number = index
+  end
+  return list
+end
+
 -- Gives the entities their numbers (1, 2, 3, ... in the order passed) and
 -- returns them as a list, the way a blueprint holds them.
 ---@param ... table  entities from the builders above
 ---@return bpgen.Entity[]
 function builders.blueprint_of(...)
-  local entities = {...}
-  for index, entity in ipairs(entities) do
-    entity.entity_number = index
+  return builders.numbered({...})
+end
+
+-- The entities of the list that have the name, in the order of the list.
+---@param entities table[]
+---@param name string
+---@return table[]
+function builders.entities_named(entities, name)
+  local found = {}
+  for _, entity in ipairs(entities) do
+    if entity.name == name then
+      found[#found + 1] = entity
+    end
   end
-  return entities
+  return found
+end
+
+-- How many entities of the list have the name.
+---@param entities table[]
+---@param name string
+---@return integer
+function builders.count_named(entities, name)
+  return #builders.entities_named(entities, name)
+end
+
+-- The rows of the belts in one tile column, in order.
+---@param entities table[]
+---@param column integer
+---@return integer[]
+function builders.belt_rows(entities, column)
+  local rows = {}
+  for _, belt in ipairs(builders.entities_named(entities, builders.NAMES.belt)) do
+    local tile = grid.top_left_tile(belt.position)
+    if tile.x == column then
+      rows[#rows + 1] = tile.y
+    end
+  end
+  table.sort(rows)
+  return rows
+end
+
+-- The directions the belts of one tile column face, each once, in the order they are first met.
+---@param entities table[]
+---@param column integer
+---@return defines.direction[]
+function builders.belt_directions(entities, column)
+  local directions, seen = {}, {}
+  for _, belt in ipairs(builders.entities_named(entities, builders.NAMES.belt)) do
+    if grid.top_left_tile(belt.position).x == column and not seen[belt.direction] then
+      seen[belt.direction] = true
+      directions[#directions + 1] = belt.direction
+    end
+  end
+  return directions
+end
+
+-- A copy of `base` with the fields of `changes` put in it (plain values; no field of either is looked into). Without `changes`,
+-- a plain copy.
+---@param base table
+---@param changes? table
+---@return table
+function builders.merged(base, changes)
+  local copy = {}
+  for key, value in pairs(base) do
+    copy[key] = value
+  end
+  for key, value in pairs(changes or {}) do
+    copy[key] = value
+  end
+  return copy
+end
+
+-- The shortest distance between two of the tiles, or infinity when there are fewer than two.
+---@param tiles {x: number, y: number}[]
+---@return number
+function builders.closest_pair(tiles)
+  local closest = math.huge
+  for i = 1, #tiles - 1 do
+    for j = i + 1, #tiles do
+      closest = math.min(closest, math.sqrt((tiles[i].x - tiles[j].x) ^ 2 + (tiles[i].y - tiles[j].y) ^ 2))
+    end
+  end
+  return closest
+end
+
+-- Runs `run` with `module[name]` replaced by `replacement` and gives back what it gives. The original is back in its place
+-- afterwards, also when `run` fails, which then fails with its own message.
+---@generic R
+---@param module table
+---@param name string
+---@param replacement function
+---@param run fun(): R
+---@return R
+function builders.with_replaced(module, name, replacement, run)
+  local original = module[name]
+  module[name] = replacement
+  local ok, result = pcall(run)
+  module[name] = original
+  if not ok then
+    error(result, 0)
+  end
+  return result
 end
 
 -- Adds a copper wire from pole `from` to pole `to`. Both must already be numbered

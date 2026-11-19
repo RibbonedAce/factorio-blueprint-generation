@@ -92,15 +92,21 @@ describe("messages", function()
         collect_keys(message, found)
       end
 
+      local problems = {}
       for _, use in ipairs(found) do
         local text = texts[use.key]
-        assert.is_not_nil(text, "no text for the key " .. use.key)
         local places = 0
-        for place in text:gmatch("__(%d+)__") do
+        for place in (text or ""):gmatch("__(%d+)__") do
           places = math.max(places, tonumber(place))
         end
-        assert.are.equal(places, use.values, "values given to " .. use.key)
+        if not text then
+          problems[#problems + 1] = "no text for the key " .. use.key
+        elseif places ~= use.values then
+          problems[#problems + 1] = string.format("%s is given %d values and has %d places in its text", use.key, use.values, places)
+        end
       end
+
+      assert.are.same({}, problems)
     end)
 
     it("has no key that the messages do not use, besides the name of the shortcut", function()
@@ -115,9 +121,15 @@ describe("messages", function()
         used[use.key] = true
       end
 
+      local unused = {}
       for key in pairs(locale_texts()) do
-        assert.is_true(used[key] == true, "nothing uses the key " .. key)
+        if not used[key] then
+          unused[#unused + 1] = key
+        end
       end
+      table.sort(unused)
+
+      assert.are.same({}, unused)
     end)
   end)
 
@@ -163,17 +175,17 @@ describe("messages", function()
       assert.are.same({PREFIX .. "error-ambiguous-recipe", {"item-name.iron-plate"}}, messages.chain_problem("ambiguous", "iron-plate"))
     end)
 
-    it("names the item for each way a step can be too complex", function()
-      for _, reason in ipairs({"several-crafted", "extra-ingredient", "fork-in-chain"}) do
+    for _, reason in ipairs({"several-crafted", "extra-ingredient", "fork-in-chain"}) do
+      it("names the item when a step is too complex because of " .. reason, function()
         assert.are.same({PREFIX .. "error-chain-too-complex", {"item-name.iron-plate"}}, messages.chain_problem(reason, "iron-plate"))
-      end
-    end)
+      end)
+    end
 
-    it("says the recipe is not what the generator expects for any other reason", function()
-      for _, reason in ipairs({"unsupported", "cycle"}) do
+    for _, reason in ipairs({"unsupported", "cycle"}) do
+      it("says the recipe is not what the generator expects when the reason is " .. reason, function()
         assert.are.same({PREFIX .. "error-unsupported-recipe"}, messages.chain_problem(reason, "iron-plate"))
-      end
-    end)
+      end)
+    end
   end)
 
   describe("why the planner said no", function()

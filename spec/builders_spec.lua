@@ -202,6 +202,120 @@ describe("builders", function()
     end)
   end)
 
+  describe("the numbering of entities", function()
+    it("numbers the entities of a list from 1 in the order of the list", function()
+      local list = builders.numbered({builders.belt(0, 0), builders.belt(1, 0)})
+
+      assert.are.same({1, 2}, {list[1].entity_number, list[2].entity_number})
+    end)
+
+    it("numbers the entities it is passed in the order passed", function()
+      local list = builders.blueprint_of(builders.belt(0, 0), builders.furnace(2, 0))
+
+      assert.are.same({1, 2}, {list[1].entity_number, list[2].entity_number})
+    end)
+  end)
+
+  describe("looking entities up by name", function()
+    it("lists the entities that have the name, in the order of the list", function()
+      local entities = {builders.belt(0, 0), builders.furnace(2, 0), builders.belt(5, 0)}
+
+      local belts = builders.entities_named(entities, builders.NAMES.belt)
+
+      assert.are.same({entities[1], entities[3]}, belts)
+    end)
+
+    it("counts the entities that have the name", function()
+      local entities = {builders.belt(0, 0), builders.furnace(2, 0), builders.belt(5, 0)}
+
+      local count = builders.count_named(entities, builders.NAMES.belt)
+
+      assert.are.equal(2, count)
+    end)
+
+    it("lists the rows of the belts in a tile column, from the top", function()
+      local entities = {builders.belt(3, 4), builders.belt(3, 1), builders.belt(2, 0)}
+
+      local rows = builders.belt_rows(entities, 3)
+
+      assert.are.same({1, 4}, rows)
+    end)
+
+    it("lists each direction the belts of a tile column face once, in the order they are met", function()
+      local entities = {builders.belt(3, 0, east), builders.belt(3, 1, south), builders.belt(3, 2, east), builders.belt(4, 0, south)}
+
+      local directions = builders.belt_directions(entities, 3)
+
+      assert.are.same({east, south}, directions)
+    end)
+  end)
+
+  describe("merging fields", function()
+    it("puts the changes over the fields of the base without touching the base", function()
+      local base = {speed = 1, size = 3}
+
+      local merged = builders.merged(base, {size = 2, name = "x"})
+
+      assert.are.same({{speed = 1, size = 2, name = "x"}, {speed = 1, size = 3}}, {merged, base})
+    end)
+
+    it("copies the base when there are no changes", function()
+      local base = {speed = 1}
+
+      local merged = builders.merged(base)
+
+      assert.are.same({true, false}, {merged.speed == 1, merged == base})
+    end)
+  end)
+
+  describe("the distance between the closest two tiles", function()
+    it("is the shortest of the distances between any two of them", function()
+      local closest = builders.closest_pair({{x = 0, y = 0}, {x = 10, y = 0}, {x = 13, y = 4}})
+
+      assert.are.equal(5, closest)
+    end)
+
+    it("is infinity for fewer than two tiles", function()
+      local closest = builders.closest_pair({{x = 0, y = 0}})
+
+      assert.are.equal(math.huge, closest)
+    end)
+  end)
+
+  describe("replacing a function of a module for one run", function()
+    it("gives back what the run gives, with the replacement in place while it runs", function()
+      local module = {greet = function() return "hello" end}
+
+      local seen = builders.with_replaced(module, "greet", function() return "hi" end, function() return module.greet() end)
+
+      assert.are.equal("hi", seen)
+    end)
+
+    it("puts the original back after the run", function()
+      local module = {greet = function() return "hello" end}
+
+      builders.with_replaced(module, "greet", function() return "hi" end, function() end)
+
+      assert.are.equal("hello", module.greet())
+    end)
+
+    it("fails with the message of the run when the run fails", function()
+      local module = {greet = function() return "hello" end}
+
+      local function failing() builders.with_replaced(module, "greet", function() end, function() error("boom", 0) end) end
+
+      assert.has_error(failing, "boom")
+    end)
+
+    it("puts the original back when the run fails", function()
+      local module = {greet = function() return "hello" end}
+
+      pcall(builders.with_replaced, module, "greet", function() end, function() error("boom", 0) end)
+
+      assert.are.equal("hello", module.greet())
+    end)
+  end)
+
   describe("the fake force", function()
     it("has every recipe unlocked unless it is told otherwise", function()
       assert.is_true(builders.fake_force{}.recipes["splitter"].enabled)

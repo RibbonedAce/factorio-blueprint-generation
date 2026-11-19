@@ -59,24 +59,29 @@ local function ready_message_with_belts(product, per_minute, raws, belts)
   return message
 end
 
-local function entities_of(entities, name)
-  local found = {}
-  for _, entity in ipairs(entities) do
-    if entity.name == name then
-      found[#found + 1] = entity
-    end
-  end
-  return found
-end
+local entities_named = builders.entities_named
+local count_named = builders.count_named
 
-local function count_named(entities, name)
-  local total = 0
-  for _, entity in ipairs(entities) do
-    if entity.name == name then
-      total = total + 1
+-- What the generator tells the layout about the stages of a blueprint: the root stage `rows.build` or `rows.build_pure` is given.
+---@param item string
+---@param rate number
+---@param force table
+---@return table
+local function layout_given(item, rate, force)
+  local rows = require("scripts.rows")
+  local given
+  local function remembering(build)
+    return function(root, ...)
+      given = root
+      return build(root, ...)
     end
   end
-  return total
+  builders.with_replaced(rows, "build", remembering(rows.build), function()
+    builders.with_replaced(rows, "build_pure", remembering(rows.build_pure), function()
+      generator.generate(item, rate, force)
+    end)
+  end)
+  return given
 end
 
 -- The distinct entity names used, sorted, as a list.
@@ -303,9 +308,10 @@ describe("generator", function()
 
       local input_column, output_column = 0, 0
       for _, entity in ipairs(result.entities) do
-        if entity.name == "inserter" and entity.position.x == 1.5 then
+        local column = grid.top_left_tile(entity.position).x
+        if entity.name == "inserter" and column == 1 then
           input_column = input_column + 1
-        elseif entity.name == "inserter" and entity.position.x == 5.5 then
+        elseif entity.name == "inserter" and column == 5 then
           output_column = output_column + 1
         end
       end
@@ -322,13 +328,13 @@ describe("generator", function()
 
       local result = generator.generate("iron-gear-wheel", 100)
 
-      local centres = {}
+      local tiles = {}
       for _, entity in ipairs(result.entities) do
         if entity.name == "assembling-machine-1" then
-          centres[#centres + 1] = {x = entity.position.x, y = entity.position.y}
+          tiles[#tiles + 1] = grid.top_left_tile(entity.position, 3, 3)
         end
       end
-      assert.are.same({{x = 3.5, y = 1.5}, {x = 3.5, y = 4.5}}, centres) -- 3 wide from column 2; rows 0 to 2, then 3 to 5
+      assert.are.same({{x = 2, y = 0}, {x = 2, y = 3}}, tiles) -- 3 wide from column 2; rows 0 to 2, then 3 to 5
     end)
 
     it("needs fewer machines when the inserters are fast enough to run each machine at full speed", function()
@@ -612,15 +618,11 @@ describe("generator", function()
     local assembler = a_machine{crafting_speed = 0.5, size = 3}
 
     local function gear_game(overrides)
-      local options = {
+      return fake_prototypes(builders.merged({
         furnace_speed = 1,
         machines = {["assembling-machine-1"] = assembler},
         recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
-      }
-      for key, value in pairs(overrides or {}) do
-        options[key] = value
-      end
-      return fake_prototypes(options)
+      }, overrides))
     end
 
     it("builds the machines of every step, enough furnaces to feed the assemblers", function()
@@ -1149,16 +1151,11 @@ describe("generator", function()
     }
 
     local function inserter_game(extra)
-      extra = extra or {}
-      return fake_prototypes{
+      return fake_prototypes(builders.merged({
         furnace_speed = 1,
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
         recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["iron-gear-wheel"] = gear, ["inserter"] = inserter},
-        missing_entities = extra.missing_entities,
-        long_inserter_rotation_speed = extra.long_inserter_rotation_speed,
-        underground_distance = extra.underground_distance,
-        small_pole_supply_distance = extra.small_pole_supply_distance,
-      }
+      }, extra))
     end
 
     it("builds the machines of every step: furnaces for the plates of the gears, the bricks and the plates, assemblers for the gears and the inserters", function()
@@ -1170,7 +1167,7 @@ describe("generator", function()
       assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- one for the gears, one for the inserters
     end)
 
-    it("builds a final assembler for each 50.4 inserters a minute, with no long-handed inserter", function()
+    it("builds a final assembler for what its plain inserters move, with no long-handed inserter", function()
       _G.prototypes = inserter_game()
 
       local result = generator.generate("inserter", 100, plain)
@@ -1263,7 +1260,7 @@ describe("generator", function()
       -- (72 / 120 = 0.6): 0.6, so 36 inserters a minute for each final assembler.
       local LONG = "long-handed-inserter"
 
-      it("gives each final assembler a long-handed inserter, and builds one for each 36 a minute, when no force is given", function()
+      it("gives each final assembler a long-handed inserter, and sizes the machines by the speed of that inserter, when no force is given", function()
         _G.prototypes = inserter_game()
 
         local result = generator.generate("inserter", 100)
@@ -1287,7 +1284,7 @@ describe("generator", function()
         assert.are.equal(3, count_named(result.entities, LONG))
       end)
 
-      it("builds them when the underground belt spans only 4 tiles, one short of the longest hop of belt a", function()
+      it("builds them when the underground belt spans one tile less than the longest hop of belt a", function()
         _G.prototypes = inserter_game{underground_distance = 4}
 
         local result = generator.generate("inserter", 100, plain)
@@ -1295,7 +1292,7 @@ describe("generator", function()
         assert.are.equal(3, count_named(result.entities, LONG))
       end)
 
-      it("weaves the belts instead when the underground belt spans exactly the 5 tiles of the longest hop", function()
+      it("weaves the belts instead when the underground belt spans exactly the longest hop of belt a", function()
         _G.prototypes = inserter_game{underground_distance = 5}
 
         local result = generator.generate("inserter", 100, plain)
@@ -1492,7 +1489,7 @@ describe("generator", function()
       return found
     end
 
-    it("builds an assembling machine 2 for each 45 concrete a minute, and the machines of the steps before it", function()
+    it("builds an assembling machine 2 for each machine's worth of concrete, and the machines of the steps before it", function()
       _G.prototypes = concrete_game()
 
       local result = generator.generate("concrete", 90)
@@ -1587,10 +1584,10 @@ describe("generator", function()
       local result = generator.generate("concrete", 90)
 
       local belt_left = math.huge
-      for _, belt in ipairs(entities_of(result.entities, "transport-belt")) do
+      for _, belt in ipairs(entities_named(result.entities, "transport-belt")) do
         belt_left = math.min(belt_left, grid.top_left_tile(belt.position).x)
       end
-      local pump = entities_of(result.entities, "pump")[1]
+      local pump = entities_named(result.entities, "pump")[1]
       assert.are.same({1, 1, belt_left}, {count_named(result.entities, "pump"), count_named(result.entities, "small-electric-pole") > 0 and 1 or 0, grid.top_left_tile(pump.position, 2, 1).x})
     end)
 
@@ -1598,15 +1595,14 @@ describe("generator", function()
       _G.prototypes = concrete_game()
       local lights = require("scripts.lights")
       local original, told = lights.add, nil
-      lights.add = function(entities, options)
+      local function spying(entities, options)
         told = options
         return original(entities, options)
       end
 
-      local generated = pcall(generator.generate, "concrete", 90, fake_force{})
-      lights.add = original
+      builders.with_replaced(lights, "add", spying, function() generator.generate("concrete", 90, fake_force{}) end)
 
-      assert.are.same({true, {"transport-belt", "underground-belt"}, {"pump"}}, {generated, told.belts, told.inlets})
+      assert.are.same({{"transport-belt", "underground-belt"}, {"pump"}}, {told.belts, told.inlets})
     end)
 
     describe("an iron ore next to the bricks, as the game's concrete takes them: the raw item rides the lane the bricks leave free", function()
@@ -1943,16 +1939,7 @@ describe("generator", function()
     -- whether 1 or 900 are asked. The direction comes from the work each column does, not from how many
     -- machines the rate happens to round up to.
     local function plate_belt_directions(entities)
-      local directions, seen = {}, {}
-      for _, entity in ipairs(entities) do
-        if entity.name == "transport-belt" and entity.position.x == 5.5 then
-          if not seen[entity.direction] then
-            seen[entity.direction] = true
-            directions[#directions + 1] = entity.direction
-          end
-        end
-      end
-      return directions
+      return builders.belt_directions(entities, 5)
     end
 
     local function game_of(ore, plate, product, plates_in, products_out, energy)
@@ -2431,19 +2418,14 @@ describe("generator", function()
     }
 
     local function circuit_game(options)
-      options = options or {}
-      return fake_prototypes{
+      return fake_prototypes(builders.merged({
         furnace_speed = 1,
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
         recipes = {
           ["iron-plate"] = iron_plate, ["copper-plate"] = copper_plate,
           ["copper-cable"] = cable, ["electronic-circuit"] = circuit,
         },
-        underground_distance = options.underground_distance,
-        missing_entities = options.missing_entities,
-        fast_belts = options.fast_belts,
-        fast_underground_distance = options.fast_underground_distance,
-      }
+      }, options))
     end
 
     describe("with the fast belts, once the force has unlocked the fast belt, the fast splitter and the fast underground belt", function()
@@ -2494,7 +2476,7 @@ describe("generator", function()
         assert.are.same({0, 0, 0}, {counts["fast-transport-belt"], counts["fast-splitter"], counts["fast-underground-belt"]})
       end)
 
-      it("makes up to twice as many: the lanes of the fast belt carry 900 a minute, where the basic belt's carry 450", function()
+      it("makes up to twice as many: the lanes of the fast belt carry twice what the basic belt's carry", function()
         _G.prototypes = circuit_game{fast_belts = true}
 
         assert.are.same({{"blueprint-generation.max-rate", "300"}, {"blueprint-generation.max-rate", "150"}},
@@ -2519,7 +2501,7 @@ describe("generator", function()
         assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "300"}}, {result, message})
       end)
 
-      it("builds it when the fast underground belt spans exactly the 3 tiles the hops need", function()
+      it("builds it when the fast underground belt spans exactly the fewest tiles the hops need", function()
         _G.prototypes = circuit_game{fast_belts = true, fast_underground_distance = 3}
 
         local counts = belts_by_name(generator.generate("electronic-circuit", 50, fake_force{}))
@@ -2606,7 +2588,7 @@ describe("generator", function()
       assert.are.same({}, validator.validate(result.entities, catalog))
     end)
 
-    it("builds it when the underground belt spans exactly the 3 tiles the hops need", function()
+    it("builds it when the underground belt spans exactly the fewest tiles the hops need", function()
       _G.prototypes = circuit_game{underground_distance = 3}
 
       local result = generator.generate("electronic-circuit", 50, fake_force{})
@@ -2679,14 +2661,11 @@ describe("generator", function()
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
 
     local function gear_game(options)
-      options = options or {}
-      return fake_prototypes{
+      return fake_prototypes(builders.merged({
         furnace_speed = 1,
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
         recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
-        missing_entities = options.missing_entities,
-        fast_inserter_rotation_speed = options.fast_inserter_rotation_speed,
-      }
+      }, options))
     end
 
     it("puts a fast inserter on each side of an assembler that moves more than a plain inserter does", function()
@@ -2770,13 +2749,13 @@ describe("generator", function()
         }
       end
 
-      it("allows 810 a minute, 6.75 machines' worth of 120, with the paired winding belt", function()
+      it("allows the most the paired winding belt carries with fast inserters, which is less than two full lanes", function()
         _G.prototypes = cable_game()
 
         assert.are.same({"blueprint-generation.max-rate", "810"}, generator.max_rate_message("copper-cable", fake_force{}))
       end)
 
-      it("allows 900 a minute, as it always did, with plain inserters, which wind the belt with two inserters on a machine", function()
+      it("allows two full lanes with plain inserters, which wind the belt with two inserters on a machine", function()
         _G.prototypes = cable_game()
 
         assert.are.same({"blueprint-generation.max-rate", "900"}, generator.max_rate_message("copper-cable"))
@@ -2888,7 +2867,7 @@ describe("generator", function()
       local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
       local gear_in_a_furnace = a_recipe{energy = 3.2, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}, category = "smelting"}
 
-      it("is refused without the design that brings in one belt of each material, naming the item", function()
+      it("refuses the request without the design that brings in one belt of each material, naming the item", function()
         _G.prototypes = fake_prototypes{recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear_in_a_furnace}}
 
         local result, error_message = generator.generate("iron-gear-wheel", 10)
@@ -3140,13 +3119,11 @@ describe("generator", function()
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
 
     local function gear_game(options)
-      options = options or {}
-      return fake_prototypes{
+      return fake_prototypes(builders.merged({
         furnace_speed = 1,
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
         recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
-        missing_entities = options.missing_entities,
-      }
+      }, options))
     end
 
     -- The tiles of the lamps of a blueprint.
@@ -3158,16 +3135,6 @@ describe("generator", function()
         end
       end
       return lamps
-    end
-
-    local function closest_pair(lamps)
-      local closest = math.huge
-      for i = 1, #lamps - 1 do
-        for j = i + 1, #lamps do
-          closest = math.min(closest, math.sqrt((lamps[i].x - lamps[j].x) ^ 2 + (lamps[i].y - lamps[j].y) ^ 2))
-        end
-      end
-      return closest
     end
 
     it("puts lamps on a blueprint, more than one when it is long", function()
@@ -3183,7 +3150,7 @@ describe("generator", function()
 
       local result = generator.generate("iron-gear-wheel", 200, fake_force{})
 
-      assert.is_true(closest_pair(lamps_of(result.entities)) >= 10)
+      assert.is_true(builders.closest_pair(lamps_of(result.entities)) >= 10)
     end)
 
     it("builds a blueprint that passes the validator, every lamp powered and on a tile of its own", function()
@@ -3223,14 +3190,11 @@ describe("generator", function()
     local steel = a_recipe{energy = 16, ingredients = {amount_of(5, "iron-plate")}, products = {amount_of(1, "steel-plate")}, category = "smelting"}
 
     local function game(options)
-      options = options or {}
-      return fake_prototypes{
+      return fake_prototypes(builders.merged({
         furnace_speed = 1,
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
         recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear, ["steel-plate"] = steel},
-        missing_entities = options.missing_entities,
-        medium_pole_supply_distance = options.medium_pole_supply_distance,
-      }
+      }, options))
     end
 
     -- A furnace built wide has two input inserters and an output inserter; a plain one has an input and an output inserter.
@@ -3274,7 +3238,7 @@ describe("generator", function()
       assert.is_true(count_named(result.entities, "stone-furnace") > 24) -- 300 gears need 600 plates: 32 furnaces, more than a plain column makes
     end)
 
-    it("allows 900 plates a minute, 48 furnaces' worth", function()
+    it("allows two full lanes of plates, which furnaces built wide make", function()
       _G.prototypes = game()
 
       assert.are.same({"blueprint-generation.max-rate", "900"}, generator.max_rate_message("iron-plate", fake_force{}))
@@ -3288,20 +3252,6 @@ describe("generator", function()
       assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "900"}}, {result, message})
     end)
 
-    -- What the generator tells the layout about the furnaces: the stage layout `rows.build_pure` is given.
-    local function layout_of(item, rate)
-      local rows = require("scripts.rows")
-      local build_pure, given = rows.build_pure, nil
-      rows.build_pure = function(root, names, options)
-        given = root
-        return build_pure(root, names, options)
-      end
-      local ok, problem = pcall(generator.generate, item, rate, fake_force{})
-      rows.build_pure = build_pure
-      assert(ok, problem)
-      return given
-    end
-
     -- The items of a feed with their amounts to two decimals: "iron-ore 450.00".
     local function amounts(feed)
       local list = {}
@@ -3314,7 +3264,7 @@ describe("generator", function()
     it("takes a lane of ore and the fuel from the first belt of furnaces built wide", function()
       _G.prototypes = game()
 
-      local root = layout_of("iron-plate", 600) -- 32 furnaces: 600 ore a minute, and 32 x 1.35 coal
+      local root = layout_given("iron-plate", 600, fake_force{}) -- 32 furnaces: 600 ore a minute, and 32 x 1.35 coal
 
       assert.are.same({"iron-ore 450.00", "coal 43.20"}, amounts(root.feed))
     end)
@@ -3322,12 +3272,12 @@ describe("generator", function()
     it("takes the rest of the ore from the second belt of furnaces built wide, and no fuel", function()
       _G.prototypes = game()
 
-      local root = layout_of("iron-plate", 600)
+      local root = layout_given("iron-plate", 600, fake_force{})
 
       assert.are.same({"iron-ore 150.00"}, amounts(root.second_feed))
     end)
 
-    it("allows 180 steel plates a minute, 48 steel furnaces' worth, where the plain design allows 90", function()
+    it("allows twice the steel plates of the plain design, with the furnaces built wide", function()
       _G.prototypes = game()
 
       assert.are.same({{"blueprint-generation.max-rate", "180"}, {"blueprint-generation.max-rate", "90"}},
@@ -3337,7 +3287,7 @@ describe("generator", function()
     it("tells the layout that the iron furnaces draw a second belt and the steel furnaces a belt of fuel", function()
       _G.prototypes = game()
 
-      local steel_stage = layout_of("steel-plate", 100)
+      local steel_stage = layout_given("steel-plate", 100, fake_force{})
       local iron_stage = steel_stage.suppliers[1]
 
       assert.are.same({{false, true}, {true, false}}, {
@@ -3378,33 +3328,11 @@ describe("generator", function()
     local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
 
     local function gear_game(options)
-      options = options or {}
-      return fake_prototypes{
+      return fake_prototypes(builders.merged({
         furnace_speed = 1,
         machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
         recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
-        missing_entities = options.missing_entities,
-        medium_pole_supply_distance = options.medium_pole_supply_distance,
-        medium_pole_wire_distance = options.medium_pole_wire_distance,
-      }
-    end
-
-    -- What the generator tells the layout about the stages of a blueprint: the root stage the layout is given.
-    local function layout_given(item, rate, force)
-      local rows = require("scripts.rows")
-      local build, build_pure, given = rows.build, rows.build_pure, nil
-      rows.build = function(root, names)
-        given = root
-        return build(root, names)
-      end
-      rows.build_pure = function(root, names, options)
-        given = root
-        return build_pure(root, names, options)
-      end
-      local ok, problem = pcall(generator.generate, item, rate, force)
-      rows.build, rows.build_pure = build, build_pure
-      assert(ok, problem)
-      return given
+      }, options))
     end
 
     it("has the poles of the furnaces beside their output side alone, where the pole reaches their input inserters", function()
@@ -3440,7 +3368,7 @@ describe("generator", function()
       assert.is_true(assembler.suppliers[1].shape.powered_from_output)
     end)
 
-    it("builds with 5 medium poles, where small poles take 9, and no small pole", function()
+    it("builds with fewer medium poles than small poles take, and no small pole", function()
       _G.prototypes = gear_game()
 
       local result = generator.generate("iron-gear-wheel", 60, fake_force{})
@@ -3460,7 +3388,7 @@ describe("generator", function()
       assert.are.same({}, validator.validate(result.entities, catalog))
     end)
 
-    it("takes how far the pole powers from the game: a medium pole that powers 2.5 tiles takes the 9 poles of a small one", function()
+    it("takes how far the pole powers from the game: a medium pole that powers no further than a small one takes as many poles", function()
       _G.prototypes = gear_game({medium_pole_supply_distance = 2.5, medium_pole_wire_distance = 7.5})
 
       local result = generator.generate("iron-gear-wheel", 60, fake_force{})
@@ -3468,7 +3396,7 @@ describe("generator", function()
       assert.are.equal(9, count_named(result.entities, "medium-electric-pole"))
     end)
 
-    it("puts the lamps by the supply distance the game gives for the medium pole: a game that says 2.5 gets other lamps", function()
+    it("puts the lamps by the supply distance the game gives for the medium pole: a game that gives a shorter distance gets other lamps", function()
       local function lamp_tiles(entities)
         local tiles = {}
         for _, entity in ipairs(entities) do

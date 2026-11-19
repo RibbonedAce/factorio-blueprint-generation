@@ -65,3 +65,41 @@ describe("has_item_containing", function()
     assert.matches("something else", message, 1, true)
   end)
 end)
+
+describe("has_consecutive_numbers", function()
+  it("passes when the entities are numbered 1, 2, 3 in the order of the list", function()
+    local entities = {{entity_number = 1}, {entity_number = 2}, {entity_number = 3}}
+
+    assert.has_consecutive_numbers(entities)
+  end)
+
+  it("fails when a number is skipped", function()
+    local entities = {{entity_number = 1}, {entity_number = 3}}
+
+    local assertion = function() assert.has_consecutive_numbers(entities) end
+
+    assert.has_error(assertion)
+  end)
+
+  it("fails when the numbers are not in the order of the list", function()
+    local entities = {{entity_number = 2}, {entity_number = 1}}
+
+    local assertion = function() assert.has_consecutive_numbers(entities) end
+
+    assert.has_error(assertion)
+  end)
+
+  it("fails when an entity has no number", function()
+    local entities = {{entity_number = 1}, {}}
+
+    local assertion = function() assert.has_consecutive_numbers(entities) end
+
+    assert.has_error(assertion)
+  end)
+
+  it("fails for something that is not a list", function()
+    local assertion = function() assert.has_consecutive_numbers("belts") end
+
+    assert.has_error(assertion)
+  end)
+end)

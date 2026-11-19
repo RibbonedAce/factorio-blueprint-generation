@@ -110,48 +110,19 @@ local function tile_of(entity, size)
   return grid.top_left_tile(entity.position, size, size)
 end
 
--- The entities that have the name.
-local function entities_named(entities, name)
-  local found = {}
-  for _, entity in ipairs(entities) do
-    if entity.name == name then
-      found[#found + 1] = entity
-    end
-  end
-  return found
-end
+local entities_named = builders.entities_named
+local count_named = builders.count_named
 
--- How many entities have the name.
-local function count_named(entities, name)
-  local total = 0
-  for _, entity in ipairs(entities) do
-    if entity.name == name then
-      total = total + 1
-    end
-  end
-  return total
-end
+-- The rows of the belts in one tile column, in order.
+local belt_rows = builders.belt_rows
 
-local function entity_at(entities, name, x, y, size)
+local function named_entity_at(entities, name, x, y, size)
   for _, entity in ipairs(entities) do
     local tile = tile_of(entity, size)
     if entity.name == name and tile.x == x and tile.y == y then
       return entity
     end
   end
-end
-
--- The rows of the belts in one tile column, in order.
-local function belt_rows(entities, column)
-  local found = {}
-  for _, entity in ipairs(entities) do
-    local tile = tile_of(entity, 1)
-    if entity.name == NAMES.belt and tile.x == column then
-      found[#found + 1] = tile.y
-    end
-  end
-  table.sort(found)
-  return found
 end
 
 -- The rows of the entities of one name in one tile column, in order.
@@ -167,16 +138,7 @@ local function rows_of(entities, name, column)
   return found
 end
 
-local function belt_directions(entities, column)
-  local directions, seen = {}, {}
-  for _, entity in ipairs(entities) do
-    if entity.name == NAMES.belt and tile_of(entity, 1).x == column and not seen[entity.direction] then
-      seen[entity.direction] = true
-      directions[#directions + 1] = entity.direction
-    end
-  end
-  return directions
-end
+local belt_directions = builders.belt_directions
 
 -- The belts inside a box of tiles as "x,y direction", row by row from the west.
 local function belts_in(entities, first_column, first_row, last_column, last_row)
@@ -235,14 +197,14 @@ describe("rows", function()
     local entities, raw_stages = rows.build(root, NAMES)
 
     it("stands the columns side by side, the ones that make the ingredients before the one that eats them", function()
-      assert.is_not_nil(entity_at(entities, "iron-furnace", 2, 2, 2))
-      assert.is_not_nil(entity_at(entities, "copper-furnace", 8, 1, 2))
-      assert.is_not_nil(entity_at(entities, "circuit-assembler", 14, 0, 3))
+      assert.is_not_nil(named_entity_at(entities, "iron-furnace", 2, 2, 2))
+      assert.is_not_nil(named_entity_at(entities, "copper-furnace", 8, 1, 2))
+      assert.is_not_nil(named_entity_at(entities, "circuit-assembler", 14, 0, 3))
     end)
 
     it("starts every chain right under its own belt of raw items, so the columns do not start in one row", function()
-      assert.are.equal(1, entity_at(entities, "copper-furnace", 8, 1, 2).position.y - 1) -- row 0 is its belt of raw items
-      assert.are.equal(2, entity_at(entities, "iron-furnace", 2, 2, 2).position.y - 1) -- row 1 is its belt
+      assert.are.equal(1, named_entity_at(entities, "copper-furnace", 8, 1, 2).position.y - 1) -- row 0 is its belt of raw items
+      assert.are.equal(2, named_entity_at(entities, "iron-furnace", 2, 2, 2).position.y - 1) -- row 1 is its belt
     end)
 
     it("brings the belts of raw items in from the west edge, each along a row of its own", function()
@@ -261,7 +223,7 @@ describe("rows", function()
     end)
 
     it("brings the second product down into the side of the arc of the first, which carries on to belt a", function()
-      assert.are.equal(south, entity_at(entities, NAMES.belt, 11, 3, 1).direction)
+      assert.are.equal(south, named_entity_at(entities, NAMES.belt, 11, 3, 1).direction)
     end)
 
     it("sends the first product through the lane gadget, a stub behind the tile its belt side-loads", function()
@@ -272,7 +234,7 @@ describe("rows", function()
 
     it("runs the first product along the row under the final column and into belt a from the west", function()
       assert.are.same({"6,4 east", "7,4 east", "8,4 east", "9,4 east", "10,4 east", "11,4 east"}, belts_in(entities, 6, 4, 11, 4))
-      assert.are.equal(north, entity_at(entities, NAMES.belt, 12, 4, 1).direction)
+      assert.are.equal(north, named_entity_at(entities, NAMES.belt, 12, 4, 1).direction)
     end)
 
     it("draws the product belt of the root along the final column", function()
@@ -280,9 +242,7 @@ describe("rows", function()
     end)
 
     it("numbers every entity once", function()
-      for index, entity in ipairs(entities) do
-        assert.are.equal(index, entity.entity_number)
-      end
+      assert.has_consecutive_numbers(entities)
     end)
   end)
 
@@ -301,7 +261,7 @@ describe("rows", function()
       local entities = rows.build(root, NAMES)
 
       assert.are.same({0, 1, 2, 3, 4}, belt_rows(entities, 0)) -- row 0 is the belt of the copper furnace, passing over
-      assert.are.equal(south, entity_at(entities, NAMES.belt, 0, 2, 1).direction) -- the tile in the row of poles
+      assert.are.equal(south, named_entity_at(entities, NAMES.belt, 0, 2, 1).direction) -- the tile in the row of poles
     end)
   end)
 
@@ -323,13 +283,13 @@ describe("rows", function()
     local entities = rows.build(root, NAMES)
 
     it("runs the arc of the first product, which has the gadget, deeper than the arc of the second", function()
-      assert.are.equal(south, entity_at(entities, NAMES.belt, 17, 3, 1).direction) -- the cables, down into the arc of the iron plates
+      assert.are.equal(south, named_entity_at(entities, NAMES.belt, 17, 3, 1).direction) -- the cables, down into the arc of the iron plates
       assert.are.same({"12,4 east", "13,4 east"}, belts_in(entities, 12, 4, 13, 4)) -- the stub and the tile the cables side-load
-      assert.are.equal(north, entity_at(entities, NAMES.belt, 13, 5, 1).direction)
+      assert.are.equal(north, named_entity_at(entities, NAMES.belt, 13, 5, 1).direction)
     end)
 
     it("starts the final column in row 0, where no belt of raw items passes over it", function()
-      assert.is_not_nil(entity_at(entities, "circuit-assembler", 20, 0, 3))
+      assert.is_not_nil(named_entity_at(entities, "circuit-assembler", 20, 0, 3))
     end)
   end)
 
@@ -353,21 +313,21 @@ describe("rows", function()
     local entities = rows.build(root, NAMES)
 
     it("starts it under the belts of raw items that pass over it, and one row lower", function()
-      assert.is_not_nil(entity_at(entities, "circuit-assembler", 14, 2, 3))
+      assert.is_not_nil(named_entity_at(entities, "circuit-assembler", 14, 2, 3))
     end)
 
     it("does not let belt a end with its tail pointing into the side of a belt of raw items", function()
-      assert.are.equal(north, entity_at(entities, NAMES.belt, 12, 2, 1).direction)
-      assert.is_nil(entity_at(entities, NAMES.belt, 12, 1, 1))
+      assert.are.equal(north, named_entity_at(entities, NAMES.belt, 12, 2, 1).direction)
+      assert.is_nil(named_entity_at(entities, NAMES.belt, 12, 1, 1))
     end)
 
     it("starts a chain right under its own belt of raw items, whatever passes over the columns beside it", function()
-      assert.is_not_nil(entity_at(entities, "copper-furnace", 8, 2, 2)) -- its belt comes in along row 1
+      assert.is_not_nil(named_entity_at(entities, "copper-furnace", 8, 2, 2)) -- its belt comes in along row 1
     end)
 
     it("runs the arc of a column deeper than the arcs of the columns east of it", function()
-      assert.are.equal(south, entity_at(entities, NAMES.belt, 24, 3, 1).direction) -- the bricks, down into the arc of the circuit
-      assert.are.equal(east, entity_at(entities, NAMES.belt, 24, 4, 1).direction) -- the circuit, under them
+      assert.are.equal(south, named_entity_at(entities, NAMES.belt, 24, 3, 1).direction) -- the bricks, down into the arc of the circuit
+      assert.are.equal(east, named_entity_at(entities, NAMES.belt, 24, 4, 1).direction) -- the circuit, under them
     end)
   end)
 
@@ -399,7 +359,7 @@ describe("rows", function()
     it("runs the raw item down its column and through the gadget into belt a", function()
       assert.are.same({0, 1, 2, 3, 4, 5}, belt_rows(entities, 1)) -- row 0 is the belt of the copper furnace, passing over
       assert.are.same({"1,5 east", "2,5 east", "3,5 north"}, belts_in(entities, 1, 5, 3, 5))
-      assert.are.equal(north, entity_at(entities, NAMES.belt, 14, 4, 1).direction)
+      assert.are.equal(north, named_entity_at(entities, NAMES.belt, 14, 4, 1).direction)
     end)
 
     it("builds no machine for the raw item", function()
@@ -411,7 +371,7 @@ describe("rows", function()
     end)
 
     it("starts the next column after the two columns of the raw item", function()
-      assert.is_not_nil(entity_at(entities, "copper-furnace", 4, 1, 2))
+      assert.is_not_nil(named_entity_at(entities, "copper-furnace", 4, 1, 2))
     end)
   end)
 
@@ -448,25 +408,25 @@ describe("rows", function()
       end)
 
       it("runs belt a north in the inner column, from the arc of the iron plates up to the entrance of its underground belt", function()
-        assert.are.equal(north, entity_at(entities, NAMES.belt, 26, 10, 1).direction) -- the arc turns north into the head of belt a
-        assert.are.equal(north, entity_at(entities, NAMES.belt, 26, 7, 1).direction)
-        assert.are.equal("input", entity_at(entities, NAMES.underground, 26, 6, 1).type)
+        assert.are.equal(north, named_entity_at(entities, NAMES.belt, 26, 10, 1).direction) -- the arc turns north into the head of belt a
+        assert.are.equal(north, named_entity_at(entities, NAMES.belt, 26, 7, 1).direction)
+        assert.are.equal("input", named_entity_at(entities, NAMES.underground, 26, 6, 1).type)
       end)
 
       it("turns the head of belt b through the gadget and brings the second product of belt b down into the side of its arc", function()
         assert.are.same({"17,9 east", "18,9 east", "19,9 north"}, belts_in(entities, 17, 9, 19, 9))
-        assert.are.equal(east, entity_at(entities, NAMES.belt, 23, 8, 1).direction) -- the cables, into the head of belt b
-        assert.are.equal(south, entity_at(entities, NAMES.belt, 23, 7, 1).direction) -- the bricks, down into the side of the arc of the cables
+        assert.are.equal(east, named_entity_at(entities, NAMES.belt, 23, 8, 1).direction) -- the cables, into the head of belt b
+        assert.are.equal(south, named_entity_at(entities, NAMES.belt, 23, 7, 1).direction) -- the bricks, down into the side of the arc of the cables
       end)
 
       it("gives a product that has its belt to itself no gadget, and runs it under the arcs of belt b", function()
-        assert.are.equal(east, entity_at(entities, NAMES.belt, 5, 10, 1).direction)
-        assert.is_nil(entity_at(entities, NAMES.belt, 5, 11, 1))
-        assert.are.equal(east, entity_at(entities, NAMES.belt, 24, 10, 1).direction)
+        assert.are.equal(east, named_entity_at(entities, NAMES.belt, 5, 10, 1).direction)
+        assert.is_nil(named_entity_at(entities, NAMES.belt, 5, 11, 1))
+        assert.are.equal(east, named_entity_at(entities, NAMES.belt, 24, 10, 1).direction)
       end)
 
       it("stands the final column after the belts it takes from, with the inserters beside belt a", function()
-        assert.is_not_nil(entity_at(entities, "gadget-assembler", 28, 0, 3))
+        assert.is_not_nil(named_entity_at(entities, "gadget-assembler", 28, 0, 3))
       end)
     end)
 
@@ -523,7 +483,7 @@ describe("rows", function()
 
     -- Whether a belt that runs north stands in the tile column in the row: the top of a riser.
     local function riser_at(column, row)
-      local belt = entity_at(entities, NAMES.belt, column, row, 1)
+      local belt = named_entity_at(entities, NAMES.belt, column, row, 1)
       return belt ~= nil and belt.direction == north
     end
 
@@ -556,7 +516,7 @@ describe("rows", function()
       assert.are.equal(6, inserters)
     end)
 
-    it("is refused for the small pole, whose poles do not reach the inserters of three belts in every row", function()
+    it("refuses the small pole, whose poles do not reach the inserters of three belts in every row", function()
       local suppliers = {furnaces("iron-furnace", 1), on_belt(furnaces("brick-furnace", 1), "b"), on_belt(furnaces("copper-furnace", 1), "c")}
 
       assert.has_error(function() rows.build(woven_assembler(2, {a = 1, b = 1, c = 1}, suppliers), NAMES) end)
@@ -672,15 +632,15 @@ describe("rows", function()
         end)
 
         it("joins the pump to the trunk with pipes along the row above the blueprint, and powers it with a pole above it", function()
-          assert.are.same({true, true}, {entity_at(entities, NAMES.pipe, belts_left() + 2, -1, 1) ~= nil, entity_at(entities, NAMES.pole, belts_left(), -2, 1) ~= nil})
+          assert.are.same({true, true}, {named_entity_at(entities, NAMES.pipe, belts_left() + 2, -1, 1) ~= nil, named_entity_at(entities, NAMES.pole, belts_left(), -2, 1) ~= nil})
         end)
 
         it("faces the machines west", function()
-          assert.are.equal(west, entity_at(entities, "concrete-assembler", machine_column, 0, 3).direction)
+          assert.are.equal(west, named_entity_at(entities, "concrete-assembler", machine_column, 0, 3).direction)
         end)
 
         it("runs belt a north in the column between the tunnel and the inserters, up to the first machine", function()
-          assert.are.equal(north, entity_at(entities, NAMES.belt, belt_column, 0, 1).direction)
+          assert.are.equal(north, named_entity_at(entities, NAMES.belt, belt_column, 0, 1).direction)
         end)
       end)
     end
@@ -752,24 +712,24 @@ describe("rows", function()
       end)
 
       it("lets the long-handed inserters of the final column reach belt b over belt a", function()
-        assert.is_not_nil(entity_at(entities, NAMES.long_inserter, 26, 1, 1)) -- the first machine's plain inserter is in row 0, its long-handed one under it
-        assert.is_not_nil(entity_at(entities, NAMES.long_inserter, 26, 4, 1)) -- the second machine's, in its bottom rows 4 and 5, are long then plain
+        assert.is_not_nil(named_entity_at(entities, NAMES.long_inserter, 26, 1, 1)) -- the first machine's plain inserter is in row 0, its long-handed one under it
+        assert.is_not_nil(named_entity_at(entities, NAMES.long_inserter, 26, 4, 1)) -- the second machine's, in its bottom rows 4 and 5, are long then plain
       end)
 
       it("turns the head of belt b through the gadget and brings the second product of belt b down into the side of its arc", function()
         assert.are.same({"17,8 east", "18,8 east", "19,8 north"}, belts_in(entities, 17, 8, 19, 8))
-        assert.are.equal(east, entity_at(entities, NAMES.belt, 23, 7, 1).direction) -- the cables, into the head of belt b
-        assert.are.equal(south, entity_at(entities, NAMES.belt, 23, 6, 1).direction) -- the bricks, down into the side of the arc of the cables
+        assert.are.equal(east, named_entity_at(entities, NAMES.belt, 23, 7, 1).direction) -- the cables, into the head of belt b
+        assert.are.equal(south, named_entity_at(entities, NAMES.belt, 23, 6, 1).direction) -- the bricks, down into the side of the arc of the cables
       end)
 
       it("gives a product that has its belt to itself no gadget, and runs it under the arcs of belt b", function()
-        assert.are.equal(east, entity_at(entities, NAMES.belt, 5, 9, 1).direction)
-        assert.is_nil(entity_at(entities, NAMES.belt, 5, 10, 1))
-        assert.are.equal(east, entity_at(entities, NAMES.belt, 24, 9, 1).direction)
+        assert.are.equal(east, named_entity_at(entities, NAMES.belt, 5, 9, 1).direction)
+        assert.is_nil(named_entity_at(entities, NAMES.belt, 5, 10, 1))
+        assert.are.equal(east, named_entity_at(entities, NAMES.belt, 24, 9, 1).direction)
       end)
 
       it("stands the final column after belt a, with belt b in the column west of it", function()
-        assert.is_not_nil(entity_at(entities, "gadget-assembler", 27, 0, 3))
+        assert.is_not_nil(named_entity_at(entities, "gadget-assembler", 27, 0, 3))
       end)
 
       it("draws no splitter, since nothing is woven", function()
@@ -889,9 +849,7 @@ describe("rows", function()
       end)
 
       it("numbers every entity once", function()
-        for index, entity in ipairs(entities) do
-          assert.are.equal(index, entity.entity_number)
-        end
+        assert.has_consecutive_numbers(entities)
       end)
     end)
 
@@ -954,10 +912,10 @@ describe("rows", function()
       end)
 
       it("stands the columns side by side after the band, the iron furnace first", function()
-        assert.is_not_nil(entity_at(entities, "iron-furnace", 10, 8, 2))
-        assert.is_not_nil(entity_at(entities, "copper-furnace", 16, 5, 2))
-        assert.is_not_nil(entity_at(entities, "cable-assembler", 21, 5, 3))
-        assert.is_not_nil(entity_at(entities, "circuit-assembler", 28, 0, 3))
+        assert.is_not_nil(named_entity_at(entities, "iron-furnace", 10, 8, 2))
+        assert.is_not_nil(named_entity_at(entities, "copper-furnace", 16, 5, 2))
+        assert.is_not_nil(named_entity_at(entities, "cable-assembler", 21, 5, 3))
+        assert.is_not_nil(named_entity_at(entities, "circuit-assembler", 28, 0, 3))
       end)
 
       it("brings in the coal, the copper ore and the iron ore from the top down", function()
@@ -969,9 +927,7 @@ describe("rows", function()
       end)
 
       it("numbers every entity once", function()
-        for index, entity in ipairs(entities) do
-          assert.are.equal(index, entity.entity_number)
-        end
+        assert.has_consecutive_numbers(entities)
       end)
     end)
 
@@ -1037,7 +993,7 @@ describe("rows", function()
       local entities = build_pure(assemblers("pole-assembler", 1, 2, 1, {cables, wood_supplier()}), medium)
 
       it("adds no pole between the columns", function()
-        assert.is_nil(entity_at(entities, medium.pole, 19, 4, 1)) -- where the small poles need one
+        assert.is_nil(named_entity_at(entities, medium.pole, 19, 4, 1)) -- where the small poles need one
       end)
 
       it("powers every machine and wires the poles into one network", function()
@@ -1071,7 +1027,7 @@ describe("rows", function()
       end)
 
       it("runs the belt between the iron furnaces and the steel furnaces south from its head", function()
-        assert.are.equal(south, entity_at(entities, NAMES.belt, 13, 8, 1).direction)
+        assert.are.equal(south, named_entity_at(entities, NAMES.belt, 13, 8, 1).direction)
       end)
 
       it("brings in the coal and the iron ore, the coal for both kinds of furnace on one belt", function()
@@ -1206,12 +1162,10 @@ describe("rows", function()
       end)
 
       it("numbers every entity once", function()
-        for index, entity in ipairs(entities) do
-          assert.are.equal(index, entity.entity_number)
-        end
+        assert.has_consecutive_numbers(entities)
       end)
 
-      it("is refused by the original design, whether the column stands alone or beside another", function()
+      it("refuses it in the original design, whether the column stands alone or beside another", function()
         local message = "rows: the original design cannot bring the second input belt of a column built wide"
 
         assert.has_error(function() rows.build(wide_furnaces(4), MEDIUM) end, message)
@@ -1339,7 +1293,7 @@ describe("rows", function()
         assert.are.same({}, problems)
       end)
 
-      it("is refused by the original design", function()
+      it("refuses it in the original design", function()
         assert.has_error(function() rows.build(assemblers("chest-assembler", 1, 1, 1, {steel}), MEDIUM) end,
           "rows: the original design cannot bring the second input belt of a column built wide")
       end)
@@ -1368,9 +1322,7 @@ describe("rows", function()
       end)
 
       it("numbers every entity once", function()
-        for index, entity in ipairs(entities) do
-          assert.are.equal(index, entity.entity_number)
-        end
+        assert.has_consecutive_numbers(entities)
       end)
     end)
   end)
@@ -2023,7 +1975,7 @@ describe("rows", function()
         supplies = inputs, underground_reach = UNDERGROUND_REACH,
       }
       local sound = tracer.problems(entities, options)
-      entity_at(entities, NAMES.belt, 5, 2, 1).direction = east
+      named_entity_at(entities, NAMES.belt, 5, 2, 1).direction = east
 
       local broken = tracer.problems(entities, options)
 

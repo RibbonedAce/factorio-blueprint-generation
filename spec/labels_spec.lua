@@ -22,27 +22,14 @@ local function belt_at(x, y, way)
   return {name = NAMES.belt, position = grid.position(x, y), direction = way or defines.direction.east}
 end
 
--- A pole at the tile (x, y), which only has to be something that stands there.
-local function pole_at(x, y)
-  return {name = NAMES.pole, position = grid.position(x, y)}
-end
-
 -- The entry of a belt at the west edge, in `row`, carrying `item`.
 local function entry(row, item)
   return {x = 0, y = row, item = item}
 end
 
--- The entities of the blueprint, numbered.
-local function numbered(list)
-  for index, entity in ipairs(list) do
-    entity.entity_number = index
-  end
-  return list
-end
-
 -- The panels `labels.add` puts on `list` for `supplies`, as {tile column, tile row, item}.
 local function panels_after(list, supplies)
-  local entities = numbered(list)
+  local entities = builders.numbered(list)
   labels.add(entities, supplies, options())
   local panels = {}
   for _, entity in ipairs(entities) do
@@ -60,21 +47,21 @@ describe("labels", function()
   end)
 
   it("puts the panel under the entry when the tile above it holds something", function()
-    assert.are.same({{0, 1, "coal"}}, panels_after({belt_at(0, 0), pole_at(0, -1)}, {entry(0, "coal")}))
+    assert.are.same({{0, 1, "coal"}}, panels_after({belt_at(0, 0), builders.pole(0, -1)}, {entry(0, "coal")}))
   end)
 
   it("puts the panel above and west of the entry when the tiles above and under it hold something", function()
-    assert.are.same({{-1, -1, "coal"}}, panels_after({belt_at(0, 0), pole_at(0, -1), pole_at(0, 1)}, {entry(0, "coal")}))
+    assert.are.same({{-1, -1, "coal"}}, panels_after({belt_at(0, 0), builders.pole(0, -1), builders.pole(0, 1)}, {entry(0, "coal")}))
   end)
 
   it("puts the panel under and west of the entry when the three tiles before that hold something", function()
-    local list = {belt_at(0, 0), pole_at(0, -1), pole_at(0, 1), pole_at(-1, -1)}
+    local list = {belt_at(0, 0), builders.pole(0, -1), builders.pole(0, 1), builders.pole(-1, -1)}
 
     assert.are.same({{-1, 1, "coal"}}, panels_after(list, {entry(0, "coal")}))
   end)
 
   it("puts no panel on an entry with no free tile among the four", function()
-    local list = {belt_at(0, 0), pole_at(0, -1), pole_at(0, 1), pole_at(-1, -1), pole_at(-1, 1)}
+    local list = {belt_at(0, 0), builders.pole(0, -1), builders.pole(0, 1), builders.pole(-1, -1), builders.pole(-1, 1)}
 
     assert.are.same({}, panels_after(list, {entry(0, "coal")}))
   end)
@@ -109,7 +96,7 @@ describe("labels", function()
   end)
 
   it("shows the item as an icon, always, numbered after the entities there are", function()
-    local entities = numbered({belt_at(0, 0)})
+    local entities = builders.numbered({belt_at(0, 0)})
 
     labels.add(entities, {entry(0, "copper-ore")}, options())
 

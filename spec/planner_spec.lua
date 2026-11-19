@@ -2240,7 +2240,7 @@ describe("planner", function()
       assert.are.equal("a", planner.belt_of({a = {"plate", "cable"}, b = {}}, "cable"))
     end)
 
-    it("is refused for an item that is on none of the belts", function()
+    it("refuses an item that is on none of the belts", function()
       assert.has_error(function() planner.belt_of(belts, "wood") end, "planner: wood is on none of the input belts of the stage")
     end)
   end)

@@ -156,7 +156,7 @@ describe("weave", function()
       assert.are.same({-1, 5, 11}, weave.pole_rows(plan, 3))
     end)
 
-    it("is refused for a pole that reaches only two rows, which leaves a row of inserters with no pole in reach", function()
+    it("refuses a pole that reaches only two rows, which leaves a row of inserters with no pole in reach", function()
       local plan = weave.plan(counts, 4)
 
       assert.has_error(function() weave.pole_rows(plan, 2) end)
@@ -296,7 +296,7 @@ describe("weave", function()
       assert.are.same({1}, weave.pole_rows(plan, 3))
     end)
 
-    it("is refused when the nearest free tile is one row further than the pole reaches", function()
+    it("refuses it when the nearest free tile is one row further than the pole reaches", function()
       local plan = {inserters = {{row = 5, belt = "a"}}, free_taps = {1}}
 
       assert.has_error(function() weave.pole_rows(plan, 3) end, "weave: no free tile beside the belts reaches the inserter in row 5: the pole reaches 3 rows")

@@ -314,10 +314,12 @@ describe("inputs", function()
     it("puts the stub in the row of the last tile of the descent then", function()
       local stub = inputs.fuel_tail(NAMES, 3, 0, 2)[2]
 
-      assert.are.same({4.5, 0.5, south}, {stub.position.x, stub.position.y, stub.direction})
+      local tile = grid.top_left_tile(stub.position)
+
+      assert.are.same({4, 0, south}, {tile.x, tile.y, stub.direction})
     end)
 
-    it("is refused when the head is less than two rows under the descent, leaving no room to turn", function()
+    it("refuses a head less than two rows under the descent, leaving no room to turn", function()
       assert.has_error(function() inputs.fuel_tail(NAMES, 3, 0, 1) end)
     end)
   end)
@@ -356,7 +358,7 @@ describe("inputs", function()
   end)
 
   describe("the underground belt", function()
-    it("is refused when it spans fewer tiles than the hops under the belts need", function()
+    it("refuses an underground belt that spans fewer tiles than the hops under the belts need", function()
       local leaves = {furnace_leaf(1, 8, "iron-ore"), furnace_leaf(2, 14, "copper-ore")}
 
       assert.has_error(function() lay(leaves, 2) end)

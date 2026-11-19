@@ -9,23 +9,6 @@ local lights = require("scripts.lights")
 
 local NAMES = builders.NAMES
 
--- The blueprint's entities, numbered, from the builders' entities.
-local function numbered(list)
-  for index, entity in ipairs(list) do
-    entity.entity_number = index
-  end
-  return list
-end
-
-local function pole_at(x, y)
-  return {name = NAMES.pole, position = grid.position(x, y)}
-end
-
--- A 2x2 furnace whose top-left tile is (x, y).
-local function furnace_at(x, y)
-  return builders.furnace(x, y)
-end
-
 -- What `lights.add` is told of the game: a small pole powers 2.5 tiles each way, a furnace covers 2 x 2 tiles.
 local function options()
   return {
@@ -36,7 +19,7 @@ end
 
 -- The lamps `lights.add` puts on `list`, as tiles.
 local function lamps_after(list)
-  local entities = numbered(list)
+  local entities = builders.numbered(list)
   lights.add(entities, options())
   local lamps = {}
   for _, entity in ipairs(entities) do
@@ -51,20 +34,9 @@ end
 local function column_of_poles(count)
   local list = {}
   for index = 0, count - 1 do
-    list[#list + 1] = pole_at(0, index * 5)
+    list[#list + 1] = builders.pole(0, index * 5)
   end
   return list
-end
-
--- The shortest distance between two of the lamps, or infinity when there are fewer than two.
-local function closest_pair(lamps)
-  local closest = math.huge
-  for i = 1, #lamps - 1 do
-    for j = i + 1, #lamps do
-      closest = math.min(closest, math.sqrt((lamps[i].x - lamps[j].x) ^ 2 + (lamps[i].y - lamps[j].y) ^ 2))
-    end
-  end
-  return closest
 end
 
 -- How many of the tiles a pole powers have no lamp within 10 tiles.
@@ -106,35 +78,35 @@ describe("lights", function()
     end)
 
     it("puts one lamp on the first tile a lone pole powers, the top left one", function()
-      assert.are.same({{x = 3, y = 3}}, lamps_after({pole_at(5, 5)})) -- the pole at (5, 5) powers tiles 3 to 7 across and down
+      assert.are.same({{x = 3, y = 3}}, lamps_after({builders.pole(5, 5)})) -- the pole at (5, 5) powers tiles 3 to 7 across and down
     end)
 
     it("puts the lamp on the closest free tile when the first tile is taken", function()
-      local list = {pole_at(5, 5), furnace_at(3, 3)} -- the furnace covers (3, 3) to (4, 4)
+      local list = {builders.pole(5, 5), builders.furnace(3, 3)} -- the furnace covers (3, 3) to (4, 4)
 
       assert.are.same({{x = 5, y = 3}}, lamps_after(list))
     end)
 
     it("leaves the tile ahead of a belt that runs south free, so that the belt can go on", function()
-      local list = {pole_at(5, 5), builders.belt(3, 2)} -- the belt runs south, on to (3, 3)
+      local list = {builders.pole(5, 5), builders.belt(3, 2)} -- the belt runs south, on to (3, 3)
 
       assert.are.same({{x = 4, y = 3}}, lamps_after(list))
     end)
 
     it("leaves the tile ahead of a belt that runs north free", function()
-      local list = {pole_at(5, 5), builders.belt(3, 4, defines.direction.north)} -- on to (3, 3)
+      local list = {builders.pole(5, 5), builders.belt(3, 4, defines.direction.north)} -- on to (3, 3)
 
       assert.are.same({{x = 4, y = 3}}, lamps_after(list))
     end)
 
     it("leaves the tile ahead of a belt that runs east free", function()
-      local list = {pole_at(5, 5), builders.belt(2, 3, defines.direction.east)} -- on to (3, 3)
+      local list = {builders.pole(5, 5), builders.belt(2, 3, defines.direction.east)} -- on to (3, 3)
 
       assert.are.same({{x = 4, y = 3}}, lamps_after(list))
     end)
 
     it("leaves the tile ahead of a belt that runs west free", function()
-      local list = {pole_at(5, 5), builders.belt(4, 3, defines.direction.west)} -- on to (3, 3), the belt itself takes (4, 3)
+      local list = {builders.pole(5, 5), builders.belt(4, 3, defines.direction.west)} -- on to (3, 3), the belt itself takes (4, 3)
 
       assert.are.same({{x = 3, y = 4}}, lamps_after(list))
     end)
@@ -142,7 +114,7 @@ describe("lights", function()
     it("leaves the tile behind an inlet free, where its input is, when told it is one", function()
       -- a pump facing east on (6, 4) and (7, 4): its input is (5, 4), the first tile the pole at (7, 6) powers
       local pump = {name = "pump", position = grid.position(6, 4, 2, 1), direction = defines.direction.east}
-      local entities = numbered({pole_at(7, 6), pump})
+      local entities = builders.numbered({builders.pole(7, 6), pump})
       local told = options()
       told.inlets = {"pump"}
       told.size_of = function(entity) return entity.name == "pump" and 2 or 1, 1 end
@@ -156,17 +128,17 @@ describe("lights", function()
     it("does not keep the tile ahead of an inserter free, which is no belt", function()
       local inserter = {name = NAMES.inserter, position = grid.position(3, 4), direction = defines.direction.north}
 
-      assert.are.same({{x = 3, y = 3}}, lamps_after({pole_at(5, 5), inserter}))
+      assert.are.same({{x = 3, y = 3}}, lamps_after({builders.pole(5, 5), inserter}))
     end)
 
     it("takes every tile of a machine, the last row too", function()
-      local list = {pole_at(5, 5), furnace_at(3, 2)} -- the furnace covers (3, 2) to (4, 3): the first tile, (3, 3), is taken
+      local list = {builders.pole(5, 5), builders.furnace(3, 2)} -- the furnace covers (3, 2) to (4, 3): the first tile, (3, 3), is taken
 
       assert.are.same({{x = 3, y = 4}}, lamps_after(list))
     end)
 
     it("goes further for a free tile when a block of things takes the nearer ones", function()
-      local list = {pole_at(5, 5)}
+      local list = {builders.pole(5, 5)}
       for x = 3, 6 do
         for y = 3, 6 do
           if x ~= 5 or y ~= 5 then
@@ -179,7 +151,7 @@ describe("lights", function()
     end)
 
     it("puts no lamp where every tile within reach of the powered one is taken", function()
-      local list = {pole_at(5, 5)}
+      local list = {builders.pole(5, 5)}
       for x = 3, 7 do
         for y = 3, 7 do
           if x ~= 5 or y ~= 5 then
@@ -194,18 +166,18 @@ describe("lights", function()
 
   describe("which tiles get a lamp, from the top row down and from the left", function()
     it("starts with the tile of the pole that is highest, whatever the order of the poles", function()
-      local list = {pole_at(5, 5), pole_at(30, 2)} -- the second pole powers rows 0 to 4, so its top left tile, (28, 0), comes first
+      local list = {builders.pole(5, 5), builders.pole(30, 2)} -- the second pole powers rows 0 to 4, so its top left tile, (28, 0), comes first
 
       assert.are.same({{x = 28, y = 0}, {x = 3, y = 3}}, lamps_after(list))
     end)
 
     it("lights a tile 14 tiles away from the lamp, across", function()
-      assert.are.same({{x = 3, y = 3}, {x = 17, y = 3}}, lamps_after({pole_at(5, 5), pole_at(19, 5)}))
+      assert.are.same({{x = 3, y = 3}, {x = 17, y = 3}}, lamps_after({builders.pole(5, 5), builders.pole(19, 5)}))
     end)
 
     it("counts a tile exactly 10 tiles from a lamp as covered, and puts the next lamp 11 tiles away", function()
       -- the second pole powers x 13 to 17: (13, 3) is 10 tiles from the lamp at (3, 3), (14, 3) is 11
-      assert.are.same({{x = 3, y = 3}, {x = 14, y = 3}}, lamps_after({pole_at(5, 5), pole_at(15, 5)}))
+      assert.are.same({{x = 3, y = 3}, {x = 14, y = 3}}, lamps_after({builders.pole(5, 5), builders.pole(15, 5)}))
     end)
 
     it("puts a lamp exactly 10 tiles from another when the closer tiles are taken, and not nearer", function()
@@ -213,7 +185,7 @@ describe("lights", function()
       -- (-2, 8) is exactly 10 from it, which is allowed, and is the first of the tiles one away from (-1, 8) that is left
       local wall = {name = "stone-wall", position = grid.position(-1, 8)}
 
-      assert.are.same({{x = -2, y = -2}, {x = -2, y = 8}}, lamps_after({pole_at(0, 0), pole_at(0, 5), pole_at(0, 10), wall}))
+      assert.are.same({{x = -2, y = -2}, {x = -2, y = 8}}, lamps_after({builders.pole(0, 0), builders.pole(0, 5), builders.pole(0, 10), wall}))
     end)
   end)
 
@@ -221,18 +193,18 @@ describe("lights", function()
     it("holds for a long column of poles, the lamps being 10 apart at least", function()
       local lamps = lamps_after(column_of_poles(14))
 
-      assert.is_true(#lamps > 1 and closest_pair(lamps) >= 10)
+      assert.is_true(#lamps > 1 and builders.closest_pair(lamps) >= 10)
     end)
 
     it("holds for two columns of poles side by side", function()
       local list = column_of_poles(14)
       for index = 0, 13 do
-        list[#list + 1] = pole_at(4, index * 5)
+        list[#list + 1] = builders.pole(4, index * 5)
       end
 
       local lamps = lamps_after(list)
 
-      assert.is_true(#lamps > 2 and closest_pair(lamps) >= 10)
+      assert.is_true(#lamps > 2 and builders.closest_pair(lamps) >= 10)
     end)
   end)
 
@@ -246,7 +218,7 @@ describe("lights", function()
     it("holds for two columns of poles side by side", function()
       local poles = column_of_poles(14)
       for index = 0, 13 do
-        poles[#poles + 1] = pole_at(4, index * 5)
+        poles[#poles + 1] = builders.pole(4, index * 5)
       end
 
       assert.are.equal(0, uncovered_tiles(poles, lamps_after(poles)))
@@ -261,7 +233,7 @@ describe("lights", function()
     end)
 
     it("are numbered after the entities there are, one number each", function()
-      local entities = numbered(column_of_poles(3))
+      local entities = builders.numbered(column_of_poles(3))
 
       lights.add(entities, options())
 
