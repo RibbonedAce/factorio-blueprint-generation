@@ -13,10 +13,13 @@ Persistent notes for the AI assistant (Claude) working on this repo. They exist 
 7. [research/modding-tutorial.md](research/modding-tutorial.md): practical setup, locale format, error shapes, and the multiplayer desync rules (Secondary, written for 2.0).
 8. [research/api-reference-2.1.23.md](research/api-reference-2.1.23.md): the verified API names and signatures this mod needs, read from the official JSON files. Check it before writing any code that calls the game API.
 
-9. [recipe-tree-plan.md](recipe-tree-plan.md): the proposed recursive block layout for recipes with two made ingredients, starting with the electronic circuit (a proposal until the owner approves it).
+9. [recipe-tree-plan.md](recipe-tree-plan.md): the proposed recursive block layout for recipes with two made ingredients, starting with the electronic circuit (implemented 2026-11-07; the stacked layout it describes was replaced on 2026-11-08, see below).
 10. [multi-input-plan.md](multi-input-plan.md): the plan for recipes with 3 or 4 ingredients, starting with the inserter: a second input belt reached by long-handed inserters. Decisions confirmed by the owner 2026-11-07; implemented (its layout part is superseded by item 11; since 2026-11-16 a blueprint weaves its belts when the force has the splitter and the underground belt, and keeps this design, with the long-handed inserter, otherwise: project-status 5ad).
 11. [row-layout-plan.md](row-layout-plan.md): the layout of recipes with several made ingredients since 2026-11-08: one column per step, side by side, so the recipe fixes the width and the rate only the height. Replaces the stack of `blocks.lua`; has the reasons, the measurements and what was considered and not done (underground belts, stacking columns).
 12. [inputs-plan.md](inputs-plan.md): the design that brings in one pure single-material belt per raw material instead of a mixed belt per chain, and makes the ore-and-coal belts inside a band along the top with splitters and underground belts, only when both are researched (built 2026-11-09, `scripts/feeds.lua`, `scripts/inputs.lua`, `scripts/poles.lua`, `rows.build_pure`; the original input design stays). Has the rules, the measurements and what is unverified in game.
+13. [feature-log.md](feature-log.md): what was built, one entry for each step of the iteration ladder, oldest first (it was the ladder of project-status.md).
+14. [consistency.md](consistency.md): how the code and the tests are written, as rules, and what the read-through of 2026-11-18 made consistent and left alone.
+15. [unverified.md](unverified.md): what has not been seen in game yet, one section for each feature, to check on the first in-game run.
 
 ## Maintenance rules
 

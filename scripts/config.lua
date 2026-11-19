@@ -94,7 +94,8 @@ local config = {
     ["steel-plate"] = true,
     ["steel-chest"] = true,
     ["heavy-armor"] = true,
-    -- Steel together with other made ingredients, one belt of each material only.
+    -- More products with the game's own recipes, each checked at every rate: most are made through steel or engine units, so they need the
+    -- design with one belt of each material (the table of the README says which).
     ["stone-wall"] = true,
     ["gate"] = true,
     ["fluid-wagon"] = true,
