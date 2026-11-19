@@ -156,17 +156,6 @@ local function inserters_needed(items_per_machine, inserter_items_per_minute)
   return math.max(1, math.ceil(items_per_machine / inserter_items_per_minute - EPSILON))
 end
 
--- Which ingredients ride which of the input belts of a stage. Where the layout can weave them (the limits give slots for
--- woven belts, see scripts/weave.lua) the plain or fast inserters of a machine take from all of them: belt `a` is the one that
--- goes under the others, `b` and `c` are tapped from their trunks. Where it cannot, belt `a` is next to the machines and plain
--- inserters take from it, and belt `b` is one column further out and long-handed inserters take from it, over belt `a` (there
--- is no belt `c`). Each belt has two lanes, one ingredient on each (a belt of raw items fills both lanes of its own). A stage
--- with up to two ingredients has them all on belt a; `c` is only there for a stage that takes from three woven belts.
----@class bpgen.Belts
----@field a string[]
----@field b string[]
----@field c? string[]
-
 -- The letters of the belts that carry something, belt a first.
 ---@param belts bpgen.Belts
 ---@return string[]

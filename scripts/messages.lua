@@ -228,10 +228,6 @@ end
 
 -- A blueprint that is ready ---------------------------------------------------------
 
----@class bpgen.RawAmount  how much of one raw item (or of the fuel) the blueprint uses
----@field name string
----@field amount number  a minute
-
 -- The entries one after another with a comma between them, as one LocalisedString.
 ---@param entries LocalisedString[]
 ---@return LocalisedString
@@ -270,10 +266,6 @@ function messages.ready(made, product, raws, belts)
   end
   return text("generated-with-belts", messages.number(made), messages.item(product), comma_list(amounts), comma_list(items))
 end
-
----@class bpgen.StepSummary  the machines of one step
----@field machines integer
----@field machine string  prototype name
 
 -- The text for the blueprint's description field: the machines, step by step. A plain
 -- string, not a LocalisedString: a blueprint's description is stored as written.

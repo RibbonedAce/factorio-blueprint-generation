@@ -133,6 +133,17 @@
 ---@field rate_per_minute number  of the product
 ---@field lane_items_per_minute number  what one belt lane carries
 
+-- Which ingredients ride which of the input belts of a stage. Where the layout can weave them (the limits give slots for
+-- woven belts, see scripts/weave.lua) the plain or fast inserters of a machine take from all of them: belt `a` is the one that
+-- goes under the others, `b` and `c` are tapped from their trunks. Where it cannot, belt `a` is next to the machines and plain
+-- inserters take from it, and belt `b` is one column further out and long-handed inserters take from it, over belt `a` (there
+-- is no belt `c`). Each belt has two lanes, one ingredient on each (a belt of raw items fills both lanes of its own). A stage
+-- with up to two ingredients has them all on belt a; `c` is only there for a stage that takes from three woven belts.
+---@class bpgen.Belts
+---@field a string[]
+---@field b string[]
+---@field c? string[]
+
 ---@class bpgen.PlanInput  how much of an ingredient is eaten each minute (by one machine or by all of them)
 ---@field name string  item name
 ---@field per_minute number
@@ -311,6 +322,37 @@
 ---@field trunks bpgen.Trunk[]  the one whose last leaf is furthest east first
 ---@field belts bpgen.PureBelt[]
 ---@field buses bpgen.PureBelt[]  the belts with two feeders or more, the one with the most feeders first
+
+-- The woven input belts (see scripts/weave.lua) ------------------------------------
+
+-- What a tile is.
+---@class bpgen.WeaveTile
+---@field column integer  from the inner column, west negative (the west tile of a splitter, which is two tiles wide)
+---@field row integer  from 0, the row of the first inserter, in the way the belts run
+---@field kind "belt"|"entrance"|"exit"|"splitter"
+---@field way "flow"|"east"|"west"  the way it faces: the way the belts run, east, into the inserter column, or west, out of it
+
+-- What the pattern is for one column.
+---@class bpgen.WeavePlan
+---@field kind "abc"|"aba"|"bba"|"pipes"
+---@field pole_column integer  the tile column of the free tiles the poles may take, from the inner column: the taps column, or the inner column for `plan_with_pipes`
+---@field rows table<integer, "a"|"b"|"c">  the belt each row of the machines shows, from row 0
+---@field row_count integer  how many rows the machines take
+---@field tiles bpgen.WeaveTile[]
+---@field inserters {row: integer, belt: "a"|"b"|"c"}[]  where the inserters are, with the belt each takes from
+---@field free_taps integer[]  the rows where the column of the poles holds nothing, which poles may take, from the first row up
+---@field first_row integer  the first row of any tile, which is -1 when belt a or a tap has to start before row 0
+---@field starts table<"a"|"b"|"c", integer>  the row of the first tile of each belt, where the belt that brings it ends
+
+-- What the message and the description of a blueprint are made from --------------
+
+---@class bpgen.RawAmount  how much of one raw item (or of the fuel) the blueprint uses
+---@field name string
+---@field amount number  a minute
+
+---@class bpgen.StepSummary  the machines of one step
+---@field machines integer
+---@field machine string  prototype name
 
 ---@class bpgen.Generated  a finished blueprint
 ---@field entities bpgen.Entity[]

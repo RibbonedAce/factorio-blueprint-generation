@@ -482,14 +482,12 @@ The order of the work in `rows.build_pure` is: columns are made (`Column`), the 
 
 | Where | Types |
 |---|---|
-| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Input, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
+| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StepSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Input, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
 | `scripts/generator.lua` | EnergySource, Candidate, StageData, Job, PlannedStage, Demand, DemandTotals |
-| `scripts/planner.lua` | Belts, InputInserters, MachineRates, StageContext, Sizes |
+| `scripts/planner.lua` | InputInserters, MachineRates, StageContext, Sizes |
 | `scripts/chain.lua` | MadeIngredient |
 | `scripts/layout.lua` | Geometry, Place, Poles, SharedBelt, Builder |
-| `scripts/weave.lua` | WeaveTile, WeavePlan |
 | `scripts/rows.lua` | Arc, Column, RawRun |
 | `scripts/inputs.lua` | Band |
 | `scripts/poles.lua` | PolePair |
-| `scripts/messages.lua` | RawAmount, StepSummary |

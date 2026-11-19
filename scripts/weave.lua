@@ -96,25 +96,6 @@ local PATTERNS = {
   bba = {{"b", "b", "a"}, {"a", "b", "b"}},
 }
 
--- What a tile is.
----@class bpgen.WeaveTile
----@field column integer  from the inner column, west negative (the west tile of a splitter, which is two tiles wide)
----@field row integer  from 0, the row of the first inserter, in the way the belts run
----@field kind "belt"|"entrance"|"exit"|"splitter"
----@field way "flow"|"east"|"west"  the way it faces: the way the belts run, east, into the inserter column, or west, out of it
-
--- What the pattern is for one column.
----@class bpgen.WeavePlan
----@field kind "abc"|"aba"|"bba"|"pipes"
----@field pole_column integer  the tile column of the free tiles the poles may take, from the inner column: the taps column, or the inner column for `plan_with_pipes`
----@field rows table<integer, "a"|"b"|"c">  the belt each row of the machines shows, from row 0
----@field row_count integer  how many rows the machines take
----@field tiles bpgen.WeaveTile[]
----@field inserters {row: integer, belt: "a"|"b"|"c"}[]  where the inserters are, with the belt each takes from
----@field free_taps integer[]  the rows where the column of the poles holds nothing, which poles may take, from the first row up
----@field first_row integer  the first row of any tile, which is -1 when belt a or a tap has to start before row 0
----@field starts table<"a"|"b"|"c", integer>  the row of the first tile of each belt, where the belt that brings it ends
-
 -- The pattern for the inserters each machine has on each belt.
 ---@param counts table<string, integer>  by belt, "a", "b" and "c" (nil or 0 for a belt that carries nothing)
 ---@return "abc"|"aba"|"bba"
