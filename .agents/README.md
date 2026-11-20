@@ -20,6 +20,7 @@ Persistent notes for the AI assistant (Claude) working on this repo. They exist 
 13. [feature-log.md](feature-log.md): what was built, one entry for each step of the iteration ladder, oldest first (it was the ladder of project-status.md).
 14. [consistency.md](consistency.md): how the code and the tests are written, as rules, and what the read-through of 2026-11-18 made consistent and left alone.
 15. [unverified.md](unverified.md): what has not been seen in game yet, one section for each feature, to check on the first in-game run.
+16. [verification.md](verification.md): how a change is checked against real recipes: what is known about plans and blueprints, the standard set of about 1,400 cases, and when each size of run is made.
 
 ## Maintenance rules
 
