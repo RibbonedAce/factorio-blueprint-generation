@@ -106,3 +106,10 @@ What the specs cannot show: each section lists what a feature assumes about the 
 - That belt b's detour in the inner column (a tile that turns east in the trunk, one in the inner column that runs on, one that turns west) keeps both lanes: the tracer's rule for curves, which only the game confirms.
 - That the pipe carries what the machines take (450 concrete a minute is 4,500 water a minute) and that nothing checks how much water arrives.
 - The recipe of concrete (5 bricks, 1 iron ore, 100 water, 10 s, 10 concrete) and the category `crafting-with-fluid` are what the sweeps read from the game's data, not read in game.
+
+## Unverified in the inserter capacity bonus iteration (check on the first in-game run, with a force that has researched it)
+
+- That the runtime prototypes of the plain, the long-handed and the fast inserter give `inserter_stack_size_bonus` and `uses_inserter_stack_size_bonus` (the names are those of the 2.1.24 documentation), and the force `inserter_stack_size_bonus`: the generator stops with a message that names the inserter, or the force, when one is missing.
+- That the hand of an inserter holds 1 + the bonus of the prototype + the bonus of the force, in whole items (a hand of two for a force that has researched the first level), for every one of the three inserters.
+- That an inserter with a hand of two moves what the planner counts: it holds still for one item after the first, as long as a full lane takes to carry an item past a point (8 ticks on a basic belt, 4 on a fast one), at the belt it takes from and at the belt it drops onto, so a plain inserter moves 90.6 items a minute on basic belts (95.5 on fast ones), a long-handed one 124.1 (133.3) and a fast one 218.2 (248.3). The machines may run slower than planned where a lane is less than full or where other inserters' items hold an inserter up (both left out of the count).
+- That a machine fed by the fewer inserters still runs at full speed, and that a blueprint with one plain inserter on a side where it had two (or a fast one) is powered and moves what the planner says.

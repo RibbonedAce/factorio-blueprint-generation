@@ -430,6 +430,11 @@ end
 --   inserter_rotation_speed the inserter's rotation speed, default 0.014 (the basic
 --                           inserter, 50.4 items a minute); `false` makes it an
 --                           entity that is not an inserter
+--   inserter_stacks         by inserter name ("inserter", "long-handed-inserter", "fast-inserter"), how its stack size
+--                           comes about, as {built_in = , takes_research = }: `built_in` is the bonus the prototype has of its
+--                           own, default 0, `false` makes the game not say; `takes_research` is whether the force's inserter
+--                           capacity bonus counts for it, default true, "unsaid" makes the game not say. An inserter left out
+--                           has the defaults
 --   underground_distance    the most tiles the underground belt spans, default 5 (the basic one);
 --                           `false` makes it an entity without that field
 --   fast_belts              true gives the game the fast transport belt, splitter and underground belt, which a
@@ -454,7 +459,7 @@ end
 -- form {filter = "fuel-category", ["fuel-category"] = name} combined with "or"
 -- (anything else is an error), and an empty list of filters gives every item,
 -- as the worst case of what the game might do.
----@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, fast_belts?: boolean, fast_belt_speed?: number|false, fast_underground_distance?: number, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, fast_inserter_rotation_speed?: number|false, underground_distance?: number|false, small_pole_supply_distance?: number|false, small_pole_wire_distance?: number|false, medium_pole_supply_distance?: number|false, medium_pole_wire_distance?: number|false, missing_entities?: string[]}
+---@param options? {items?: string[], recipes?: table<string, table>, furnace_speed?: number|false, machines?: table<string, table>, belt_speed?: number|false, fast_belts?: boolean, fast_belt_speed?: number|false, fast_underground_distance?: number, inserter_rotation_speed?: number|false, long_inserter_rotation_speed?: number, fast_inserter_rotation_speed?: number|false, inserter_stacks?: table<string, {built_in?: number|false, takes_research?: boolean|"unsaid"}>, underground_distance?: number|false, small_pole_supply_distance?: number|false, small_pole_wire_distance?: number|false, medium_pole_supply_distance?: number|false, medium_pole_wire_distance?: number|false, missing_entities?: string[]}
 ---@return table  a stand-in for the game's `prototypes`
 function builders.fake_prototypes(options)
   options = options or {}
@@ -503,6 +508,8 @@ function builders.fake_prototypes(options)
       type = fields.type or (fields.is_machine and "assembling-machine" or nil),
       get_crafting_speed = function() return fields.crafting_speed or nil end,
       get_inserter_rotation_speed = function() return fields.rotation_speed or nil end,
+      inserter_stack_size_bonus = fields.stack_size_bonus,
+      uses_inserter_stack_size_bonus = fields.uses_stack_size_bonus,
       get_max_energy_usage = function() return fields.energy_usage or nil end,
       belt_speed = fields.belt_speed or nil,
       max_underground_distance = fields.underground_distance or nil,
@@ -518,15 +525,28 @@ function builders.fake_prototypes(options)
   local function item(name, fuel_categories, fuel_value)
     return {localised_name = {"item-name." .. name}, fuel_categories = as_set(fuel_categories or {}), fuel_value = fuel_value or 0}
   end
+  -- An inserter: how fast it swings, and how its stack size comes about (the option `inserter_stacks`).
+  local function inserter(name, speed)
+    local stack = (options.inserter_stacks or {})[name] or {}
+    local takes_research = option(stack.takes_research, true)
+    if takes_research == "unsaid" then
+      takes_research = nil -- a game that does not say; `false` is a game that says no
+    end
+    return entity(name, {
+      rotation_speed = speed,
+      stack_size_bonus = option(stack.built_in, 0) or nil,
+      uses_stack_size_bonus = takes_research,
+    })
+  end
 
   local entities = {
     ["stone-furnace"] = entity("stone-furnace", {type = "furnace", crafting_speed = furnace_speed, width = 2, height = 2, burns = {"chemical"}, is_machine = true, energy_usage = furnace_energy_usage or nil, effectivity = furnace_effectivity}),
     ["transport-belt"] = entity("transport-belt", {belt_speed = belt_speed}),
     ["splitter"] = entity("splitter"),
     ["underground-belt"] = entity("underground-belt", {underground_distance = underground_distance or nil}),
-    ["inserter"] = entity("inserter", {rotation_speed = rotation_speed}),
-    ["long-handed-inserter"] = entity("long-handed-inserter", {rotation_speed = long_rotation_speed}),
-    ["fast-inserter"] = entity("fast-inserter", {rotation_speed = fast_rotation_speed or nil}),
+    ["inserter"] = inserter("inserter", rotation_speed),
+    ["long-handed-inserter"] = inserter("long-handed-inserter", long_rotation_speed),
+    ["fast-inserter"] = inserter("fast-inserter", fast_rotation_speed or nil),
     [builders.POLES.small.name] = entity(builders.POLES.small.name, {
       supply_area_distance = small_supply_distance or nil, max_wire_distance = small_wire_distance or nil,
     }),
@@ -620,10 +640,16 @@ end
 -- Options (all optional):
 --   locked   names of recipes that are not unlocked yet
 --   absent   names of recipes the force does not know at all
----@param options? {locked?: string[], absent?: string[]}
+--   inserter_stack_size_bonus  what the force's research adds to the items an inserter moves in a swing, default 0;
+--            `false` makes the force not say
+---@param options? {locked?: string[], absent?: string[], inserter_stack_size_bonus?: number|false}
 ---@return table  a stand-in for a LuaForce
 function builders.fake_force(options)
   options = options or {}
+  local bonus = options.inserter_stack_size_bonus
+  if bonus == nil then
+    bonus = 0
+  end
   local locked, absent = {}, {}
   for _, name in ipairs(options.locked or {}) do
     locked[name] = true
@@ -637,7 +663,7 @@ function builders.fake_force(options)
     end
     return {enabled = not locked[name]}
   end})
-  return {recipes = recipes}
+  return {recipes = recipes, inserter_stack_size_bonus = bonus or nil}
 end
 
 return builders

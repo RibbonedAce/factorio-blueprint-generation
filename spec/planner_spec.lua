@@ -2211,13 +2211,65 @@ describe("planner", function()
     end)
   end)
 
-  describe("inserter_items_per_minute", function()
-    it("turns an inserter's rotation speed into items per minute", function()
-      local basic_rotation_speed = 0.014
+  describe("item_interval_ticks", function()
+    it("gives the ticks a full lane takes to carry one more item past a point", function()
+      local standard_belt_speed = 0.03125
 
-      local per_minute = planner.inserter_items_per_minute(basic_rotation_speed)
+      local ticks = planner.item_interval_ticks(standard_belt_speed)
+
+      assert.near(8, ticks, 1e-9) -- 1 / (4 items a tile x 0.03125 tiles a tick)
+    end)
+
+    it("gives fewer ticks on a faster belt", function()
+      local fast_belt_speed = 0.0625
+
+      local ticks = planner.item_interval_ticks(fast_belt_speed)
+
+      assert.near(4, ticks, 1e-9) -- 1 / (4 x 0.0625)
+    end)
+  end)
+
+  describe("inserter_items_per_minute", function()
+    local basic_rotation_speed, standard_belt_speed = 0.014, 0.03125
+
+    it("turns an inserter's rotation speed into items per minute when a swing moves one item", function()
+      local per_minute = planner.inserter_items_per_minute(basic_rotation_speed, 1, standard_belt_speed)
 
       assert.near(50.4, per_minute, 1e-6) -- 0.014 swings a tick x 60 ticks x 60 seconds, one item a swing
+    end)
+
+    it("does not wait for the belt when a swing moves one item", function()
+      local slow_belt_speed = 0.001
+
+      local per_minute = planner.inserter_items_per_minute(basic_rotation_speed, 1, slow_belt_speed)
+
+      assert.near(50.4, per_minute, 1e-6) -- no second item to wait for
+    end)
+
+    it("waits at the belt for the second item when a swing moves two", function()
+      local per_minute = planner.inserter_items_per_minute(basic_rotation_speed, 2, standard_belt_speed)
+
+      assert.near(90.647, per_minute, 1e-3) -- a swing is 1 / 0.014 = 71.43 ticks and the wait 8: 2 items in 79.43 ticks, 2 x 3600 / 79.43
+    end)
+
+    it("waits less on a faster belt", function()
+      local fast_belt_speed = 0.0625
+
+      local per_minute = planner.inserter_items_per_minute(basic_rotation_speed, 2, fast_belt_speed)
+
+      assert.near(95.455, per_minute, 1e-3) -- the wait is 4 ticks: 2 items in 75.43 ticks, 2 x 3600 / 75.43
+    end)
+
+    it("waits for each item after the first when a swing moves three", function()
+      local per_minute = planner.inserter_items_per_minute(basic_rotation_speed, 3, standard_belt_speed)
+
+      assert.near(123.529, per_minute, 1e-3) -- 3 items in 71.43 + 2 x 8 = 87.43 ticks, 3 x 3600 / 87.43
+    end)
+
+    it("refuses a swing that moves no item", function()
+      local no_item = function() planner.inserter_items_per_minute(basic_rotation_speed, 0, standard_belt_speed) end
+
+      assert.has_error(no_item, "planner: an inserter moves at least one item in a swing")
     end)
   end)
 

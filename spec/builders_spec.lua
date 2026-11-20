@@ -163,6 +163,41 @@ describe("builders", function()
       assert.is_nil(builders.fake_prototypes{fast_inserter_rotation_speed = false}.entity["fast-inserter"].get_inserter_rotation_speed())
     end)
 
+    it("gives every inserter no stack size bonus of its own, and the force's research counts for it, unless it is told otherwise", function()
+      local entities = builders.fake_prototypes{}.entity
+
+      local stacks = {}
+      for _, name in ipairs({"inserter", "long-handed-inserter", "fast-inserter"}) do
+        stacks[name] = {entities[name].inserter_stack_size_bonus, entities[name].uses_inserter_stack_size_bonus}
+      end
+
+      assert.are.same({["inserter"] = {0, true}, ["long-handed-inserter"] = {0, true}, ["fast-inserter"] = {0, true}}, stacks)
+    end)
+
+    it("gives an inserter the stack size bonus it is told, and the others none", function()
+      local entities = builders.fake_prototypes{inserter_stacks = {["fast-inserter"] = {built_in = 2}}}.entity
+
+      assert.are.same({0, 2}, {entities["inserter"].inserter_stack_size_bonus, entities["fast-inserter"].inserter_stack_size_bonus})
+    end)
+
+    it("makes an inserter the force's research does not count for when it is told so", function()
+      local entities = builders.fake_prototypes{inserter_stacks = {["long-handed-inserter"] = {takes_research = false}}}.entity
+
+      assert.are.same({true, false}, {entities["inserter"].uses_inserter_stack_size_bonus, entities["long-handed-inserter"].uses_inserter_stack_size_bonus})
+    end)
+
+    it("leaves the stack size bonus out when it is told the game does not say", function()
+      local inserter = builders.fake_prototypes{inserter_stacks = {["inserter"] = {built_in = false}}}.entity["inserter"]
+
+      assert.is_nil(inserter.inserter_stack_size_bonus)
+    end)
+
+    it("leaves out whether the research counts when it is told the game does not say", function()
+      local inserter = builders.fake_prototypes{inserter_stacks = {["inserter"] = {takes_research = "unsaid"}}}.entity["inserter"]
+
+      assert.is_nil(inserter.uses_inserter_stack_size_bonus)
+    end)
+
     it("has a small pole that powers 2.5 tiles and holds a wire of 7.5", function()
       local pole = builders.fake_prototypes{}.entity["small-electric-pole"]
 
@@ -330,6 +365,18 @@ describe("builders", function()
 
     it("does not know the recipes it is told are absent", function()
       assert.is_nil(builders.fake_force{absent = {"splitter"}}.recipes["splitter"])
+    end)
+
+    it("has researched no inserter capacity bonus unless it is told otherwise", function()
+      assert.are.equal(0, builders.fake_force{}.inserter_stack_size_bonus)
+    end)
+
+    it("has the inserter capacity bonus it is told", function()
+      assert.are.equal(1.5, builders.fake_force{inserter_stack_size_bonus = 1.5}.inserter_stack_size_bonus)
+    end)
+
+    it("leaves out the inserter capacity bonus when it is told the game does not say", function()
+      assert.is_nil(builders.fake_force{inserter_stack_size_bonus = false}.inserter_stack_size_bonus)
     end)
   end)
 end)

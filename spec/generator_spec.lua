@@ -1387,6 +1387,34 @@ describe("generator", function()
         assert.are.equal(4, count_named(result.entities, LONG)) -- the blueprint still has them, as 25.2 a minute machines
       end)
 
+      it("sizes the machines by the stack size of the long-handed inserter too, once the force has researched the inserter capacity bonus", function()
+        _G.prototypes = inserter_game()
+
+        local result = generator.generate("inserter", 100, fake_force{locked = {"splitter", "fast-inserter"}, inserter_stack_size_bonus = 1})
+
+        -- belt a has the gear, 60 a minute, which one plain inserter moves (90.6); belt b the brick and the plate, 120, which one
+        -- long-handed inserter moves (2 items in 50 + 8 ticks, 124.1): each final assembler runs at full speed, 100 / 60 = 1.67
+        assert.are.equal(2, count_named(result.entities, LONG))
+      end)
+
+      it("takes the stack size bonus built into the long-handed inserter from the game", function()
+        _G.prototypes = inserter_game{inserter_stacks = {[LONG] = {built_in = 1}}}
+
+        local result = generator.generate("inserter", 100)
+
+        -- the long-handed inserter moves 124.1 a minute, enough for belt b's 120, but the plain one 50.4 of the gear's 60: 84%, 50.4 a minute, 100 / 50.4 = 1.98
+        assert.are.equal(2, count_named(result.entities, LONG))
+      end)
+
+      it("plans with the plain inserter's stack size when the game has no long-handed inserter", function()
+        _G.prototypes = inserter_game{missing_entities = {LONG}}
+
+        local result = generator.generate("inserter", 100, fake_force{locked = {"splitter", "fast-inserter"}, inserter_stack_size_bonus = 1})
+
+        -- belt b's 120 a minute is more than the plain inserter moves with the bonus (90.6): 75.5%, 45.3 a minute, 100 / 45.3 = 2.2
+        assert.are.equal(3, count_named(result.entities, LONG))
+      end)
+
       it("builds a recipe with one input belt when the game has no long-handed inserter", function()
         _G.prototypes = inserter_game{missing_entities = {LONG}}
 
@@ -2786,6 +2814,130 @@ describe("generator", function()
       -- (the medium pole is locked as well: with it a step is built wide when the rate asks for more, which the
       -- message for no force, the original design, does not show)
       assert.are.same(generator.max_rate_message("iron-gear-wheel"), generator.max_rate_message("iron-gear-wheel", fake_force{locked = {"fast-inserter", "medium-electric-pole"}}))
+    end)
+  end)
+
+  describe("the inserter capacity bonus, once the force has researched it: an inserter then moves more than one item in a swing", function()
+    -- A plain inserter swings in 1 / 0.014 = 71.4 ticks. With a hand of two items it also holds still for the second one: at a
+    -- basic belt an item takes 8 ticks to come along (or to be carried clear), so it moves 2 items in 79.4 ticks, 90.6 a minute
+    -- where a hand of one moves 50.4. An assembler (speed 0.5, 3x3) makes 60 gears a minute and eats 120 plates: two plain
+    -- inserters (100.8) hold it back to 50.4 gears, two with the bonus (181.3) do not. `plain` has no fast inserter.
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+
+    local function gear_game(options)
+      return fake_prototypes(builders.merged({
+        furnace_speed = 1,
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = gear},
+      }, options))
+    end
+
+    local function plain(bonus)
+      return fake_force{absent = {"fast-inserter"}, inserter_stack_size_bonus = bonus}
+    end
+
+    it("needs fewer assemblers, since plain inserters then run each machine at full speed", function()
+      _G.prototypes = gear_game()
+
+      local researched = generator.generate("iron-gear-wheel", 60, plain(1))
+      local not_yet = generator.generate("iron-gear-wheel", 60, plain(0))
+
+      -- one assembler at full speed: 2 x 90.6 plates moved of the 120 it eats; otherwise two that make 50.4 each
+      assert.are.same({1, 2}, {count_named(researched.entities, "assembling-machine-1"), count_named(not_yet.entities, "assembling-machine-1")})
+    end)
+
+    it("counts whole items only: a bonus of less than one item changes nothing", function()
+      _G.prototypes = gear_game()
+
+      local result = generator.generate("iron-gear-wheel", 60, plain(0.9))
+
+      assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- as without the research: 50.4 gears each
+    end)
+
+    it("counts the bonus built into the inserter even when no force is given", function()
+      _G.prototypes = gear_game{inserter_stacks = {["inserter"] = {built_in = 1}}}
+
+      local result = generator.generate("iron-gear-wheel", 60)
+
+      assert.are.equal(1, count_named(result.entities, "assembling-machine-1")) -- the hand holds 2 items with nothing researched
+    end)
+
+    it("leaves the research out for an inserter whose prototype does not take it", function()
+      _G.prototypes = gear_game{inserter_stacks = {["inserter"] = {takes_research = false}}}
+
+      local result = generator.generate("iron-gear-wheel", 60, plain(1))
+
+      assert.are.equal(2, count_named(result.entities, "assembling-machine-1")) -- 50.4 gears each, as if nothing were researched
+    end)
+
+    it("counts it for the belt's speed: a faster belt makes an inserter wait less, so it moves more", function()
+      -- 186 plates make 1 gear a minute: a machine eats 186 plates, which two plain inserters move at 181.3 on a basic belt
+      -- (a machine at 97.5%) and at 190.9 on a belt of twice the speed (4 ticks of waiting), which feeds it fully.
+      local heavy = a_recipe{energy = 30, ingredients = {amount_of(186, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+      local function assemblers_at(belt_speed)
+        _G.prototypes = gear_game{recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = heavy}, belt_speed = belt_speed}
+        return count_named(generator.generate("iron-gear-wheel", 2, plain(1)).entities, "assembling-machine-1")
+      end
+
+      local assemblers = {basic = assemblers_at(0.03125), twice_as_fast = assemblers_at(0.0625)}
+
+      assert.are.same({basic = 3, twice_as_fast = 2}, assemblers) -- 2 / 0.975 = 2.05 machines; 2 / 1
+    end)
+
+    describe("with the fast inserter researched too", function()
+      it("puts a plain inserter on a side that one plain inserter then moves", function()
+        _G.prototypes = gear_game()
+
+        local result = generator.generate("iron-gear-wheel", 60, fake_force{inserter_stack_size_bonus = 1})
+
+        -- the input side takes 120 plates, more than a plain inserter moves (90.6): one fast inserter (218.2); the output side's 60 gears
+        -- need no fast one. Without the bonus both sides have one (50.4 is less than either).
+        assert.are.equal(1, count_named(result.entities, "fast-inserter"))
+      end)
+
+      it("needs fewer fast inserters, since one moves what two did", function()
+        local heavy_gear = a_recipe{energy = 0.5, ingredients = {amount_of(3, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}} -- 180 plates a minute
+        _G.prototypes = gear_game{recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = heavy_gear}}
+
+        local researched = generator.generate("iron-gear-wheel", 60, fake_force{inserter_stack_size_bonus = 1})
+        local not_yet = generator.generate("iron-gear-wheel", 60, fake_force{})
+
+        -- With the bonus one fast inserter (218.2) moves the 180 plates and a plain one (90.6) the 60 gears; without it two fast
+        -- ones (144 each) move the plates and a fast one the gears, which a plain one (50.4) would not
+        assert.are.same({1, 3}, {count_named(researched.entities, "fast-inserter"), count_named(not_yet.entities, "fast-inserter")})
+      end)
+
+      it("takes the stack size of the fast inserter from the game: one then moves what two did", function()
+        local heavy_gear = a_recipe{energy = 0.5, ingredients = {amount_of(3, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+        _G.prototypes = gear_game{recipes = {["iron-plate"] = plate, ["iron-gear-wheel"] = heavy_gear}, inserter_stacks = {["fast-inserter"] = {built_in = 1}}}
+
+        local result = generator.generate("iron-gear-wheel", 60, fake_force{})
+
+        -- the plates, 180 a minute, take one fast inserter (218.2); the gears, 60, one too, since the plain inserter, with a hand of one, moves 50.4
+        assert.are.equal(2, count_named(result.entities, "fast-inserter"))
+      end)
+    end)
+
+    it("stops with a message when the game does not say the stack size bonus of an inserter", function()
+      _G.prototypes = gear_game{inserter_stacks = {["inserter"] = {built_in = false}}}
+
+      assert.has_error(function() generator.generate("iron-gear-wheel", 60, plain(1)) end,
+        "generator: the game does not give the stack size bonus of inserter")
+    end)
+
+    it("stops with a message when the game does not say whether an inserter takes the research", function()
+      _G.prototypes = gear_game{inserter_stacks = {["inserter"] = {takes_research = "unsaid"}}}
+
+      assert.has_error(function() generator.generate("iron-gear-wheel", 60, plain(1)) end,
+        "generator: the game does not say whether inserter takes the inserter capacity bonus")
+    end)
+
+    it("stops with a message when the force does not give its inserter capacity bonus", function()
+      _G.prototypes = gear_game()
+
+      assert.has_error(function() generator.generate("iron-gear-wheel", 60, plain(false)) end,
+        "generator: the game does not give the inserter capacity bonus of the force")
     end)
   end)
 

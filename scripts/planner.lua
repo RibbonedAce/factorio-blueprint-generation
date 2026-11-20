@@ -61,17 +61,34 @@ function planner.lane_items_per_minute(belt_speed)
   return belt_speed * ITEMS_PER_LANE_PER_TILE * TICKS_PER_SECOND * SECONDS_PER_MINUTE
 end
 
--- How many items ONE INSERTER moves per minute, from its rotation speed (the
--- inserter prototype's `get_inserter_rotation_speed()`, in turns per tick). One
--- swing, which is one full turn there and back, moves one item, so an inserter
--- makes rotation_speed * 60 ticks * 60 seconds swings a minute. (The basic
--- inserter's 0.014 gives 50.4, which matches its known 0.83 swings a second.)
--- Ignores stack size bonuses, so a researched bonus only adds spare capacity, and
--- ignores the slowdown of picking items off a moving belt.
----@param rotation_speed number
+-- How many ticks a full lane takes to carry one more item past a point: its items are a quarter of a tile apart and the belt
+-- carries them `belt_speed` tiles a tick. (The basic belt's 0.03125 gives 8 ticks, which is the 7.5 items a second of
+-- `lane_items_per_minute`.)
+---@param belt_speed number  the belt entity prototype's `belt_speed`
 ---@return number
-function planner.inserter_items_per_minute(rotation_speed)
-  return rotation_speed * TICKS_PER_SECOND * SECONDS_PER_MINUTE
+function planner.item_interval_ticks(belt_speed)
+  return 1 / (ITEMS_PER_LANE_PER_TILE * belt_speed)
+end
+
+-- How many items ONE INSERTER moves per minute, from its rotation speed (the inserter prototype's
+-- `get_inserter_rotation_speed()`, in turns per tick), the items its hand holds in a swing (`stack_size`: one, and more once the
+-- inserter capacity bonus is researched) and the speed of the belts it takes from and drops onto:
+--   items a minute = stack_size * 60 ticks * 60 seconds / (time to fully rotate + (stack_size - 1) * wait), the times in ticks.
+-- One swing, which is one full turn there and back, takes 1 / rotation_speed ticks and moves a hand of items. (With a hand of one
+-- the basic inserter's 0.014 gives 50.4 items, which matches its known 0.83 swings a second.) A hand of more than one item holds
+-- still at the belt for each item after the first: on the way in it waits for the next item to come along the belt to it, and on
+-- the way out for the item it has just dropped to be carried clear of the place of the next. Each wait is `item_interval_ticks`
+-- long, so a faster belt costs an inserter less. (A lane that carries less than a full lane makes an inserter wait longer, and the
+-- items of other inserters on the belt can hold it up: not counted.)
+---@param rotation_speed number
+---@param stack_size integer  how many items one swing moves: at least one
+---@param belt_speed number  of the belts it works with
+---@return number
+function planner.inserter_items_per_minute(rotation_speed, stack_size, belt_speed)
+  assert(stack_size >= 1, "planner: an inserter moves at least one item in a swing")
+  local rotation_ticks = 1 / rotation_speed
+  local waiting_ticks = (stack_size - 1) * planner.item_interval_ticks(belt_speed)
+  return stack_size * TICKS_PER_SECOND * SECONDS_PER_MINUTE / (rotation_ticks + waiting_ticks)
 end
 
 -- The input belt of a stage that carries `item`, by letter (see `bpgen.Belts`): the belt that the product of the step that

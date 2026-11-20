@@ -92,7 +92,7 @@
 ---@field products bpgen.RecipeItem[]
 
 ---@class bpgen.InserterLimits  what limits feeding and emptying a machine
----@field items_per_minute number  what one inserter moves
+---@field items_per_minute number  what one inserter moves: its swings a minute, the items in each and the time it holds still at the belt for the items after the first (see `planner.inserter_items_per_minute`)
 ---@field long_items_per_minute? number  what one long-handed inserter moves, for a machine whose second belt is not woven (`max_woven_input` is nil); a plain inserter's figure when nil
 ---@field fast_items_per_minute? number  what one fast inserter moves, when the game has them researched: a side then uses fast inserters when one plain inserter is not enough, and as many as it takes. Nil: only plain inserters
 ---@field max_input integer  how many inserters the input side of a machine gets when it takes from one belt, and from two when the second is reached by long-handed inserters (plain and long-handed together)

@@ -133,7 +133,7 @@ end
 
 -- Whether the buildings that every blueprint needs exist. The long-handed inserter is
 -- not one of them: only recipes with three or more ingredients use it, and a game
--- without one is not refused (it gets the plain inserter's speed for it). Nor are the fast inserter, the splitter and the
+-- without one is not refused (it gets the plain inserter for it, speed and stack size). Nor are the fast inserter, the splitter and the
 -- underground belt: a blueprint takes them only when the force has them. Whether the
 -- player has UNLOCKED these recipes is a separate question (see `locked_item`).
 ---@param entity_names string[]
@@ -341,6 +341,11 @@ local function read_stage(stage)
   }
 end
 
+-- What the planner counts of one kind of inserter: how fast it swings and how many items one swing moves.
+---@class bpgen.InserterData
+---@field rotation_speed number  in turns a tick
+---@field stack_size integer  the items its hand holds: one, the bonus built into the inserter and the force's inserter capacity bonus
+
 -- What one call to `generate` works with, built once and not changed afterwards.
 -- The steps below take it instead of the same values each: what the player asked
 -- for, the tree of steps that makes it with their machines, and the game's numbers.
@@ -350,24 +355,54 @@ end
 ---@field root bpgen.StageData  the step that makes `item_name`, with the steps below it
 ---@field names bpgen.SharedNames  the prototype names every column builds with
 ---@field belt_speed number
----@field inserter_rotation_speed number
----@field long_inserter_rotation_speed number  the long-handed inserter's, or the plain inserter's when the game has none
----@field fast_inserter_rotation_speed? number  the fast inserter's, when the force has researched it and the game gives its speed; nil: plain inserters only
+---@field inserter bpgen.InserterData
+---@field long_inserter bpgen.InserterData  the long-handed inserter's, or the plain inserter's when the game has none
+---@field fast_inserter? bpgen.InserterData  the fast inserter's, when the force has researched it and the game gives its speed; nil: plain inserters only
 ---@field lamp_supply_distance? number  how far a pole powers, when the blueprint gets lamps (the force has unlocked the small lamp); nil: no lamps
 ---@field labels boolean  whether the belts the player brings in get display panels (see scripts/labels.lua)
 ---@field inputs? bpgen.InputOptions  asks for the design that brings in one belt of each material (see scripts/inputs.lua); nil for the original design, a belt of raw items for every chain
 
--- The rotation speed of the fast inserter when the blueprint may use it: the force has unlocked its recipe (nothing is
--- known without a force) and the game has the building and says how fast it swings. Nil otherwise: the blueprint then
--- takes plain inserters only, as it always did.
+-- How many items the force's research adds to what one swing of an inserter moves: its inserter capacity bonus, which the inserter
+-- takes unless its prototype leaves it out. Nothing is researched without a force. The game gives the bonus as a number that may
+-- have a fraction, and a swing moves whole items. (The force keeps another number for bulk inserters, which no blueprint has.)
+---@param name string  the inserter's prototype name
+---@param prototype LuaEntityPrototype
+---@param force LuaForce|nil
+---@return integer
+local function researched_stack_bonus(name, prototype, force)
+  local takes_research = prototype.uses_inserter_stack_size_bonus
+  assert(takes_research ~= nil, "generator: the game does not say whether " .. name .. " takes the inserter capacity bonus")
+  if not (force and takes_research) then
+    return 0
+  end
+  return math.floor(assert(force.inserter_stack_size_bonus, "generator: the game does not give the inserter capacity bonus of the force"))
+end
+
+-- What the planner counts of an inserter, or nil when the game does not say how fast it swings (it is no inserter). One swing
+-- moves one item, the bonus built into the prototype, and the research of the force (see `researched_stack_bonus`).
+---@param name string  the inserter's prototype name
+---@param force LuaForce|nil
+---@return bpgen.InserterData|nil
+local function read_inserter(name, force)
+  local prototype = prototypes.entity[name]
+  local rotation_speed = prototype.get_inserter_rotation_speed()
+  if not rotation_speed then
+    return nil
+  end
+  local built_in = assert(prototype.inserter_stack_size_bonus, "generator: the game does not give the stack size bonus of " .. name)
+  return {rotation_speed = rotation_speed, stack_size = 1 + built_in + researched_stack_bonus(name, prototype, force)}
+end
+
+-- The fast inserter when the blueprint may use it: the force has unlocked its recipe (nothing is known without a force) and the
+-- game has the building and says how fast it swings. Nil otherwise: the blueprint then takes plain inserters only, as it always did.
 ---@param names bpgen.SharedNames
 ---@param force LuaForce|nil
----@return number|nil
-local function fast_rotation_speed(names, force)
+---@return bpgen.InserterData|nil
+local function read_fast_inserter(names, force)
   if not can_build(force, names.fast_inserter) then
     return nil
   end
-  return prototypes.entity[names.fast_inserter].get_inserter_rotation_speed()
+  return read_inserter(names.fast_inserter, force)
 end
 
 -- How far the pole powers (2.5 tiles for a small pole) if the blueprint gets lamps: the force has unlocked the small
@@ -434,22 +469,22 @@ local function read_root(item_name, force)
   return root, nil
 end
 
--- The speeds of the belt and of the inserters the layout uses, or nil when the belt or
--- the plain inserter is missing from the game. `belt_speed` is nil unless the entity
--- really is a transport belt, and the rotation speeds are nil unless they really are
--- inserters. A game without a long-handed inserter gets the plain inserter's speed for it.
+-- The speed of the belt and the inserters the layout uses, or nil when the belt or the plain
+-- inserter is missing from the game. `belt_speed` is nil unless the entity really is a transport
+-- belt, and the inserters are nil unless they really are inserters. A game without a long-handed
+-- inserter gets the plain inserter for it.
 ---@param names bpgen.SharedNames
+---@param force LuaForce|nil  whose research decides how many items an inserter moves in a swing
 ---@return number|nil belt_speed
----@return number|nil inserter_rotation_speed
----@return number|nil long_inserter_rotation_speed
-local function read_speeds(names)
+---@return bpgen.InserterData|nil inserter
+---@return bpgen.InserterData|nil long_inserter
+local function read_speeds(names, force)
   if not all_entities_exist(names) then
     return nil
   end
-  local inserter_speed = prototypes.entity[names.inserter].get_inserter_rotation_speed()
-  local long = prototypes.entity[names.long_inserter]
-  local long_speed = long and long.get_inserter_rotation_speed() or inserter_speed
-  return prototypes.entity[names.belt].belt_speed, inserter_speed, long_speed
+  local inserter = read_inserter(names.inserter, force)
+  local long = prototypes.entity[names.long_inserter] and read_inserter(names.long_inserter, force)
+  return prototypes.entity[names.belt].belt_speed, inserter, long or inserter
 end
 
 -- Adds to a job what the force has unlocked: the fast inserter, the lamp, the design with one belt of each material and the
@@ -459,7 +494,7 @@ end
 ---@return bpgen.Job
 local function add_unlocked(job, force)
   local names = job.names
-  job.fast_inserter_rotation_speed = fast_rotation_speed(names, force)
+  job.fast_inserter = read_fast_inserter(names, force)
   job.lamp_supply_distance = lamp_distance(names, force)
   job.input_options = input_options(names, job.belt_speed, force)
   job.labels = wants_labels(names, force, job.input_options ~= nil)
@@ -478,8 +513,8 @@ local function read_job(item_name, rate_per_minute, force)
     return nil, messages.unsupported_item()
   end
   local names = shared_names(force)
-  local belt_speed, rotation_speed, long_rotation_speed = read_speeds(names)
-  if not (belt_speed and rotation_speed and long_rotation_speed) then
+  local belt_speed, inserter, long_inserter = read_speeds(names, force)
+  if not (belt_speed and inserter and long_inserter) then
     return nil, messages.missing_prototype()
   end
   add_pole_distances(names)
@@ -493,8 +528,8 @@ local function read_job(item_name, rate_per_minute, force)
     root = root,
     names = names,
     belt_speed = belt_speed,
-    inserter_rotation_speed = rotation_speed,
-    long_inserter_rotation_speed = long_rotation_speed,
+    inserter = inserter,
+    long_inserter = long_inserter,
   } --[[@as bpgen.Job]], force) -- what the force has unlocked is added just below
 end
 
@@ -843,6 +878,14 @@ local function input_slots(job, stage, machine_size)
   return layout.max_input_inserters(machine_size), weaves and layout.max_woven_inserters(machine_size) or nil, most_input_belts(job)
 end
 
+-- How many items a minute one inserter moves, with the belts of the blueprint (see `planner.inserter_items_per_minute`).
+---@param job bpgen.Job
+---@param inserter bpgen.InserterData
+---@return number
+local function items_per_minute(job, inserter)
+  return planner.inserter_items_per_minute(inserter.rotation_speed, inserter.stack_size, job.belt_speed)
+end
+
 -- What the planner is told about one step: the inserters that feed and empty each
 -- of its machines, as many as the layout leaves room for.
 ---@param job bpgen.Job
@@ -857,9 +900,9 @@ local function stage_request(job, stage)
     machine_speed = stage.machine_speed,
     fuel = stage.fuel,
     inserters = {
-      items_per_minute = planner.inserter_items_per_minute(job.inserter_rotation_speed),
-      long_items_per_minute = planner.inserter_items_per_minute(job.long_inserter_rotation_speed),
-      fast_items_per_minute = job.fast_inserter_rotation_speed and planner.inserter_items_per_minute(job.fast_inserter_rotation_speed) or nil,
+      items_per_minute = items_per_minute(job, job.inserter),
+      long_items_per_minute = items_per_minute(job, job.long_inserter),
+      fast_items_per_minute = job.fast_inserter and items_per_minute(job, job.fast_inserter) or nil,
       max_input = max_input,
       max_woven_input = max_woven_input,
       most_belts = belts,
