@@ -275,6 +275,8 @@ The tests run outside the game with [busted](https://lunarmodules.github.io/bust
 
 The settings are in `.busted`: specs are the `spec/*_spec.lua` files, and `spec/helper.lua` provides stand-ins for the game's `defines` table before they run. Specs for modules that read the game's `prototypes` table assign a fake one first.
 
+A second check, `lua52 verify/run.lua` from the repository root (about 13 seconds), generates 1,329 blueprints from the game's real recipes (copied into `verify/recipes.lua`) and runs the validator and the belt tracer on them; see `.agents/verification.md`.
+
 ## Editor setup (VS Code)
 
 The code carries type annotations (`---@param`, `---@class`, ...) so the editor can flag a wrong argument or a misspelled field as you type. They are plain comments: Factorio ignores them and nothing is checked while the game runs.
