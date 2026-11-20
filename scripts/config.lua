@@ -139,6 +139,9 @@ local config = {
     ["flamethrower"] = true,
     ["defender-capsule"] = true, -- piercing rounds magazines, electronic circuits and gear wheels
     ["flamethrower-turret"] = true,
+    -- Five made ingredients (steel plate, gear wheels, bricks, circuits and pipes): the first step with a third woven belt, which needs the
+    -- medium electric pole as well (see scripts/weave.lua).
+    ["oil-refinery"] = true,
   },
 
   -- The machine that makes the recipes of each category, and the item it burns

@@ -65,7 +65,7 @@ What the specs cannot show: each section lists what a feature assumes about the 
 - That the poles in the taps column power every inserter, machine and wire of the column, with the medium pole for three belts (the validator checks the numbers it is given, which the game has not confirmed for the medium pole's 3.5 supply area and 9 wire).
 - That the full input side (three inserters on a 3 x 3 machine) feeds the machine at the rate the planner counts, in the order of the pattern, with two machines showing the same belt where they meet.
 - That a blueprint with undergrounds and splitters can be placed before the research is done (ghosts are).
-- That a force that cannot weave yet (no splitter or underground belt) gets the long-handed blueprints of 5f, which are the same blueprints byte for byte as before the woven belts and as unseen in game as they were, and that a step of five or six ingredients is refused for it with a message that names what to research.
+- That a force that cannot weave yet (no splitter or underground belt) gets the long-handed blueprints of 5f, which are the same blueprints byte for byte as before the woven belts and as unseen in game as they were, and that a step of five or six ingredients (the oil refinery, 5am) is refused for it with a message that names what to research.
 
 ## Unverified in the row layout iteration (check on the first in-game run)
 
