@@ -3675,6 +3675,7 @@ describe("generator", function()
     -- that take a fluid are on the bottom row (one tile either side of the middle) and point south, the three that give one are on
     -- the top row and point north. The pipes stand on the tiles outside, under it and above it.
     local north, south, west = defines.direction.north, defines.direction.south, defines.direction.west
+    local east = defines.direction.east
     local basic = a_recipe{energy = 5, ingredients = {fluid_of(100, "crude-oil")}, products = {fluid_of(45, "petroleum-gas")}, category = "oil-processing"}
     local advanced = a_recipe{
       energy = 5, ingredients = {fluid_of(100, "crude-oil"), fluid_of(50, "water")},
@@ -3791,12 +3792,52 @@ describe("generator", function()
 
       local result = generator.generate("basic-oil-processing", 1000)
 
-      -- two refineries, at the columns 0 and 5, under the row 0 of the pipe that takes the fluid out, from the column of the first
-      -- connection to that of the last refinery (3 to 8); the pipe that brings it in is in the row 6, from the west edge to the
-      -- column of the connection of the last refinery (0 to 5)
-      local out_row, in_row = builders.columns_in_row(result.entities, "pipe", 0), builders.columns_in_row(result.entities, "pipe", 6)
-      assert.are.same({builders.range(3, 8), builders.range(0, 5)}, {out_row, in_row})
+      -- two refineries, 5 tiles apart, in a row that is turned: the pipe that takes the fluid out is in the column 7, from the tile of
+      -- the first connection to that of the last refinery (3 to 8); the pipe that brings it in is in the column 1, from the north end
+      -- to the tile of the connection of the last refinery (0 to 5)
+      local out_column, in_column = builders.rows_in_column(result.entities, "pipe", 7), builders.rows_in_column(result.entities, "pipe", 1)
+      assert.are.same({builders.range(3, 8), builders.range(0, 5)}, {out_column, in_column})
       assert.are.same({}, validator.validate(result.entities, entries))
+    end)
+
+    it("stacks the refineries from north to south, turned to face east, the fluid coming in at the north end", function()
+      _G.prototypes = oil_game()
+
+      local result = generator.generate("basic-oil-processing", 1000)
+
+      local refineries = builders.entities_named(result.entities, "oil-refinery")
+      local tiles = {}
+      for _, refinery_entity in ipairs(refineries) do
+        local tile = grid.top_left_tile(refinery_entity.position, 5, 5)
+        tiles[#tiles + 1] = {tile.x, tile.y, refinery_entity.direction}
+      end
+      table.sort(tiles, function(a, b) return a[2] < b[2] end)
+      -- the crude oil pipe is the column 1 on their west, from the north end of the blueprint, and the petroleum gas pipe the column 7
+      assert.are.same({{2, 0, east}, {2, 5, east}}, tiles)
+      assert.are.same({builders.range(0, 8), builders.range(0, 9)}, {builders.rows_in_column(result.entities, "pipe", 1), builders.rows_in_column(result.entities, "pipe", 7)})
+    end)
+
+    it("puts a display panel with the crude oil beside the start of the pipe, away from the refineries, once the force has unlocked it", function()
+      _G.prototypes = oil_game()
+
+      local result = generator.generate("basic-oil-processing", 1000, fake_force{})
+
+      local panels = {}
+      for _, panel in ipairs(builders.entities_named(result.entities, "display-panel")) do
+        local tile = grid.top_left_tile(panel.position)
+        panels[#panels + 1] = {tile.x, tile.y, panel.icon.type, panel.icon.name}
+      end
+      table.sort(panels, function(a, b) return a[1] < b[1] end)
+      assert.are.same({{0, 0, "fluid", "crude-oil"}}, panels)
+    end)
+
+    it("has no panels without the force's display panel, nor without a force", function()
+      _G.prototypes = oil_game()
+
+      local locked = generator.generate("basic-oil-processing", 1000, fake_force{locked = {"display-panel"}})
+      local none = generator.generate("basic-oil-processing", 1000)
+
+      assert.are.same({0, 0}, {count_named(locked.entities, "display-panel"), count_named(none.entities, "display-panel")})
     end)
 
     it("builds with a wire exactly as long as a machine is wide, which reaches from the pole of one machine to the next", function()

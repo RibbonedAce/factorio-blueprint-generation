@@ -694,8 +694,24 @@ describe("blueprint validator", function()
       assert.has_item_containing("the pipes of the input fluid have no open end", problems)
     end)
 
-    it("reports a machine that faces east, which its connections are not worked out for", function()
+    it("turns the connections of a machine that faces east a quarter clockwise: the fluid it takes comes in at its east side", function()
+      local entities = blueprint_of(machine(east), pipe(1, 1), pipe(-1, 1))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.are.same({}, problems)
+    end)
+
+    it("reports a machine that faces east when its pipes stand where it faces north", function()
       local entities = blueprint_of(machine(east), pipe(0, 0), pipe(0, 2))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.has_item_containing("has no pipe at its input fluid connection", problems)
+    end)
+
+    it("reports a machine that faces south, which its connections are not worked out for", function()
+      local entities = blueprint_of(machine(defines.direction.south), pipe(0, 0), pipe(0, 2))
 
       local problems = validator.validate(entities, catalog_with_machine())
 

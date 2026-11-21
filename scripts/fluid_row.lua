@@ -2,7 +2,9 @@
 -- A row of machines that take a fluid and give one, with no belt and no inserter: the oil refinery that makes petroleum gas from
 -- crude oil. Pure, like scripts/layout.lua.
 --
--- The machines stand side by side with no gap, facing north (the way a blueprint entity faces with no direction). Each has
+-- The machines stand side by side with no gap, facing north (the way a blueprint entity faces with no direction), and the finished
+-- row is turned a quarter clockwise (`fluid_row.turn`): they then stand one under the other, facing east, with the fluid coming in
+-- at the north end and going out at the south end. The picture below is the row before it is turned. Each has
 -- pipe connections on two opposite sides, the ones of the fluids it takes on one and the ones of the fluids it gives on the
 -- other (the game says where, see `bpgen.FluidBox`); a row of pipes runs along each side, past every connection of every
 -- machine, so that the one the recipe uses is joined whichever of them it is. The pipe of the fluid that comes in starts at the
@@ -24,6 +26,8 @@ local grid = require("scripts.grid")
 local layout = require("scripts.layout")
 
 local fluid_row = {}
+
+local north, east = defines.direction.north, defines.direction.east
 
 -- Whether a pipe connection is on the tile just outside the machine, above or under it, in line with one of its columns.
 ---@param tile {x: integer, y: integer}
@@ -128,6 +132,7 @@ end
 -- has to reach, and the poles are a machine apart, which a wire has to reach.
 ---@param request bpgen.FluidRowBuild
 ---@return bpgen.Entity[]
+---@return {input: {x: integer, y: integer}, output: {x: integer, y: integer}} entries  the tiles where the pipes start and end
 function fluid_row.build(request)
   assert(layout.pole_reach(request.pole_supply_distance) >= 2, "fluid_row: a pole has to reach two tiles to power a machine from beyond its pipes")
   assert(request.size <= request.pole_wire_distance, "fluid_row: a wire has to reach from the pole of one machine to the next")
@@ -142,7 +147,61 @@ function fluid_row.build(request)
   add_pipes(entities, request.pipe, rows.inputs + top, 0, last_machine + last_in)
   add_pipes(entities, request.pipe, rows.outputs + top, first_out, last_machine + last_out)
   add_poles(entities, request, pole_row + top)
-  return entities
+  local entries = {input = {x = 0, y = rows.inputs + top}, output = {x = last_machine + last_out, y = rows.outputs + top}}
+  return entities, entries
+end
+
+-- Turns a finished row a quarter clockwise: the machines then face east instead of north, and the row stands from north to south
+-- instead of from west to east, so that the fluid comes in at the north end and goes out at the south end. The entities and the
+-- tiles of `entries` are moved in place; the entries are returned.
+---@param entities bpgen.Entity[]
+---@param entries {input: {x: integer, y: integer}, output: {x: integer, y: integer}}
+---@param machine string  the name of the machines, which are `size` tiles on a side
+---@param size integer
+---@return {input: {x: integer, y: integer}, output: {x: integer, y: integer}}
+function fluid_row.turn(entities, entries, machine, size)
+  local function tiles_of(entity)
+    local across = entity.name == machine and size or 1
+    return grid.top_left_tile(entity.position, across, across), across
+  end
+  local height = 0
+  for _, entity in ipairs(entities) do
+    local tile, across = tiles_of(entity)
+    height = math.max(height, tile.y + across)
+  end
+  for _, entity in ipairs(entities) do
+    local tile, across = tiles_of(entity)
+    entity.position = grid.position(height - across - tile.y, tile.x, across, across)
+    if entity.name == machine then
+      entity.direction = east
+    end
+  end
+  for _, entry in pairs(entries) do
+    entry.x, entry.y = height - 1 - entry.y, entry.x
+  end
+  return entries
+end
+
+-- A display panel beside the tile where the pipe that brings the fluid in starts, on the side away from the machines, showing the
+-- fluid, as the panels of the belts the player brings in do (the pipe that takes the product away has none). For a row that has
+-- been turned. A panel needs no power.
+---@param entities bpgen.Entity[]
+---@param entries {input: {x: integer, y: integer}, output: {x: integer, y: integer}}  where the pipes start and end
+---@param options {panel: string, machine: string, input: string}  the names of the panel, the machines and the fluid that comes in
+function fluid_row.add_panels(entities, entries, options)
+  local machine_x
+  for _, entity in ipairs(entities) do
+    if entity.name == options.machine then
+      machine_x = entity.position.x
+      break
+    end
+  end
+  local entry = entries.input
+  local away = entry.x + 0.5 < machine_x and -1 or 1
+  entity_list.append(entities, {
+    name = options.panel, position = grid.position(entry.x + away, entry.y),
+    icon = {type = "fluid", name = options.input}, always_show = true,
+  })
 end
 
 return fluid_row

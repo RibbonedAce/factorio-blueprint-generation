@@ -532,13 +532,17 @@ end
 --------------------------------------------------------------------------------
 
 -- The pipe-like entity at each pipe connection of a machine of one flow ("input" or "output"), and a problem for each connection
--- that has none. The tiles are from the top-left tile of the machine facing north.
+-- that has none. The tiles are from the top-left tile of the machine facing north, and are turned for one that faces east.
 local function pieces_at(index, machine, flow, problems)
   local description = index.catalog[machine.name]
   local left, top = machine.position.x - description.width / 2, machine.position.y - description.height / 2
   local pieces = {}
   for _, tile in ipairs(description.fluid_connections[flow]) do
-    local piece = index.by_tile[tile_key(left + tile.x, top + tile.y)]
+    local x, y = tile.x, tile.y
+    if machine.direction == defines.direction.east then -- turned a quarter clockwise
+      x, y = description.width - 1 - tile.y, tile.x
+    end
+    local piece = index.by_tile[tile_key(left + x, top + y)]
     if piece and is_pipe(index, piece) then
       pieces[#pieces + 1] = piece
     else
@@ -560,7 +564,8 @@ local function connection_pieces(index, problems)
   local inputs, outputs = {}, {}
   for _, machine in ipairs(usable_of_kind(index, "machine")) do
     if index.catalog[machine.name].fluid_connections then
-      if machine.direction ~= nil and machine.direction ~= defines.direction.north then
+      local way = machine.direction
+      if way ~= nil and way ~= defines.direction.north and way ~= defines.direction.east then
         add_problem(problems, machine, "faces a way its fluid connections are not worked out for")
       end
       add_all(inputs, pieces_at(index, machine, "input", problems))

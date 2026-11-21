@@ -10,6 +10,7 @@ local fluid_row = require("scripts.fluid_row")
 local validator = require("spec.support.blueprint_validator")
 
 local NAMES = builders.NAMES
+local east = defines.direction.east
 
 -- The fluid boxes of the machine: two that take a fluid, under it, and three that give one, above it.
 local function refinery_boxes()
@@ -267,6 +268,72 @@ describe("fluid_row", function()
 
         assert.are.same({}, validator.validate(entities, entries))
       end)
+    end)
+  end)
+
+  describe("turn, which stands the row from north to south", function()
+    local function turned(count)
+      local entities, entries = fluid_row.build(request{count = count})
+      return entities, fluid_row.turn(entities, entries, "oil-refinery", 5)
+    end
+
+    it("moves the machines a quarter clockwise, one under the other, facing east", function()
+      local entities = turned(2)
+
+      local tiles = tiles_of(entities, "oil-refinery", 5)
+      assert.are.same({{2, 0}, {2, 5}}, tiles)
+      assert.are.same({east, east}, {entities[1].direction, entities[2].direction})
+    end)
+
+    it("moves the pipe that took the fluid in to the west column and the one that gave it out to the east column", function()
+      local entities = turned(2)
+
+      assert.are.same({range(0, 8), range(0, 9)}, {builders.rows_in_column(entities, NAMES.pipe, 1), builders.rows_in_column(entities, NAMES.pipe, 7)})
+    end)
+
+    it("moves the poles to the column west of the pipes, level with the middle of each machine", function()
+      local entities = turned(2)
+
+      assert.are.same({{0, 2}, {0, 7}}, tiles_of(entities, NAMES.pole, 1))
+    end)
+
+    it("gives the tiles where the pipes start and end: the north end of the west one and the south end of the east one", function()
+      local _, entries = turned(2)
+
+      assert.are.same({input = {x = 1, y = 0}, output = {x = 7, y = 9}}, entries)
+    end)
+
+    it("leaves the entities numbered and the wires of the poles to the same entities", function()
+      local entities = turned(3)
+
+      local poles = builders.entities_named(entities, NAMES.pole)
+      assert.has_consecutive_numbers(entities)
+      assert.are.same({poles[2].entity_number, poles[3].entity_number}, {poles[1].wires[1][3], poles[2].wires[1][3]})
+    end)
+
+    it("passes the validator, the machines facing east with their connections turned", function()
+      local entities = turned(3)
+      local entries = builders.a_catalog{}
+      entries["oil-refinery"] = {
+        kind = "machine", width = 5, height = 5, needs_power = true,
+        fluid_connections = {input = {{x = 1, y = 5}, {x = 3, y = 5}}, output = {{x = 0, y = -1}, {x = 2, y = -1}, {x = 4, y = -1}}},
+      }
+
+      assert.are.same({}, validator.validate(entities, entries))
+    end)
+  end)
+
+  describe("add_panels", function()
+    it("puts a panel with the fluid beside the start of the pipe that brings it in, away from the machines, and none at the other end", function()
+      local entities, entries = fluid_row.build(request{count = 2})
+      fluid_row.turn(entities, entries, "oil-refinery", 5)
+
+      fluid_row.add_panels(entities, entries, {panel = "display-panel", machine = "oil-refinery", input = "crude-oil"})
+
+      local panels = builders.entities_named(entities, "display-panel")
+      local first = grid.top_left_tile(panels[1].position)
+      assert.are.same({1, {0, 0, "crude-oil"}}, {#panels, {first.x, first.y, panels[1].icon.name}})
+      assert.are.same({"fluid", true}, {panels[1].icon.type, panels[1].always_show})
     end)
   end)
 end)

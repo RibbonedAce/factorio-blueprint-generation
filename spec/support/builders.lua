@@ -238,6 +238,23 @@ function builders.columns_in_row(entities, name, row)
   return columns
 end
 
+-- The rows of the entities of one name, one tile each, in one tile column, in order.
+---@param entities table[]
+---@param name string
+---@param column integer
+---@return integer[]
+function builders.rows_in_column(entities, name, column)
+  local rows = {}
+  for _, entity in ipairs(builders.entities_named(entities, name)) do
+    local tile = grid.top_left_tile(entity.position)
+    if tile.x == column then
+      rows[#rows + 1] = tile.y
+    end
+  end
+  table.sort(rows)
+  return rows
+end
+
 -- The whole numbers from `first` to `last`.
 ---@param first integer
 ---@param last integer

@@ -371,6 +371,7 @@ end
 ---@field fast_inserter? bpgen.InserterData  the fast inserter's, when the force has researched it and the game gives its speed; nil: plain inserters only
 ---@field lamp_supply_distance? number  how far a pole powers, when the blueprint gets lamps (the force has unlocked the small lamp); nil: no lamps
 ---@field labels boolean  whether the belts the player brings in get display panels (see scripts/labels.lua)
+---@field row_labels boolean  whether the start of the pipe that brings the fluid into a row of machines that make a fluid gets a display panel (the force has unlocked the display panel)
 ---@field inputs? bpgen.InputOptions  asks for the design that brings in one belt of each material (see scripts/inputs.lua); nil for the original design, a belt of raw items for every chain
 
 -- How many items the force's research adds to what one swing of an inserter moves: its inserter capacity bonus, which the inserter
@@ -518,6 +519,7 @@ local function add_unlocked(job, force)
   job.lamp_supply_distance = lamp_distance(names, force)
   job.input_options = input_options(names, job.belt_speed, force)
   job.labels = wants_labels(names, force, job.input_options ~= nil)
+  job.row_labels = wants_labels(names, force, true)
   return job
 end
 
@@ -1374,7 +1376,13 @@ local function generate_fluid_row(job)
     ---@cast reason bpgen.PlanReason -- the planner always gives a reason when it gives no plan
     return nil, messages.plan_problem(reason, max_rate)
   end
-  local entities = fluid_row.build(fluid_row_build(job, plan.machines))
+  local entities, entries = fluid_row.build(fluid_row_build(job, plan.machines))
+  fluid_row.turn(entities, entries, stage.machine, machine_size_of(stage))
+  if job.row_labels then
+    fluid_row.add_panels(entities, entries, {
+      panel = job.names.panel, machine = stage.machine, input = stage.recipe.fluids[1].name,
+    })
+  end
   add_row_lights(job, entities)
   local crafts = plan.output_per_minute / planner.amount_made(stage.recipe, stage.item)
   local taken = {name = stage.recipe.fluids[1].name, amount = crafts * stage.recipe.fluids[1].amount}
