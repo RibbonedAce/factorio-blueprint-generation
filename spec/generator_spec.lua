@@ -4172,6 +4172,180 @@ describe("generator", function()
       assert.are.same({"blueprint-generation.max-rate", "390"}, generator.max_rate_message("solid-fuel-from-petroleum-gas"))
     end)
 
+    describe("sulfur, which takes a second fluid that nothing makes: water, which comes in by a pipe", function()
+      -- 30 water and 30 petroleum gas make 2 sulfur in 1 s, listed water first. The boxes of the plant are as above: the first takes
+      -- the first fluid of the recipe (the second when `fluidbox_index` says so).
+      local function sulfur(changes)
+        return a_recipe(builders.merged({
+          energy = 1, ingredients = {fluid_of(30, "water"), fluid_of(30, "petroleum-gas")}, products = {amount_of(2, "sulfur")}, category = "chemistry",
+        }, changes))
+      end
+
+      -- The game with the recipe of sulfur given (the one above by default) and the other changes.
+      local function sulfur_game(recipe, changes)
+        return fuel_game(builders.merged({recipes = {["basic-oil-processing"] = gas, ["sulfur"] = recipe or sulfur{}}}, changes))
+      end
+
+      local function chemical_plants(result)
+        return builders.entities_named(result.entities, "chemical-plant")
+      end
+
+      local function sulfur_catalog()
+        local entries = catalog()
+        entries["chemical-plant"] = {
+          kind = "machine", width = 3, height = 3, needs_power = true,
+          fluid_connections = {water = {{x = 0, y = -1}}, gas = {{x = 2, y = -1}}},
+        }
+        return entries
+      end
+
+      it("builds the refineries and the plants with the recipe set, and the pipes of both fluids", function()
+        _G.prototypes = sulfur_game()
+
+        local result = generator.generate("sulfur", 100)
+
+        -- 50.4 a minute from each plant (the inserter's limit, which it takes 756 gas for): 2 plants, from 1,512 gas, which takes 3 refineries
+        assert.are.same({2, 3, "sulfur"}, {#chemical_plants(result), count_named(result.entities, "oil-refinery"), chemical_plants(result)[1].recipe})
+        assert.are.equal(2, count_named(result.entities, "pipe-to-ground")) -- under the pipes of the gas between the first plant and the second
+      end)
+
+      it("mirrors the first plant, whose box that takes the gas is the second, which is at the top row of a plant facing west", function()
+        _G.prototypes = sulfur_game()
+
+        local plants = chemical_plants(generator.generate("sulfur", 100))
+
+        assert.are.same({true, nil}, {plants[1].mirror, plants[2].mirror})
+      end)
+
+      it("mirrors the other when the recipe puts the gas in the first box (a fluidbox_index)", function()
+        local swapped = sulfur{ingredients = {fluid_of(30, "water"), fluid_of(30, "petroleum-gas")}}
+        swapped.ingredients[1].fluidbox_index, swapped.ingredients[2].fluidbox_index = 2, 1
+        _G.prototypes = sulfur_game(swapped)
+
+        local plants = chemical_plants(generator.generate("sulfur", 100))
+
+        assert.are.same({nil, true}, {plants[1].mirror, plants[2].mirror})
+      end)
+
+      it("builds a blueprint that passes the validator: the water and the gas are two networks of pipes", function()
+        _G.prototypes = sulfur_game()
+
+        local result = generator.generate("sulfur", 300)
+
+        assert.are.same({}, validator.validate(result.entities, sulfur_catalog()))
+      end)
+
+      it("says what it makes and the crude oil and the water it takes in a minute", function()
+        _G.prototypes = sulfur_game()
+
+        local result = generator.generate("sulfur", 100)
+
+        assert.are.same({"blueprint-generation.generated", "100.8", {"item-name.sulfur"}}, {result.message[1], result.message[2], result.message[3]})
+        assert.are.same({"fluid-name.crude-oil"}, result.message[4][2][3])
+        assert.are.same({"fluid-name.water"}, result.message[4][4][3])
+      end)
+
+      it("puts a display panel with each fluid that comes in at the north end, once the force has unlocked the panel", function()
+        _G.prototypes = sulfur_game()
+
+        local result = generator.generate("sulfur", 100, fake_force{})
+
+        local icons = {}
+        for _, panel in ipairs(builders.entities_named(result.entities, "display-panel")) do
+          icons[#icons + 1] = panel.icon.type .. " " .. panel.icon.name
+        end
+        table.sort(icons)
+        assert.are.same({"fluid crude-oil", "fluid water"}, icons)
+      end)
+
+      it("names the most one blueprint makes: as many plants as a lane of the belt carries, 8 of 50.4", function()
+        _G.prototypes = sulfur_game()
+
+        assert.are.same({"blueprint-generation.max-rate", "403.2"}, generator.max_rate_message("sulfur"))
+      end)
+
+      it("refuses a plant whose connections that take a fluid are not at its top and bottom rows", function()
+        local middle = {
+          {production_type = "input", position = {x = -1, y = -1}, direction = north}, {production_type = "input", position = {x = 0, y = -1}, direction = north},
+          {production_type = "output", position = {x = -1, y = 1}, direction = south}, {production_type = "output", position = {x = 1, y = 1}, direction = south},
+        }
+        _G.prototypes = sulfur_game(nil, {machines = {
+          ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
+          ["chemical-plant"] = a_machine{crafting_speed = 1, size = 3, pipe_boxes = middle},
+        }})
+
+        local result, error_message = generator.generate("sulfur", 100)
+
+        assert.are.same({nil, {"blueprint-generation.error-fluid-row-pipes", {"item-name.sulfur"}}}, {result, error_message})
+      end)
+
+      it("refuses a recipe that puts both fluids in the same box", function()
+        local clash = sulfur{ingredients = {fluid_of(30, "water"), fluid_of(30, "petroleum-gas")}}
+        clash.ingredients[1].fluidbox_index, clash.ingredients[2].fluidbox_index = 1, 1
+        _G.prototypes = sulfur_game(clash)
+
+        local result, error_message = generator.generate("sulfur", 100)
+
+        assert.are.same({nil, {"blueprint-generation.error-fluid-row-pipes", {"item-name.sulfur"}}}, {result, error_message})
+      end)
+
+      it("stops with a message when the game has no pipe to ground", function()
+        _G.prototypes = sulfur_game(nil, {missing_entities = {"pipe-to-ground"}})
+
+        local result, error_message = generator.generate("sulfur", 100)
+
+        assert.are.same({nil, {"blueprint-generation.error-missing-prototype"}}, {result, error_message})
+      end)
+
+      it("refuses a recipe whose two fluids the config has a recipe for each, which the layout does not take", function()
+        _G.prototypes = sulfur_game()
+        config.fluid_makers["water"] = "basic-oil-processing"
+
+        local result, error_message = generator.generate("sulfur", 100)
+        config.fluid_makers["water"] = nil
+
+        assert.are.same({nil, {"blueprint-generation.error-fluid-row-recipe", {"item-name.sulfur"}}}, {result, error_message})
+      end)
+
+      it("names the first fluid when no recipe makes either, which have to come from somewhere", function()
+        local raw = sulfur{ingredients = {fluid_of(30, "water"), fluid_of(30, "crude-oil")}}
+        _G.prototypes = sulfur_game(raw)
+
+        local result, error_message = generator.generate("sulfur", 100)
+
+        assert.are.same({nil, {"blueprint-generation.error-no-recipe", {"fluid-name.water"}}}, {result, error_message})
+      end)
+
+      it("refuses a plant that burns fuel, whose poles beside the inserters do not reach it", function()
+        _G.prototypes = sulfur_game(nil, {machines = {
+          ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
+          ["chemical-plant"] = a_machine{crafting_speed = 1, size = 3, pipe_boxes = PLANT_BOXES, burns = {"chemical"}},
+        }})
+
+        local result, error_message = generator.generate("sulfur", 100)
+
+        assert.are.same({nil, {"blueprint-generation.error-unsupported-energy"}}, {result, error_message})
+      end)
+
+      it("does not take a recipe with no ingredients at all for a plant", function()
+        local free = sulfur{ingredients = {}}
+        _G.prototypes = sulfur_game(free)
+
+        local ok = pcall(generator.generate, "sulfur", 100)
+
+        assert.is_true(ok)
+      end)
+
+      it("refuses a recipe that takes three fluids", function()
+        local three = sulfur{ingredients = {fluid_of(30, "water"), fluid_of(30, "petroleum-gas"), fluid_of(1, "crude-oil")}}
+        _G.prototypes = sulfur_game(three)
+
+        local result, error_message = generator.generate("sulfur", 100)
+
+        assert.are.same({nil, {"blueprint-generation.error-fluid-single-input", {"item-name.sulfur"}}}, {result, error_message})
+      end)
+    end)
+
     it("stops with a message when the game gives a connection of the plant that is not at the edge of the machine", function()
       local wrong = {{production_type = "input", position = {x = 0, y = 0}, direction = north}}
       _G.prototypes = fuel_game{machines = {

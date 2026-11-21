@@ -328,6 +328,7 @@ classDiagram
     direction
     recipe
     type
+    mirror
   }
   class Entity {
     entity_number
@@ -538,6 +539,8 @@ classDiagram
     machine_speed
     maker_speed
     rate_per_minute
+    makers_that_fit
+    plants_that_fit
     lane_items_per_minute
     inserter_items_per_minute
   }
@@ -547,10 +550,13 @@ classDiagram
     output_per_minute
     fluid_per_minute
     source_per_minute
+    supplied
   }
   class FluidPlantBuild {
     inserter
     belt
+    pipe_to_ground
+    underground_reach
   }
 
   FluidRowRequest *-- Recipe : recipe

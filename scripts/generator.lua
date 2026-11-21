@@ -40,7 +40,7 @@ local function read_recipe(prototype)
   for _, ingredient in ipairs(prototype.ingredients) do
     local list = ({item = recipe.ingredients, fluid = recipe.fluids})[ingredient.type]
     assert(list, "generator: the game gives an ingredient of the type " .. tostring(ingredient.type) .. " in the recipe " .. prototype.name)
-    list[#list + 1] = {name = ingredient.name, amount = ingredient.amount}
+    list[#list + 1] = {name = ingredient.name, amount = ingredient.amount, fluidbox_index = ingredient.fluidbox_index}
   end
   for index, product in ipairs(prototype.products) do
     -- get_product_amount gives the average amount per craft, which also covers
@@ -364,6 +364,7 @@ end
 ---@field item_name string  the product of the recipe the player picked (the first, when it makes several, which the planner refuses)
 ---@field kind "belts"|"fluid_row"|"fluid_plant"  how it is laid out: columns of machines with belts, a row of machines that make a fluid from a fluid (see scripts/fluid_row.lua), or plants that make an item from a fluid with the machines that make the fluid (see scripts/fluid_plant.lua)
 ---@field maker? bpgen.StageData  of a fluid plant: the step that makes the fluid the recipe takes
+---@field made_fluid? string  of a fluid plant: the fluid of its recipe that the step makes (the other one, if it takes two, comes in by a pipe)
 ---@field rate_per_minute number  how much of it
 ---@field root bpgen.StageData  the step of the recipe the player picked, with the steps below it that make what it takes
 ---@field names bpgen.SharedNames  the prototype names every column builds with
@@ -571,27 +572,48 @@ local function read_maker(fluid_name, force)
   return read_root(prototype, force)
 end
 
--- How the recipe is laid out: "fluid_row" for one that makes a fluid, "fluid_plant" for one that makes an item from one fluid and
--- nothing else, with the step that makes the fluid, and "belts" for the others. Nil and the message for the player when the
--- fluid of a plant has no recipe to make it.
+-- The fluid of a plant's recipe that a row of machines makes: the one the config names a recipe for (the first one, which then has no
+-- recipe to make it, when it names none). Nil when it names a recipe for more than one.
+---@param recipe bpgen.Recipe
+---@return string|nil
+local function made_fluid_of(recipe)
+  local made = {}
+  for _, fluid in ipairs(recipe.fluids) do
+    if config.fluid_makers[fluid.name] then
+      made[#made + 1] = fluid.name
+    end
+  end
+  if #made > 1 then
+    return nil
+  end
+  return made[1] or recipe.fluids[1].name
+end
+
+-- How the recipe is laid out: "fluid_row" for one that makes a fluid, "fluid_plant" for one that makes an item from one fluid or
+-- two and nothing else, with the step that makes the fluid and the name of the fluid it makes, and "belts" for the others. Nil
+-- and the message for the player when the fluid of a plant has no recipe to make it.
 ---@param root bpgen.StageData  the step of the recipe the player picked
 ---@param force LuaForce|nil
 ---@return string|nil kind
 ---@return bpgen.StageData|nil maker
----@return LocalisedString|nil error_message
+---@return LocalisedString|string|nil error_message_or_fluid  the message when there is no kind, the name of the fluid for a plant
 local function read_layout(root, force)
   local recipe = root.recipe
   if recipe.products[1].type == "fluid" then
     return "fluid_row"
   end
-  if #recipe.ingredients > 0 or #recipe.fluids ~= 1 then
+  if #recipe.ingredients > 0 or #recipe.fluids == 0 or #recipe.fluids > 2 then
     return "belts"
   end
-  local maker, problem = read_maker(recipe.fluids[1].name, force)
+  local fluid = made_fluid_of(recipe)
+  if not fluid then
+    return nil, nil, messages.fluid_row_recipe(root.item)
+  end
+  local maker, problem = read_maker(fluid, force)
   if not maker then
     return nil, nil, problem
   end
-  return "fluid_plant", maker
+  return "fluid_plant", maker, fluid
 end
 
 -- The job for this request, or nil and the message for the player when the recipe is
@@ -619,9 +641,10 @@ local function read_job(recipe_name, rate_per_minute, force)
   end
   local kind, maker, layout_problem = read_layout(root, force)
   if not kind then
-    return nil, layout_problem
+    return nil, layout_problem --[[@as LocalisedString]]
   end
   job.item_name, job.rate_per_minute, job.root, job.kind, job.maker = root.item, rate_per_minute, root, kind, maker
+  job.made_fluid = kind == "fluid_plant" and layout_problem --[[@as string]] or nil
   return add_unlocked(job --[[@as bpgen.Job]], force) -- what the force has unlocked is added just below
 end
 
@@ -913,17 +936,65 @@ local function poles_fit_plant(names, size)
   return layout.pole_reach(names.pole_supply_distance) >= math.floor(size / 2) and size <= names.pole_wire_distance
 end
 
+-- Whether the index is one of the two input fluid boxes of a plant that takes two fluids.
+---@param index integer|nil
+---@return boolean
+local function is_input_box(index)
+  return index == 1 or index == 2
+end
+
+-- Which input fluid box of a plant takes each fluid of a recipe that takes two: the one the recipe says (`fluidbox_index`) or else the
+-- order of the fluid. Gives the box of the fluid the machines of the row make (`made`) and of the other one, or nil when they are
+-- not the two boxes. For a recipe of one fluid, nil.
+---@param recipe bpgen.Recipe
+---@param made string  the name of the fluid the machines of the row make
+---@return {source: integer, supplied: integer}|nil
+local function plant_fluid_boxes(recipe, made)
+  local boxes = {}
+  for order, fluid in ipairs(recipe.fluids) do
+    boxes[fluid.name == made and "source" or "supplied"] = fluid.fluidbox_index or order
+  end
+  local source, supplied = boxes.source, boxes.supplied
+  if is_input_box(source) and is_input_box(supplied) and source ~= supplied then
+    return boxes
+  end
+  return nil
+end
+
+-- The reason a plant that takes two fluids cannot be built, as a message for the player, or nil: the recipe puts the fluids in the
+-- two input boxes of the machine, whose connections are at its top and bottom rows, and the game has the pipe that goes under.
+---@param job bpgen.Job
+---@param stage bpgen.StageData  the step of the recipe picked
+---@param rows bpgen.FluidRows
+---@return LocalisedString|nil
+local function two_fluids_problem(job, stage, rows)
+  local size = stage.machine_size --[[@as integer]]
+  local boxes = read_fluid_boxes(prototypes.entity[stage.machine], size)
+  if not (plant_fluid_boxes(stage.recipe, job.made_fluid --[[@as string]]) and fluid_plant.two_input_rows(boxes, size, rows)) then
+    return messages.fluid_row_pipes(stage.item)
+  end
+  if not all_exist({job.names.pipe_to_ground}) then
+    return messages.missing_prototype()
+  end
+  return nil
+end
+
 -- The reason the plant itself (not the machines that make its fluid) cannot be built, as a message for the player, or nil: its
 -- recipe, the rows of its pipe connections, and the pole.
 ---@param job bpgen.Job
 ---@param stage bpgen.StageData  the step of the recipe picked
 ---@return LocalisedString|nil
 local function plant_problem(job, stage)
-  if not planner.is_fluid_recipe(stage.recipe, stage.item) then
+  if not planner.is_plant_recipe(stage.recipe, stage.item) then
     return messages.fluid_row_recipe(stage.item)
   end
-  if not fluid_rows_of(stage) then
+  local rows = fluid_rows_of(stage)
+  if not rows then
     return messages.fluid_row_pipes(stage.item)
+  end
+  local problem = #stage.recipe.fluids == 2 and two_fluids_problem(job, stage, rows)
+  if problem then
+    return problem
   end
   if not poles_fit_plant(job.names, stage.machine_size --[[@as integer]]) then
     return messages.fluid_row_poles(stage.item)
@@ -936,9 +1007,8 @@ end
 ---@param job bpgen.Job
 ---@return LocalisedString|nil
 local function fluid_plant_problem(job)
-  local fluid = job.root.recipe.fluids[1].name
-  if job.maker.item ~= fluid then
-    return messages.fluid_row_recipe(fluid)
+  if job.maker.item ~= job.made_fluid then
+    return messages.fluid_row_recipe(job.made_fluid --[[@as string]])
   end
   return fluid_row_problem(job, job.maker) or fluid_row_machine_problem(job, job.root) or plant_problem(job, job.root)
 end
@@ -1486,6 +1556,20 @@ local function add_row_panel(job, entities, entries, stage)
   end
 end
 
+-- Puts a display panel with the second fluid of plants that take two beside the start of its pipe, as `add_row_panel` does for the one
+-- the machines that make the fluid take (the fluid is raw: it comes in by a pipe, as ore comes in by a belt).
+---@param job bpgen.Job
+---@param entities bpgen.Entity[]
+---@param entries {input: {x: integer, y: integer}, output: {x: integer, y: integer}, supplied?: {x: integer, y: integer}}
+---@param plan bpgen.FluidPlantPlan
+local function add_supplied_panel(job, entities, entries, plan)
+  if job.row_labels and entries.supplied then
+    fluid_row.add_panels(entities, {input = entries.supplied, output = entries.output}, {
+      panel = job.names.panel, machine = job.root.machine, input = plan.supplied[1].name,
+    })
+  end
+end
+
 -- A row of machines for the fluid asked for, and the words for the player: what the row makes and takes a minute.
 ---@param job bpgen.Job
 ---@return bpgen.Generated|nil
@@ -1537,8 +1621,10 @@ local function fluid_plant_build(job, plan)
     plants = {
       machine = stage.machine, recipe = stage.recipe.name, size = size, count = plan.plants, boxes = boxes,
       rows = assert(fluid_row.rows_of(boxes, size), "generator: the pipe connections of the machine are not in rows"),
+      fluid_boxes = #stage.recipe.fluids == 2 and plant_fluid_boxes(stage.recipe, job.made_fluid --[[@as string]]) or nil,
     },
     inserter = job.names.inserter, belt = job.names.belt,
+    pipe_to_ground = job.names.pipe_to_ground, underground_reach = config.pipe_to_ground_reach,
   }
 end
 
@@ -1555,13 +1641,17 @@ local function generate_fluid_plant(job)
   end
   local entities, entries = fluid_plant.build(fluid_plant_build(job, plan))
   add_row_panel(job, entities, entries, job.maker)
+  add_supplied_panel(job, entities, entries, plan)
   add_row_lights(job, entities)
-  local taken = {name = job.maker.recipe.fluids[1].name, amount = plan.source_per_minute}
+  local taken = {{name = job.maker.recipe.fluids[1].name, amount = plan.source_per_minute}}
+  for _, supplied in ipairs(plan.supplied) do
+    taken[#taken + 1] = supplied
+  end
   local summaries = {{machines = plan.makers, machine = job.maker.machine}, {machines = plan.plants, machine = job.root.machine}}
   return {
     entities = entities,
     description = messages.description(job.item_name, plan.output_per_minute, summaries),
-    message = messages.ready(plan.output_per_minute, job.root.item, {taken}, nil),
+    message = messages.ready(plan.output_per_minute, job.root.item, taken, nil),
   }
 end
 

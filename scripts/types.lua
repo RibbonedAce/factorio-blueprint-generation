@@ -84,6 +84,7 @@
 ---@field name string
 ---@field amount number
 ---@field type? "item"|"fluid"  of a product, as the game gives it (the ingredients are in two lists by type)
+---@field fluidbox_index? integer  of a fluid ingredient, the input fluid box it goes in when the recipe says (1-based among the input boxes)
 
 ---@class bpgen.Recipe  the numbers the planner needs, copied from a recipe prototype
 ---@field name? string  the name of the recipe prototype, which a blueprint uses to set the recipe of an assembling machine
@@ -257,6 +258,7 @@
 ---@field direction? defines.direction
 ---@field recipe? string  the recipe of an assembling machine
 ---@field type? "input"|"output"  of an underground belt: the entrance or the exit
+---@field mirror? boolean  the machine is flipped across the way it faces (the fluid connections of a chemical plant swap sides)
 
 ---@class bpgen.Entity : bpgen.NewEntity  one entity of a blueprint, as Factorio's set_blueprint_entities wants it
 ---@field entity_number integer
@@ -385,6 +387,7 @@
 ---@field per_plant number  what one plant makes
 ---@field fluid_per_minute number  what all the plants take
 ---@field source_per_minute number  what the machines that make the fluid take, of the fluid they take
+---@field supplied bpgen.RawAmount[]  the other fluids the plants take, which come in by a pipe: what all of them take a minute
 
 ---@class bpgen.FluidRowPlan
 ---@field machines integer
@@ -407,7 +410,9 @@
 -- What `fluid_plant.build` is asked for: the machines that make a fluid, and the machines that make an item from it.
 ---@class bpgen.FluidPlantBuild
 ---@field makers bpgen.FluidRowBuild  the machines that make the fluid, which stand turned (see `fluid_row.turn`)
----@field plants {machine: string, recipe: string, size: integer, count: integer, boxes: bpgen.FluidBox[], rows: bpgen.FluidRows}  the machines that make the item from it, with the pipe connections they have as they face north
+---@field plants {machine: string, recipe: string, size: integer, count: integer, boxes: bpgen.FluidBox[], rows: bpgen.FluidRows, fluid_boxes?: {source: integer, supplied: integer}}  the machines that make the item from it, with the pipe connections they have as they face north; `fluid_boxes` for a recipe that takes a second fluid too: the input boxes (1-based among the input ones) that take the fluid the machines make and the one that comes in
+---@field pipe_to_ground? string  prototype name of the underground pipe, for plants that take two fluids
+---@field underground_reach? integer  the most tiles an underground pipe spans, from one end to the other, for plants that take two fluids
 ---@field inserter string  prototype name of the inserter beside each plant
 ---@field belt string  prototype name of the belt the inserters drop on
 

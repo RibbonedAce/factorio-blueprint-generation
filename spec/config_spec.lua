@@ -42,6 +42,16 @@ describe("config", function()
     end)
   end)
 
+  describe("the length of the pipes", function()
+    it("takes an underground pipe to span 10 tiles at most, as the wiki says", function()
+      assert.are.equal(10, config.pipe_to_ground_reach)
+    end)
+
+    it("takes a run of pipes to span 320 tiles at most, as the wiki says", function()
+      assert.are.equal(320, config.fluid_pipeline_tiles)
+    end)
+  end)
+
   describe("the tiers of the poles and the belts", function()
     it("has the small pole for every blueprint and the medium pole once it is unlocked", function()
       local poles = config.entities.poles
@@ -74,6 +84,10 @@ describe("config", function()
 
     it("has solid fuel from petroleum gas, which takes a fluid and nothing else", function()
       assert.is_true(config.recipes["solid-fuel-from-petroleum-gas"])
+    end)
+
+    it("has sulfur, which takes petroleum gas and water", function()
+      assert.is_true(config.recipes["sulfur"])
     end)
 
     it("has no recipe of solid fuel from the other oils, which the mod does not make", function()

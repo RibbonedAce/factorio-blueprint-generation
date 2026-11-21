@@ -10,6 +10,7 @@
 ---@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, panel: string, pipe: string, pipe_to_ground: string, pump: string, poles: string[], belts: bpgen.BeltTier[]}
 ---@field recipes table<string, true>  the recipes a player may ask for, by recipe name; the rate is of the product of the recipe
 ---@field fluid_makers table<string, string>  the recipe that makes a fluid that another recipe takes, by the name of the fluid, built as a row of machines ahead of it
+---@field pipe_to_ground_reach integer  the most tiles an underground pipe spans, from one end to the other
 ---@field fluid_pipeline_tiles integer  how many tiles a run of pipes may span along a side, the machines that are fed from it with it
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
 ---@field default_recipe string  the recipe the window starts with; must be a key of `recipes`
@@ -154,6 +155,9 @@ local config = {
     -- of them (see `fluid_makers`), a pipe that is the one the fluid goes out of the one and comes in to the other, and the item on a
     -- belt (see scripts/fluid_plant.lua). The rate is of the item. The other recipes of solid fuel take light oil and heavy oil.
     ["solid-fuel-from-petroleum-gas"] = true,
+    -- The same with a second fluid that nothing makes (water: raw, like an ore, it comes in by a pipe with a display panel): the plants
+    -- are mirrored in turn, with two columns of pipes beside them (see scripts/fluid_plant.lua).
+    ["sulfur"] = true,
   },
 
   -- The recipe that makes a fluid that a recipe takes, for a recipe that takes one fluid and nothing else: a row of the machines of
@@ -163,6 +167,10 @@ local config = {
   fluid_makers = {
     ["petroleum-gas"] = "basic-oil-processing",
   },
+
+  -- How far apart the two ends of an underground pipe may be: the wiki (Pipe to ground) says "the maximum distance at which an
+  -- underground pipe can connect is 10 tiles, resulting in a gap of 9 tiles in between".
+  pipe_to_ground_reach = 10,
 
   -- How far a run of pipes without a pump may spread: the wiki (Fluid system) says a pipeline "has no limit on its flow" and carries
   -- fluid instantly "as long as the pipeline is not too long", which it takes as outside an area of 320 x 320 tiles. A row of machines

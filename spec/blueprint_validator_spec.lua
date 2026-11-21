@@ -749,6 +749,39 @@ describe("blueprint validator", function()
       end)
     end)
 
+    describe("machines that take two fluids, a box for each, and that are mirrored", function()
+      local grid = require("scripts.grid")
+
+      -- The machine is 3 x 3, with a connection of the box "left" above its column 0 and one of "right" above its column 2 as it faces
+      -- north; the tap gives into the network "left", through a pipe at tile (0, 0).
+      local function catalog_with_duo()
+        local catalog = a_catalog{}
+        catalog["duo"] = {kind = "machine", width = 3, height = 3, fluid_connections = {left = {{x = 0, y = -1}}, right = {{x = 2, y = -1}}}}
+        catalog["tap"] = {kind = "machine", width = 1, height = 1, fluid_connections = {output = {{x = 0, y = 1}}}, networks = {output = "left"}}
+        return catalog
+      end
+
+      -- The duo's top-left tile is (0, 2), so its connections are the tiles (0, 1) and (2, 1).
+      local function duo_with_tap(mirror)
+        return blueprint_of(
+          {name = "tap", position = grid.position(0, -1)}, pipe(0, 0), pipe(0, 1), pipe(2, 1),
+          {name = "duo", position = grid.position(0, 2, 3, 3), mirror = mirror}
+        )
+      end
+
+      it("reports no problems when the pipe of a box is at its connection and the network of its name is the one the pipe is in", function()
+        local problems = validator.validate(duo_with_tap(nil), catalog_with_duo())
+
+        assert.are.same({}, problems)
+      end)
+
+      it("puts the connections of a mirrored machine on the other column, which takes the box 'left' away from the pipe of the tap", function()
+        local problems = validator.validate(duo_with_tap(true), catalog_with_duo())
+
+        assert.has_item_containing("is at a left fluid connection that another network of pipes than the first one's serves", problems)
+      end)
+    end)
+
     it("reports a machine that faces south, which its connections are not worked out for", function()
       local entities = blueprint_of(machine(defines.direction.south), pipe(0, 0), pipe(0, 2))
 

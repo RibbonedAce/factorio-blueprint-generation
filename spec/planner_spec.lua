@@ -2535,6 +2535,60 @@ describe("planner", function()
       end)
     end)
 
+    describe("a recipe that takes a second fluid, which comes in by a pipe", function()
+      -- 30 water and 30 gas make 2 sulfur in 1 s: a machine of speed 1 makes 120 a minute and takes 1,800 gas, held to the 90 that its
+      -- inserter moves (the request's): 45 crafts a minute, from 1,350 gas and 1,350 water.
+      local sulfur = {
+        energy = 1, ingredients = {}, fluids = {{name = "water", amount = 30}, {name = "gas", amount = 30}}, products = {builders.amount_of(2, "sulfur")},
+      }
+
+      local function sulfur_request(changes)
+        return request(builders.merged({product = "sulfur", recipe = sulfur, rate_per_minute = 100}, changes))
+      end
+
+      it("takes the recipes of one fluid or two, and of nothing else", function()
+        local three = builders.merged(sulfur, {fluids = {{name = "a", amount = 1}, {name = "b", amount = 1}, {name = "c", amount = 1}}})
+        local with_item = builders.merged(sulfur, {ingredients = {builders.amount_of(1, "iron-plate")}})
+
+        assert.are.same({true, true, false, false}, {
+          planner.is_plant_recipe(sulfur, "sulfur"), planner.is_plant_recipe(fuel, "fuel"), planner.is_plant_recipe(three, "sulfur"),
+          planner.is_plant_recipe(with_item, "sulfur"),
+        })
+      end)
+
+      it("takes the gas of the machines that make it by the fluid they make, whichever the recipe lists first", function()
+        local plan = planner.plan_fluid_plant(sulfur_request{})
+
+        -- 100 / 90: 2 machines, 180 a minute, from 2,700 gas: 5 machines of 540, from 6,000 crude oil
+        assert.are.same({2, 5, 180, 90, 2700}, {plan.plants, plan.makers, plan.output_per_minute, plan.per_plant, plan.fluid_per_minute})
+        assert.near(6000, plan.source_per_minute, 1e-6)
+      end)
+
+      it("says how much of the fluid that comes in the plants take a minute", function()
+        local plan = planner.plan_fluid_plant(sulfur_request{})
+
+        assert.are.same({{name = "water", amount = 2700}}, plan.supplied) -- 2 machines x 45 crafts x 30
+      end)
+
+      it("says no fluid comes in for a recipe of one fluid", function()
+        local plan = planner.plan_fluid_plant(request{rate_per_minute = 100})
+
+        assert.are.same({}, plan.supplied)
+      end)
+
+      it("limits the rate by the lane of the belt, as for one fluid: 5 machines of 90", function()
+        assert.are.equal(450, planner.max_fluid_plant_rate(sulfur_request{}))
+      end)
+
+      it("refuses a recipe that takes none of the fluid the machines of the row make", function()
+        local no_gas = builders.merged(sulfur, {fluids = {{name = "water", amount = 30}, {name = "oil", amount = 30}}})
+
+        local plan, reason = planner.plan_fluid_plant(sulfur_request{recipe = no_gas})
+
+        assert.are.same({nil, "unsupported-recipe"}, {plan, reason})
+      end)
+    end)
+
     describe("max_fluid_plant_rate", function()
       it("gives what the machines make that a lane carries, 15 of 30", function()
         assert.are.equal(450, planner.max_fluid_plant_rate(request{}))

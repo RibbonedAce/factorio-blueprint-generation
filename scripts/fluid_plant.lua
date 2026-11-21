@@ -22,6 +22,25 @@
 --
 -- The machines that make the fluid have to take it in from the side that turns to the west when they are turned (see
 -- `fluid_row.turn`), which puts the pipe that takes the fluid out on the east.
+--
+-- A recipe that takes a second fluid, one that nothing makes in the blueprint (sulfur: petroleum gas and water), has two more
+-- columns of pipes between that pipe (G) and the plants. A plant takes one fluid at its top row and the other at its bottom row, and
+-- every second plant is mirrored, so that the bottom row of a plant and the top row of the next take the same fluid. The column next
+-- to the plants (i) has a pipe at the rows of both, and the pipes of the fluid that comes in (W) are joined by a pipe to ground
+-- (n: the end whose open side is north, s: the one whose open side is south) past those of the fluid the machines make, which
+-- have a pipe beside them in the column (o) beside the pipe G, and so are joined to it. Drawn for three plants (the top row of
+-- the first takes W), from the north, the fluid W coming in at the top of the column i:
+--
+--   x:   G o i  plants
+--
+--        = . W  [C C C]
+--        = . n  [C C C]
+--        = o o  [C C C]     the rows of the pipes o: the bottom of the first plant and the top of the second take the fluid
+--        = o o  [C C C]     the machines make
+--        = . s  [C C C]
+--        = . W  [C C C]
+--        = . W  [C C C]
+--        = . n  [C C C]
 
 local entity_list = require("scripts.entity_list")
 local fluid_row = require("scripts.fluid_row")
@@ -73,16 +92,55 @@ local function input_rows(plants, facing)
   return assert(first, "fluid_plant: the plants take no fluid"), last
 end
 
--- The plants, one under the other from the top, east of the column of the pipe.
+-- The row from the top of a plant turned to face the way given, not mirrored, of the one pipe connection of a fluid box, or nil when
+-- the box has not one, or it is not on the side that faces the pipes.
+---@param box bpgen.FluidBox
+---@param size integer
+---@param facing defines.direction
+---@return integer|nil
+local function connection_row(box, size, facing)
+  local at = #box.tiles == 1 and turned(box.tiles[1], size, facing)
+  if at and at.x == -1 then
+    return at.y
+  end
+  return nil
+end
+
+-- The row from the top of a plant, with the plant turned to face the way given and not mirrored, of the pipe connection of each of
+-- its two fluid boxes that take a fluid, in the order of the boxes. Nil when the boxes are not two with one connection each, at the
+-- top row and the bottom row of the side that faces the pipes (what a recipe with two fluids needs).
+---@param boxes bpgen.FluidBox[]
+---@param size integer
+---@param plant_rows bpgen.FluidRows  the rows of the pipes of the plant, from `fluid_row.rows_of`: which way it faces comes of them
+---@return integer[]|nil
+function fluid_plant.two_input_rows(boxes, size, plant_rows)
+  local facing, rows = facing_of(plant_rows, size), {}
+  for _, box in ipairs(boxes) do
+    if box.production_type == "input" then
+      local row = connection_row(box, size, facing)
+      if not row then
+        return nil
+      end
+      rows[#rows + 1] = row
+    end
+  end
+  if #rows == 2 and math.min(rows[1], rows[2]) == 0 and math.max(rows[1], rows[2]) == size - 1 then
+    return rows
+  end
+  return nil
+end
+
+-- The plants, one under the other from the top, in a column. A plant is mirrored when `mirrored(index)` says so (index from 0).
 ---@param entities bpgen.Entity[]
 ---@param plants table
----@param column integer  of the pipe
+---@param column integer  of the plants
 ---@param facing defines.direction
-local function add_plants(entities, plants, column, facing)
+---@param mirrored? fun(index: integer): boolean
+local function add_plants(entities, plants, column, facing, mirrored)
   for index = 0, plants.count - 1 do
     entity_list.append(entities, {
-      name = plants.machine, recipe = plants.recipe, direction = facing,
-      position = grid.position(column + 1, index * plants.size, plants.size, plants.size),
+      name = plants.machine, recipe = plants.recipe, direction = facing, mirror = mirrored and mirrored(index) or nil,
+      position = grid.position(column, index * plants.size, plants.size, plants.size),
     })
   end
 end
@@ -108,6 +166,64 @@ local function fill_pipes(entities, pipe, column, first, last)
       entity_list.append(entities, {name = pipe, position = grid.position(column, row)})
     end
   end
+end
+
+-- A pipe in each of the rows `first` to `last` of a column.
+---@param entities bpgen.Entity[]
+---@param pipe string
+---@param column integer
+---@param first integer
+---@param last integer
+local function add_pipes(entities, pipe, column, first, last)
+  for row = first, last do
+    entity_list.append(entities, {name = pipe, position = grid.position(column, row)})
+  end
+end
+
+-- The rows of the pipes at the connections that take the same fluid, the stretch `index` (from 0 to the number of plants): the
+-- top row of the first plant alone, the bottom row of a plant with the top row of the next, and the bottom row of the last alone.
+---@param plants table
+---@param index integer
+---@return integer first
+---@return integer last
+local function stretch_rows(plants, index)
+  local size = plants.size
+  if index == 0 then
+    return 0, 0
+  end
+  if index == plants.count then
+    return index * size - 1, index * size - 1
+  end
+  return index * size - 1, index * size
+end
+
+-- The pipes of the fluid that comes in and the fluid the machines make, in the two columns beside the plants (see the head of this
+-- file): the stretches of an even index take the one that comes in. Gives the tile where the one that comes in enters.
+---@param entities bpgen.Entity[]
+---@param request bpgen.FluidPlantBuild
+---@param column integer  of the pipe that takes the fluid out of the machines that make it
+---@return {x: integer, y: integer}
+local function add_two_fluid_pipes(entities, request, column)
+  local plants, pipe, ground = request.plants, request.makers.pipe, request.pipe_to_ground
+  assert(ground, "fluid_plant: no pipe to ground for the pipes of two fluids")
+  assert(2 * plants.size - 3 <= request.underground_reach, "fluid_plant: a pipe to ground does not reach under the pipes of the other fluid")
+  local outer, inner = column + 1, column + 2
+  fill_pipes(entities, pipe, column, 0, plants.count * plants.size - 1)
+  for index = 0, plants.count do
+    local first, last = stretch_rows(plants, index)
+    add_pipes(entities, pipe, inner, first, last)
+    if index % 2 == 1 then
+      add_pipes(entities, pipe, outer, first, last)
+    else
+      if index >= 2 then
+        entity_list.append(entities, {name = ground, position = grid.position(inner, first - 1), direction = south})
+      end
+      if index + 2 <= plants.count then
+        entity_list.append(entities, {name = ground, position = grid.position(inner, last + 1), direction = north})
+      end
+    end
+  end
+  return {x = inner, y = 0}
 end
 
 -- An inserter beside the middle of each plant, picking up from it (an inserter faces the side it picks up from), and the belt it
@@ -174,13 +290,36 @@ local function join_poles(entities, request, groups)
   })
 end
 
+-- The plants and the pipes beside them, east of the pipe that takes the fluid out of the machines that make it (the column given).
+-- Gives the column of the plants.
+---@param entities bpgen.Entity[]
+---@param entries table  `fluid_plant.build`'s: gets the entry of the fluid that comes in, for plants that take two
+---@param request bpgen.FluidPlantBuild
+---@param column integer
+---@param facing defines.direction
+---@return integer
+local function add_plants_and_pipes(entities, entries, request, column, facing)
+  local plants = request.plants
+  local first, last = input_rows(plants, facing)
+  if not plants.fluid_boxes then
+    add_plants(entities, plants, column + 1, facing)
+    fill_pipes(entities, request.makers.pipe, column, first, (plants.count - 1) * plants.size + last)
+    return column + 1
+  end
+  local rows = assert(fluid_plant.two_input_rows(plants.boxes, plants.size, plants.rows), "fluid_plant: the connections of what the plants take are not at their top and bottom rows")
+  local source_on_top = rows[plants.fluid_boxes.source] == 0
+  add_plants(entities, plants, column + 3, facing, function(index) return source_on_top == (index % 2 == 0) end)
+  entries.supplied = add_two_fluid_pipes(entities, request, column)
+  return column + 3
+end
+
 -- The entities of the machines that make the fluid (turned, see `fluid_row.build` and `fluid_row.turn`) and of the plants east of
 -- the pipe that takes the fluid out, with the inserters, the belt and the poles, numbered, with the blueprint starting at its
 -- top-left tile (0, 0). Gives the tiles where the pipes of the machines that make the fluid start and end too: the plants take
 -- from the second.
 ---@param request bpgen.FluidPlantBuild
 ---@return bpgen.Entity[]
----@return {input: {x: integer, y: integer}, output: {x: integer, y: integer}} entries
+---@return {input: {x: integer, y: integer}, output: {x: integer, y: integer}, supplied?: {x: integer, y: integer}} entries  `supplied`: where the fluid that comes in beside the machines that make the fluid starts, for plants that take two
 function fluid_plant.build(request)
   local makers, plants = request.makers, request.plants
   assert(makers.rows.inputs == makers.size, "fluid_plant: the machines that make the fluid have to take it in on the side that turns to the west")
@@ -189,11 +328,9 @@ function fluid_plant.build(request)
   local entities, entries = fluid_row.build(makers)
   fluid_row.turn(entities, entries, makers.machine, makers.size)
   local maker_poles = poles_of(entities, makers.pole)
-  local column, facing = entries.output.x, facing_of(plants.rows, plants.size)
-  local first, last = input_rows(plants, facing)
-  add_plants(entities, plants, column, facing)
-  fill_pipes(entities, makers.pipe, column, first, (plants.count - 1) * plants.size + last)
-  local inserter_column = column + 1 + plants.size
+  local column = entries.output.x
+  local plant_column = add_plants_and_pipes(entities, entries, request, column, facing_of(plants.rows, plants.size))
+  local inserter_column = plant_column + plants.size
   add_items_out(entities, request, inserter_column)
   join_poles(entities, request, {maker_poles, add_plant_poles(entities, request, inserter_column)})
   return entities, entries

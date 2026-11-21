@@ -15,9 +15,10 @@
 --   6. every wire joins two poles within reach, and all poles form one network
 --   7. every machine that takes a fluid has a pipe at its fluid connection, every end of an underground pipe meets the other
 --      end, and the machines and the pipes form one network with a free end to bring the fluid to
---   8. every machine with fixed fluid connections (the catalog's `fluid_connections`) has a pipe at each, the pipes at what the
---      machines take are one network and those at what they give another, every pipe is in one of the two, and each has an
---      open end
+--   8. every machine with fixed fluid connections (the catalog's `fluid_connections`, turned for a machine that faces east or west and
+--      flipped for a mirrored one) has a pipe at each, the pipes at the connections of one name (what the machines take, what they
+--      give, or a box of a machine that takes two fluids) are one network and those of another name another, every pipe is in one
+--      of them, and each has an open end
 --
 -- Deliberately NOT checked (the owner's decision): belt paths, because later
 -- layouts may bend belts to save space, and item flow, because that is a
@@ -532,8 +533,12 @@ end
 --------------------------------------------------------------------------------
 
 -- A connection tile of a machine facing north, as it is when the machine faces the way it does: turned a quarter clockwise for
--- east and a quarter counterclockwise for west.
-local function turned_tile(tile, direction, width)
+-- east and a quarter counterclockwise for west. A mirrored machine is flipped across the way it faces first, which swaps its left
+-- and right sides (the columns of a machine facing north).
+local function turned_tile(tile, direction, width, mirror)
+  if mirror then
+    tile = {x = width - 1 - tile.x, y = tile.y}
+  end
   if direction == defines.direction.east then
     return width - 1 - tile.y, tile.x
   end
@@ -543,14 +548,15 @@ local function turned_tile(tile, direction, width)
   return tile.x, tile.y
 end
 
--- The pipe-like entity at each pipe connection of a machine of one flow ("input" or "output"), and a problem for each connection
--- that has none. The tiles are from the top-left tile of the machine facing north, and are turned for one that faces east or west.
+-- The pipe-like entity at each pipe connection of a machine of one flow (a key of its `fluid_connections`: "input" and "output", or
+-- the names of boxes), and a problem for each connection that has none. The tiles are from the top-left tile of the machine
+-- facing north, and are turned for one that faces east or west, and flipped for one that is mirrored.
 local function pieces_at(index, machine, flow, problems)
   local description = index.catalog[machine.name]
   local left, top = machine.position.x - description.width / 2, machine.position.y - description.height / 2
   local pieces = {}
   for _, tile in ipairs(description.fluid_connections[flow] or {}) do
-    local x, y = turned_tile(tile, machine.direction, description.width)
+    local x, y = turned_tile(tile, machine.direction, description.width, machine.mirror)
     local piece = index.by_tile[tile_key(left + x, top + y)]
     if piece and is_pipe(index, piece) then
       pieces[#pieces + 1] = piece
@@ -584,16 +590,27 @@ local function check_facing(machine, problems)
   end
 end
 
+-- The names of the flows of a machine's fluid connections, in alphabetical order.
+local function flows_of(description)
+  local flows = {}
+  for flow in pairs(description.fluid_connections) do
+    flows[#flows + 1] = flow
+  end
+  table.sort(flows)
+  return flows
+end
+
 -- The pipes of such machines, by the network they are in: the ones at the connections of what they take are in the network
 -- "input", and the ones at those of what they give in the network "output", unless the catalog entry says another name for one
--- (`networks = {input = "gas"}`), so that machines can take what others give.
+-- (`networks = {input = "gas"}`), so that machines can take what others give. A machine that takes two fluids names its boxes
+-- (`fluid_connections = {water = ..., gas = ...}`), and each is a network of that name.
 local function connection_pieces(index, problems)
   local groups = {labels = {}, pieces = {}}
   for _, machine in ipairs(usable_of_kind(index, "machine")) do
     local description = index.catalog[machine.name]
     if description.fluid_connections then
       check_facing(machine, problems)
-      for _, flow in ipairs({"input", "output"}) do
+      for _, flow in ipairs(flows_of(description)) do
         add_group(groups, (description.networks or {})[flow] or flow, pieces_at(index, machine, flow, problems))
       end
     end
@@ -668,8 +685,8 @@ end
 ---@field needs_power? boolean
 ---@field reach? number  inserters only: tiles away that it picks up and drops, 1 by default (2 for a long-handed inserter); underground pipes: how far apart their two ends may be, 10 by default
 ---@field fluid_input? boolean|table<string, true>  machines only: it takes a fluid in, in the middle of the side it faces, for every recipe (true) or for the recipes named
----@field fluid_connections? {input: {x: integer, y: integer}[], output: {x: integer, y: integer}[]}  machines only: the tiles of its pipe connections, from its top-left tile as it faces north (it has to), those of the fluids it takes and those of the fluids it gives
----@field networks? {input?: string, output?: string}  machines with `fluid_connections` only: the name of the network of pipes that the connections of each flow are in, "input" and "output" unless said (a machine that takes what another gives names the same network)
+---@field fluid_connections? table<string, {x: integer, y: integer}[]>  machines only: the tiles of its pipe connections, from its top-left tile as it faces north (it has to), by flow: those of the fluids it takes (`input`) and those of the fluids it gives (`output`), or a name for each box (a machine that takes two fluids)
+---@field networks? table<string, string>  machines with `fluid_connections` only: the name of the network of pipes that the connections of each flow are in, the name of the flow unless said (a machine that takes what another gives names the same network)
 ---@field supply_radius? number  poles only
 ---@field wire_reach? number  poles only
 

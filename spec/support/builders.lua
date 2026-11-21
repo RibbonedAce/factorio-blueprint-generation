@@ -415,7 +415,7 @@ function builders.a_recipe(options)
   local function as_prototype_items(amounts)
     local items = {}
     for _, amount in ipairs(amounts) do
-      items[#items + 1] = {type = amount.type or "item", name = amount.name, amount = amount.amount}
+      items[#items + 1] = {type = amount.type or "item", name = amount.name, amount = amount.amount, fluidbox_index = amount.fluidbox_index}
     end
     return items
   end
