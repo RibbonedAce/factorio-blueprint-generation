@@ -4201,6 +4201,190 @@ describe("generator", function()
       assert.are.same({"blueprint-generation.max-rate", "390"}, generator.max_rate_message("solid-fuel-from-petroleum-gas"))
     end)
 
+    describe("plastic bar, which takes coal, an item that comes in by a belt like an ore", function()
+      -- 1 coal and 20 petroleum gas make 2 plastic bars in 1 s.
+      local plastic = a_recipe{
+        energy = 1, ingredients = {amount_of(1, "coal"), fluid_of(20, "petroleum-gas")}, products = {amount_of(2, "plastic-bar")}, category = "chemistry",
+      }
+
+      local function plastic_game(changes)
+        return fuel_game(builders.merged({recipes = {["basic-oil-processing"] = gas, ["plastic-bar"] = plastic}}, changes))
+      end
+
+      local function plastic_catalog()
+        return catalog()
+      end
+
+      it("builds the refineries and the plants, with an inserter on each side of each plant", function()
+        _G.prototypes = plastic_game()
+
+        local result = generator.generate("plastic-bar", 100)
+
+        -- 50.4 a minute from each plant (what the inserter moves): 2 plants, 100.8 a minute, from 1,008 gas, which takes 2 refineries
+        local plants = builders.entities_named(result.entities, "chemical-plant")
+        assert.are.same({"plastic-bar", 2, 2}, {plants[1].recipe, #plants, count_named(result.entities, "oil-refinery")})
+        assert.are.same({4, 0}, {count_named(result.entities, "inserter"), count_named(result.entities, "long-handed-inserter")}) -- the coal in and the plastic out
+        assert.are.equal(8, count_named(result.entities, "pipe-to-ground")) -- two ends at each of two connections of each plant
+      end)
+
+      it("builds a blueprint that passes the validator: the inserters between the belts and the plants, powered", function()
+        _G.prototypes = plastic_game()
+
+        local result = generator.generate("plastic-bar", 300)
+
+        assert.are.same({}, validator.validate(result.entities, plastic_catalog()))
+      end)
+
+      it("says what it makes, the crude oil and the coal it takes in a minute, and names the belt of coal that comes in", function()
+        _G.prototypes = plastic_game()
+
+        local result = generator.generate("plastic-bar", 100)
+
+        -- 2 plants make 100.8 a minute, from 50.4 coal and 1,008 gas, which takes 2,240 crude oil
+        assert.are.same({"blueprint-generation.generated-with-belts", "100.8", {"item-name.plastic-bar"}}, {result.message[1], result.message[2], result.message[3]})
+        assert.are.same({"blueprint-generation.raw-amount", "2240", {"fluid-name.crude-oil"}}, result.message[4][2])
+        assert.are.same({"blueprint-generation.raw-amount", "50.4", {"item-name.coal"}}, result.message[4][4])
+        assert.are.same({"", {"item-name.coal"}}, result.message[5])
+      end)
+
+      it("puts a display panel with the crude oil and one with the coal at the top left corner, once the force has unlocked the panel", function()
+        _G.prototypes = plastic_game()
+
+        local result = generator.generate("plastic-bar", 100, fake_force{})
+
+        local icons = {}
+        for _, panel in ipairs(builders.entities_named(result.entities, "display-panel")) do
+          icons[#icons + 1] = panel.icon.type .. " " .. panel.icon.name
+        end
+        table.sort(icons)
+        assert.are.same({"fluid crude-oil", "item coal"}, icons)
+      end)
+
+      it("keeps the tile west of the entry of each free of lamps, the belt of coal on the top row", function()
+        _G.prototypes = plastic_game()
+        local lights = require("scripts.lights")
+        local add, told = lights.add, nil
+        lights.add = function(entities, options) told = options return add(entities, options) end
+
+        generator.generate("plastic-bar", 100, fake_force{})
+        lights.add = add
+
+        assert.are.same({{x = -1, y = -1}, {x = -1, y = -4}}, told.free_tiles)
+      end)
+
+      describe("with plants of 3 x 3 or 7 x 7 and the poles of the game", function()
+        -- plants of 7 x 7 take their fluid at the columns 1 and 5 above them, from the tiles of the machine at its top edge
+        local seven = {
+          {production_type = "input", position = {x = -2, y = -3}, direction = north}, {production_type = "input", position = {x = 2, y = -3}, direction = north},
+          {production_type = "output", position = {x = -2, y = 3}, direction = south}, {production_type = "output", position = {x = 2, y = 3}, direction = south},
+        }
+
+        local function with_poles(size, supply, wire)
+          return plastic_game{
+            small_pole_supply_distance = supply, small_pole_wire_distance = wire,
+            machines = {
+              ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
+              ["chemical-plant"] = a_machine{crafting_speed = 1, size = size, pipe_boxes = size == 7 and seven or PLANT_BOXES},
+            },
+          }
+        end
+
+        local function outcome(size, supply, wire)
+          _G.prototypes = with_poles(size, supply, wire)
+          local result, error_message = generator.generate("plastic-bar", 100)
+          return result and "built" or error_message[1]
+        end
+
+        it("builds plants of 3 x 3 with the small pole", function()
+          assert.are.equal("built", outcome(3, 2.5, 7.5))
+        end)
+
+        it("refuses plants of 3 x 3 whose pole reaches less than the two tiles a row of machines needs", function()
+          assert.are.equal("blueprint-generation.error-fluid-row-poles", outcome(3, 0.5, 7.5))
+        end)
+
+        it("refuses plants of 3 x 3 when the wire is shorter than a plant is wide", function()
+          assert.are.equal("blueprint-generation.error-fluid-row-poles", outcome(3, 2.5, 2.5))
+        end)
+
+        it("builds plants of 7 x 7 whose pole reaches 3 tiles and whose wire is as long as a plant is wide", function()
+          assert.are.equal("built", outcome(7, 3.5, 7))
+        end)
+
+        it("refuses plants of 7 x 7 whose pole reaches only 2 tiles", function()
+          assert.are.equal("blueprint-generation.error-fluid-row-poles", outcome(7, 2.5, 9))
+        end)
+
+        it("builds plants of 7 x 7 that take no item with a pole that reaches 3 tiles, and refuses one that reaches 2", function()
+          local function fuel_outcome(supply)
+            _G.prototypes = fuel_game{
+              small_pole_supply_distance = supply, small_pole_wire_distance = 7,
+              machines = {
+                ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
+                ["chemical-plant"] = a_machine{crafting_speed = 1, size = 7, pipe_boxes = seven},
+              },
+            }
+            local result, error_message = generator.generate("solid-fuel-from-petroleum-gas", 100)
+            return result and "built" or error_message[1]
+          end
+
+          assert.are.same({"built", "blueprint-generation.error-fluid-row-poles"}, {fuel_outcome(3.5), fuel_outcome(2.5)})
+        end)
+      end)
+
+      it("limits the plants by the coal the belt carries, both lanes of it, when each takes a lot", function()
+        -- 40 coal and 2 plastic a craft: the input inserter that moves X coal a minute makes X / 20 plastic, so the belt of 900 coal a minute
+        -- feeds 900 / X plants and the lane of the output belt a great many
+        local hungry = a_recipe{
+          energy = 1, ingredients = {amount_of(40, "coal"), fluid_of(20, "petroleum-gas")}, products = {amount_of(2, "plastic-bar")}, category = "chemistry",
+        }
+        _G.prototypes = plastic_game{recipes = {["basic-oil-processing"] = gas, ["plastic-bar"] = hungry}}
+
+        local result = generator.generate("plastic-bar", 1)
+        local per_plant_coal = tonumber(result.message[4][4][2])
+        local max = generator.max_rate_message("plastic-bar")
+
+        -- plants of the same coal each: 900 / coal, whole, and what they make
+        local plants = math.floor(900 / per_plant_coal + 1e-9)
+        assert.are.same("blueprint-generation.max-rate", max[1])
+        assert.are.equal(tostring(plants * per_plant_coal / 20), max[2])
+      end)
+
+      it("names the most one blueprint makes", function()
+        _G.prototypes = plastic_game()
+
+        local max = generator.max_rate_message("plastic-bar")
+
+        -- the inserter of the test game moves 50.4 a minute: 8 plants, whose coal the belt carries easily
+        assert.are.same({"blueprint-generation.max-rate", "403.2"}, max)
+      end)
+
+      it("stops with a message when the game has no pipe to ground, which takes the gas under the belt of coal", function()
+        _G.prototypes = plastic_game{missing_entities = {"pipe-to-ground"}}
+
+        local result, error_message = generator.generate("plastic-bar", 100)
+
+        assert.are.same({nil, {"blueprint-generation.error-missing-prototype"}}, {result, error_message})
+      end)
+
+      it("does not need the long-handed inserter", function()
+        _G.prototypes = plastic_game{missing_entities = {"long-handed-inserter"}}
+
+        local result = generator.generate("plastic-bar", 100)
+
+        assert.is_not_nil(result)
+      end)
+
+      it("goes on belts, as before, when the item is made and not raw", function()
+        local made = a_recipe{energy = 1, ingredients = {amount_of(1, "iron-plate"), fluid_of(20, "petroleum-gas")}, products = {amount_of(1, "widget")}, category = "chemistry"}
+        _G.prototypes = plastic_game{recipes = {["basic-oil-processing"] = gas, ["widget"] = made, ["iron-plate"] = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}}}
+
+        local result = generator.generate("widget", 10)
+
+        assert.is_nil(result)
+      end)
+    end)
+
     describe("sulfur, which takes a second fluid that nothing makes: water, which comes in by a pipe", function()
       -- 30 water and 30 petroleum gas make 2 sulfur in 1 s, listed water first. The boxes of the plant are as above: the first takes
       -- the first fluid of the recipe (the second when `fluidbox_index` says so).

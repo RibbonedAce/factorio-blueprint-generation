@@ -9,7 +9,7 @@
 -- inserters, beside the top row of each plant. A pole of the machines that make the fluid is wired to the poles of the plants
 -- (with a pole between them where a wire does not reach). Drawn for two refineries (R) and three plants (C), with a pipe =, a pole
 -- + and an inserter }, from the north (the crude oil pipe at the column 1 goes up to the west edge above the blueprint, where it
--- comes in, as `scripts/pipe_entries.lua` has it):
+-- comes in, as `scripts/corner_entries.lua` has it):
 --
 --   x:   0 1  2 3 4 5 6   7  8 9 10  11 12
 --
@@ -23,6 +23,20 @@
 --
 -- The machines that make the fluid have to take it in from the side that turns to the west when they are turned (see
 -- `fluid_row.turn`), which puts the pipe that takes the fluid out on the east.
+--
+-- A recipe that takes an item too (plastic bar: coal and petroleum gas) has a belt of the item on the west side of the plants, where
+-- their pipe connections are, as the concrete columns have it (see scripts/layout.lua): from the pipe that takes the gas out (G) east
+-- are a column where the underground pipes start (T), the belt that brings the item in (b), and a column of inserters next to the plants
+-- (i). At each connection row of a plant an underground pipe goes from i, where its end opens east to the plant, under the belt to T, where
+-- its end opens west to G. An inserter at the row of i that has no connection takes the item from the belt into the plant, and a pole in
+-- T at that row powers it. The east side is as for plants that take no item (an inserter and the belt the product leaves by). Drawn for
+-- plants with the connections at their top and bottom rows (u is the end of an underground pipe, < an inserter that faces west):
+--
+--   G T b i  plants
+--
+--   = u v u  [C C C]     the connection at the top row
+--   = + v <  [C C C]     the pole, the belt and the inserter
+--   = u v u  [C C C]     the connection at the bottom row
 --
 -- A recipe that takes a second fluid, one that nothing makes in the blueprint (sulfur: petroleum gas and water), has two more
 -- columns of pipes between that pipe (G) and the plants. A plant takes one fluid at its top row and the other at its bottom row, and
@@ -47,7 +61,7 @@ local entity_list = require("scripts.entity_list")
 local fluid_row = require("scripts.fluid_row")
 local grid = require("scripts.grid")
 local layout = require("scripts.layout")
-local pipe_entries = require("scripts.pipe_entries")
+local corner_entries = require("scripts.corner_entries")
 local poles = require("scripts.poles")
 
 local fluid_plant = {}
@@ -261,6 +275,76 @@ local function add_plant_poles(entities, request, column)
   return added
 end
 
+-- The rows from the top of a plant of the pipe connections of what it takes, turned to face the way given, once each, from the top.
+---@param plants table  `bpgen.FluidPlantBuild.plants`
+---@param facing defines.direction
+---@return integer[]
+local function connection_rows(plants, facing)
+  local seen, rows = {}, {}
+  for _, box in ipairs(plants.boxes) do
+    for _, tile in ipairs(box.production_type == "input" and box.tiles or {}) do
+      local row = turned(tile, plants.size, facing).y
+      if not seen[row] then
+        seen[row] = true
+        rows[#rows + 1] = row
+      end
+    end
+  end
+  table.sort(rows)
+  return rows
+end
+
+-- The row of a plant, as near the middle as there is one, that has no pipe connection, where the inserter that takes the item in stands.
+---@param plants table
+---@param rows integer[]  the connection rows
+---@return integer
+local function inserter_row(plants, rows)
+  local taken = {}
+  for _, row in ipairs(rows) do
+    taken[row] = true
+  end
+  local middle = math.floor(plants.size / 2)
+  for distance = 0, plants.size do
+    for _, row in ipairs({middle - distance, middle + distance}) do
+      if row >= 0 and row < plants.size and not taken[row] then
+        return row
+      end
+    end
+  end
+  error("fluid_plant: every row of a plant has a pipe connection, so no inserter can take the item in")
+end
+
+-- The west side of plants that take an item too (see the head of this file): the belt that brings the item in, the underground
+-- pipes that take the fluid under it to each connection of each plant, the inserter at each plant, and the poles that power them, in
+-- the column T, wired to each other. Gives the poles.
+---@param entities bpgen.Entity[]
+---@param request bpgen.FluidPlantBuild
+---@param column integer  of G, the pipe that takes the fluid out of the machines that make it
+---@param facing defines.direction
+---@return bpgen.Entity[]
+local function add_item_side(entities, request, column, facing)
+  local plants, added = request.plants, {}
+  local rows = connection_rows(plants, facing)
+  local row = inserter_row(plants, rows)
+  assert(request.pipe_to_ground, "fluid_plant: no pipe to ground for the pipes under the belt of the item")
+  for index = 0, plants.count - 1 do
+    local top = index * plants.size
+    for _, at in ipairs(rows) do
+      entity_list.append(entities, {name = request.pipe_to_ground, position = grid.position(column + 3, top + at), direction = east})
+      entity_list.append(entities, {name = request.pipe_to_ground, position = grid.position(column + 1, top + at), direction = west})
+    end
+    entity_list.append(entities, {name = request.inserter, position = grid.position(column + 3, top + row), direction = west})
+    added[#added + 1] = entity_list.append(entities, {name = request.makers.pole, position = grid.position(column + 1, top + row)})
+  end
+  for index = 2, #added do
+    layout.connect_poles(added[index - 1], added[index])
+  end
+  for y = 0, plants.count * plants.size - 1 do
+    entity_list.append(entities, {name = request.belt, position = grid.position(column + 2, y), direction = south})
+  end
+  return added
+end
+
 -- The poles of the entities with the name.
 ---@param entities bpgen.Entity[]
 ---@param name string
@@ -287,23 +371,33 @@ local function join_poles(entities, request, groups)
     local across = sizes[entity.name] or 1
     return across, across
   end)
-  poles.join({{groups[1][1]}, {groups[2][1]}}, {
+  local firsts = {}
+  for _, group in ipairs(groups) do
+    firsts[#firsts + 1] = {group[1]}
+  end
+  poles.join(firsts, {
     entities = entities, taken = taken, pole = request.makers.pole, wire_distance = request.makers.pole_wire_distance,
   })
 end
 
--- The pipes that take the start of each pipe that comes in to the west edge, above the blueprint (see scripts/pipe_entries.lua): the one
--- that brings the fluid to the machines that make it, and the one of the fluid that comes in beside the plants, if there is one.
+-- The pipes and the belt that take the start of what comes in to the west edge, above the blueprint (see scripts/corner_entries.lua):
+-- the pipe that brings the fluid to the machines that make it, the one of the fluid that comes in beside the plants, if there is one,
+-- and the belt of the item the plants take, if they take one.
 ---@param entities bpgen.Entity[]
----@param pipe string
+---@param request bpgen.FluidPlantBuild
 ---@param entries table  `fluid_plant.build`'s
----@return bpgen.PipeStart[]
-local function add_inlets(entities, pipe, entries)
-  local starts = {{key = "input", x = entries.input.x, y = entries.input.y}}
+---@param belt_column? integer  of the belt that brings the item in, for plants that take one
+---@return bpgen.EntryStart[]
+local function add_inlets(entities, request, entries, belt_column)
+  local pipe = request.makers.pipe
+  local starts = {{key = "input", x = entries.input.x, y = entries.input.y, name = pipe}}
   if entries.supplied then
-    starts[#starts + 1] = {key = "supplied", x = entries.supplied.x, y = entries.supplied.y}
+    starts[#starts + 1] = {key = "supplied", x = entries.supplied.x, y = entries.supplied.y, name = pipe}
   end
-  return pipe_entries.add(entities, pipe, starts)
+  if belt_column then
+    starts[#starts + 1] = {key = "items", x = belt_column, y = 0, name = request.belt, belt = true}
+  end
+  return corner_entries.add(entities, starts)
 end
 
 -- The plants and the pipes beside them, east of the pipe that takes the fluid out of the machines that make it (the column given).
@@ -318,9 +412,10 @@ local function add_plants_and_pipes(entities, entries, request, column, facing)
   local plants = request.plants
   local first, last = input_rows(plants, facing)
   if not plants.fluid_boxes then
-    add_plants(entities, plants, column + 1, facing)
+    local plant_column = column + (request.item_input and 4 or 1)
+    add_plants(entities, plants, plant_column, facing)
     fill_pipes(entities, request.makers.pipe, column, first, (plants.count - 1) * plants.size + last)
-    return column + 1
+    return plant_column
   end
   local rows = assert(fluid_plant.two_input_rows(plants.boxes, plants.size, plants.rows), "fluid_plant: the connections of what the plants take are not at their top and bottom rows")
   local source_on_top = rows[plants.fluid_boxes.source] == 0
@@ -335,7 +430,7 @@ end
 -- from the second.
 ---@param request bpgen.FluidPlantBuild
 ---@return bpgen.Entity[]
----@return {input: {x: integer, y: integer}, output: {x: integer, y: integer}, supplied?: {x: integer, y: integer}, inlets: bpgen.PipeStart[]} entries  `supplied`: where the fluid that comes in beside the machines that make the fluid starts, for plants that take two; `inlets`: the entries of the pipes that come in, at the west edge (keys "input" and "supplied"), see scripts/pipe_entries.lua
+---@return {input: {x: integer, y: integer}, output: {x: integer, y: integer}, supplied?: {x: integer, y: integer}, inlets: bpgen.EntryStart[]} entries  `supplied`: where the fluid that comes in beside the machines that make the fluid starts, for plants that take two; `inlets`: the entries of the pipes that come in, at the west edge (keys "input", "supplied", "items"), see scripts/corner_entries.lua
 function fluid_plant.build(request)
   local makers, plants = request.makers, request.plants
   assert(makers.rows.inputs == makers.size, "fluid_plant: the machines that make the fluid have to take it in on the side that turns to the west")
@@ -345,11 +440,16 @@ function fluid_plant.build(request)
   fluid_row.turn(entities, entries, makers.machine, makers.size)
   local maker_poles = poles_of(entities, makers.pole)
   local column = entries.output.x
-  local plant_column = add_plants_and_pipes(entities, entries, request, column, facing_of(plants.rows, plants.size))
-  entries.inlets = add_inlets(entities, makers.pipe, entries)
+  local facing = facing_of(plants.rows, plants.size)
+  local plant_column = add_plants_and_pipes(entities, entries, request, column, facing)
   local inserter_column = plant_column + plants.size
+  entries.inlets = add_inlets(entities, request, entries, request.item_input and column + 2 or nil)
   add_items_out(entities, request, inserter_column)
-  join_poles(entities, request, {maker_poles, add_plant_poles(entities, request, inserter_column)})
+  local groups = {maker_poles, add_plant_poles(entities, request, inserter_column)}
+  if request.item_input then
+    groups[3] = add_item_side(entities, request, column, facing)
+  end
+  join_poles(entities, request, groups)
   return entities, entries
 end
 

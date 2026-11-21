@@ -158,6 +158,9 @@ local config = {
     -- The same with a second fluid that nothing makes (water: raw, like an ore, it comes in by a pipe with a display panel): the plants
     -- are mirrored in turn, with two columns of pipes beside them (see scripts/fluid_plant.lua).
     ["sulfur"] = true,
+    -- A recipe that takes one fluid and one raw item (coal): the item comes in by a belt at the top left corner, like an ore, to an
+    -- inserter at each plant, which drops what it makes with a long-handed inserter over that belt.
+    ["plastic-bar"] = true,
   },
 
   -- The recipe that makes a fluid that a recipe takes, for a recipe that takes one fluid and nothing else: a row of the machines of

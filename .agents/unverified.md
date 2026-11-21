@@ -144,3 +144,10 @@ What the specs cannot show: each section lists what a feature assumes about the 
 
 - That a pipe whose end is open to the west at the west edge, in a row above the blueprint, is where a player joins a pipe, as the open end of the water inlet of the concrete columns is, and that the pipes up and along join no other pipe: the rows are three apart, so none touches another, and the validator checks that the two networks stay apart.
 - That the display panel above each entry (the labels of the belts that come in) is where a player looks for it, and does not touch a pipe.
+
+## Unverified in the plastic bar iteration (5av)
+
+- The recipe `plastic-bar` (1 coal and 20 petroleum gas for 2 plastic bars in 1 s, category `chemistry`): recalled, not read from the game; the specs make it up. It takes its one fluid in the plant's input box that the recipe gives (the pipe runs past both boxes, so which does not matter).
+- That an underground pipe whose end opens east at the tile beside a plant's pipe connection, and whose other end opens west two tiles away beside the gas pipe, joins the plant's connection to that pipe under the belt of coal and the inserter column, as the concrete columns' underground pipes do (the pair is checked by the validator, not by the game), and that the inserter between the two ends at the row without a connection takes the coal from the belt into the plant.
+- That the plant's input inserter keeps up with what the plant takes: its swings are counted as `planner.inserter_items_per_minute` for the plain inserter (a plastic bar needs half a coal), which holds the plant down when it moves less than the plant would take.
+- That coal on the belt that comes in rides both lanes and the inserters take it from either (the belt of the item carries twice a lane), as the belts of raw items do.

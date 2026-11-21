@@ -2518,10 +2518,18 @@ describe("planner", function()
         assert.are.same({2, 3, 120, 60, 1200}, {plan.plants, plan.makers, plan.output_per_minute, plan.per_plant, plan.fluid_per_minute})
       end)
 
-      it("refuses a recipe that takes an item as well", function()
-        local with_item = builders.merged(fuel, {ingredients = {builders.amount_of(1, "iron-plate")}})
+      it("refuses a recipe that takes two items", function()
+        local with_items = builders.merged(fuel, {ingredients = {builders.amount_of(1, "iron-plate"), builders.amount_of(1, "copper-plate")}})
 
-        local plan, reason = planner.plan_fluid_plant(request{recipe = with_item})
+        local plan, reason = planner.plan_fluid_plant(request{recipe = with_items})
+
+        assert.are.same({nil, "unsupported-recipe"}, {plan, reason})
+      end)
+
+      it("refuses a recipe that takes an item and two fluids", function()
+        local too_much = builders.merged(fuel, {ingredients = {builders.amount_of(1, "coal")}, fluids = {{name = "gas", amount = 20}, {name = "water", amount = 5}}})
+
+        local plan, reason = planner.plan_fluid_plant(request{recipe = too_much})
 
         assert.are.same({nil, "unsupported-recipe"}, {plan, reason})
       end)
@@ -2532,6 +2540,92 @@ describe("planner", function()
         local plan, reason = planner.plan_fluid_plant(request{maker_recipe = other})
 
         assert.are.same({nil, "unsupported-recipe"}, {plan, reason})
+      end)
+    end)
+
+    describe("a recipe that takes an item, which comes in by a belt", function()
+      -- 1 coal and 20 gas make 2 plastic in 1 s: a machine of speed 1 makes 120 a minute, held to the 90 that its output inserter moves
+      -- (the request's); the input inserter moves 50 coal a minute, which is 100 plastic, and the belt that brings the coal in carries 900.
+      local plastic = {
+        energy = 1, ingredients = {builders.amount_of(1, "coal")}, fluids = {{name = "gas", amount = 20}}, products = {builders.amount_of(2, "plastic")},
+      }
+
+      local function plastic_request(changes)
+        return request(builders.merged({
+          product = "plastic", recipe = plastic, rate_per_minute = 100, input_inserter_items_per_minute = 50, item_belt_items_per_minute = 900,
+        }, changes))
+      end
+
+      it("takes the recipes of one item and one fluid", function()
+        assert.is_true(planner.is_plant_recipe(plastic, "plastic"))
+      end)
+
+      it("makes what the output inserter moves and takes the item and the fluid for it", function()
+        local plan = planner.plan_fluid_plant(plastic_request{})
+
+        -- 90 a minute from each: 45 crafts, 45 coal and 900 gas. 100 / 90 is 2 machines, which take 1,800 gas: 4 machines of 540
+        assert.are.same({2, 4, 180, 90, 1800}, {plan.plants, plan.makers, plan.output_per_minute, plan.per_plant, plan.fluid_per_minute})
+        assert.are.same({{name = "coal", amount = 90}}, plan.items)
+        assert.are.same({}, plan.supplied)
+      end)
+
+      it("makes less when the input inserter cannot bring the item fast enough, 30 coal a minute being 60 plastic", function()
+        local plan = planner.plan_fluid_plant(plastic_request{input_inserter_items_per_minute = 30})
+
+        assert.are.same({2, 60, {{name = "coal", amount = 60}}}, {plan.plants, plan.per_plant, plan.items}) -- 100 / 60 is 2 machines, of 30 coal
+      end)
+
+      describe("for a recipe that takes 2 coal and makes 3 plastic in a craft", function()
+        local heavy = {
+          energy = 1, ingredients = {builders.amount_of(2, "coal")}, fluids = {{name = "gas", amount = 20}}, products = {builders.amount_of(3, "plastic")},
+        }
+
+        -- 180 a minute from the machine and from an output inserter of 1,000; the input inserter's 60 coal a minute is 30 crafts, 90 plastic
+        local function heavy_request(changes)
+          return plastic_request(builders.merged({recipe = heavy, inserter_items_per_minute = 1000, input_inserter_items_per_minute = 60}, changes))
+        end
+
+        it("counts what a craft takes and what it makes against the input inserter: 60 coal is 30 crafts, 90 plastic", function()
+          local plan = planner.plan_fluid_plant(heavy_request{rate_per_minute = 90})
+
+          assert.are.same({1, 90, {{name = "coal", amount = 60}}}, {plan.plants, plan.per_plant, plan.items})
+        end)
+
+        it("limits the plants by the coal the belt carries, 60 a minute for each machine: 100 is 1 machine", function()
+          local max = planner.max_fluid_plant_rate(heavy_request{item_belt_items_per_minute = 100})
+
+          assert.are.equal(90, max)
+        end)
+
+        it("allows the machines the belt carries the coal of: 180 is 3 machines of 60", function()
+          local max = planner.max_fluid_plant_rate(heavy_request{item_belt_items_per_minute = 180})
+
+          assert.are.equal(270, max)
+        end)
+      end)
+
+      it("has no item for a recipe of fluids only", function()
+        local plan = planner.plan_fluid_plant(request{rate_per_minute = 100})
+
+        assert.are.same({}, plan.items)
+      end)
+
+      it("limits the plants by what the belt that brings the item in carries: 100 a minute of coal is 2 machines of 45", function()
+        local plan, reason, max_rate = planner.plan_fluid_plant(plastic_request{item_belt_items_per_minute = 100, rate_per_minute = 200})
+
+        assert.are.same({nil, "rate-too-high", 180}, {plan, reason, max_rate})
+      end)
+
+      it("allows the most the belt carries", function()
+        local plan = planner.plan_fluid_plant(plastic_request{item_belt_items_per_minute = 100, rate_per_minute = 180})
+
+        assert.are.equal(2, plan.plants)
+      end)
+
+      it("stops when the input inserter is not given, which is a bug of the caller", function()
+        local build = function() planner.plan_fluid_plant(plastic_request{input_inserter_items_per_minute = false}) end
+
+        assert.has_error(build)
       end)
     end)
 

@@ -12,7 +12,7 @@ local inputs = require("scripts.inputs")
 local rows = require("scripts.rows")
 local fluid_row = require("scripts.fluid_row")
 local fluid_plant = require("scripts.fluid_plant")
-local pipe_entries = require("scripts.pipe_entries")
+local corner_entries = require("scripts.corner_entries")
 local labels = require("scripts.labels")
 local lights = require("scripts.lights")
 local messages = require("scripts.messages")
@@ -590,9 +590,21 @@ local function made_fluid_of(recipe)
   return made[1] or recipe.fluids[1].name
 end
 
+-- Whether the recipe of a step is one for plants: one fluid or two and nothing else, or one raw item and one fluid that the config has
+-- a recipe for (a recipe that takes a fluid that is raw and an item goes on belts, to a machine with a fluid input).
+---@param stage bpgen.StageData
+---@return boolean
+local function takes_fluids_for_plants(stage)
+  local items, fluids = #stage.recipe.ingredients, #stage.recipe.fluids
+  if items == 0 then
+    return fluids == 1 or fluids == 2
+  end
+  return items == 1 and fluids == 1 and #stage.suppliers == 0 and config.fluid_makers[stage.recipe.fluids[1].name] ~= nil
+end
+
 -- How the recipe is laid out: "fluid_row" for one that makes a fluid, "fluid_plant" for one that makes an item from one fluid or
--- two and nothing else, with the step that makes the fluid and the name of the fluid it makes, and "belts" for the others. Nil
--- and the message for the player when the fluid of a plant has no recipe to make it.
+-- two, or one fluid and one raw item, and nothing else, with the step that makes the fluid and the name of the fluid it makes, and
+-- "belts" for the others. Nil and the message for the player when the fluid of a plant has no recipe to make it.
 ---@param root bpgen.StageData  the step of the recipe the player picked
 ---@param force LuaForce|nil
 ---@return string|nil kind
@@ -603,7 +615,7 @@ local function read_layout(root, force)
   if recipe.products[1].type == "fluid" then
     return "fluid_row"
   end
-  if #recipe.ingredients > 0 or #recipe.fluids == 0 or #recipe.fluids > 2 then
+  if not takes_fluids_for_plants(root) then
     return "belts"
   end
   local fluid = made_fluid_of(recipe)
@@ -996,6 +1008,9 @@ local function plant_problem(job, stage)
   local problem = #stage.recipe.fluids == 2 and two_fluids_problem(job, stage, rows)
   if problem then
     return problem
+  end
+  if #stage.recipe.ingredients == 1 and not all_exist({job.names.pipe_to_ground}) then
+    return messages.missing_prototype()
   end
   if not poles_fit_plant(job.names, stage.machine_size --[[@as integer]]) then
     return messages.fluid_row_poles(stage.item)
@@ -1542,7 +1557,7 @@ end
 -- scripts/lights.lua). The tile a belt runs on to stays free, and so does the tile west of each entry of a pipe, where the player joins it.
 ---@param job bpgen.Job
 ---@param entities bpgen.Entity[]
----@param inlets bpgen.PipeStart[]  the entries of the pipes that come in
+---@param inlets bpgen.EntryStart[]  the entries of the pipes that come in
 local function add_row_lights(job, entities, inlets)
   if not job.lamp_supply_distance then
     return
@@ -1557,19 +1572,19 @@ local function add_row_lights(job, entities, inlets)
   })
 end
 
--- Puts a display panel with the fluid beside each entry of a pipe that comes in at the top left corner, as the belts that come in have
--- one, once the force has unlocked the display panel (see scripts/labels.lua).
+-- Puts a display panel beside each entry of a pipe or a belt that comes in at the top left corner, showing the fluid or the item, once
+-- the force has unlocked the display panel (see scripts/labels.lua).
 ---@param job bpgen.Job
 ---@param entities bpgen.Entity[]
----@param inlets bpgen.PipeStart[]  the entries
----@param fluids table<string, string>  the name of the fluid of each entry, by its key
+---@param inlets {key: string, x: integer, y: integer}[]  the entries; the one with the key "items" is a belt, the others are pipes
+---@param fluids table<string, string>  the name of the fluid or the item of each entry, by its key
 local function add_inlet_labels(job, entities, inlets, fluids)
   if not job.row_labels then
     return
   end
   local supplies, sizes = {}, row_sizes(job)
   for _, inlet in ipairs(inlets) do
-    supplies[#supplies + 1] = {x = inlet.x, y = inlet.y, item = fluids[inlet.key], type = "fluid"}
+    supplies[#supplies + 1] = {x = inlet.x, y = inlet.y, item = fluids[inlet.key], type = inlet.key == "items" and "item" or "fluid"}
   end
   labels.add(entities, supplies, {panel = job.names.panel, size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end})
 end
@@ -1587,7 +1602,7 @@ local function generate_fluid_row(job)
   end
   local entities, entries = fluid_row.build(fluid_row_build(job, stage, plan.machines))
   fluid_row.turn(entities, entries, stage.machine, machine_size_of(stage))
-  local inlets = pipe_entries.add(entities, job.names.pipe, {{key = "input", x = entries.input.x, y = entries.input.y}})
+  local inlets = corner_entries.add(entities, {{key = "input", x = entries.input.x, y = entries.input.y, name = job.names.pipe}})
   add_inlet_labels(job, entities, inlets, {input = stage.recipe.fluids[1].name})
   add_row_lights(job, entities, inlets)
   local crafts = plan.output_per_minute / planner.amount_made(stage.recipe, stage.item)
@@ -1603,13 +1618,18 @@ end
 ---@param job bpgen.Job
 ---@return bpgen.FluidPlantRequest
 local function fluid_plant_request(job)
-  local stage, maker, inserter = job.root, job.maker, job.inserter
+  local stage, maker = job.root, job.maker
+  local with_item = #stage.recipe.ingredients == 1
+  local plain = job.inserter
+  local lane = planner.lane_items_per_minute(job.belt_speed)
   return {
     product = stage.item, recipe = stage.recipe, machine_speed = stage.machine_speed,
     maker_recipe = maker.recipe, maker_speed = maker.machine_speed, rate_per_minute = job.rate_per_minute,
     makers_that_fit = machines_that_fit(maker), plants_that_fit = machines_that_fit(stage),
-    lane_items_per_minute = planner.lane_items_per_minute(job.belt_speed),
-    inserter_items_per_minute = planner.inserter_items_per_minute(inserter.rotation_speed, inserter.stack_size, job.belt_speed),
+    lane_items_per_minute = lane,
+    inserter_items_per_minute = planner.inserter_items_per_minute(plain.rotation_speed, plain.stack_size, job.belt_speed),
+    input_inserter_items_per_minute = with_item and planner.inserter_items_per_minute(plain.rotation_speed, plain.stack_size, job.belt_speed) or nil,
+    item_belt_items_per_minute = with_item and 2 * lane or nil,
   }
 end
 
@@ -1629,8 +1649,24 @@ local function fluid_plant_build(job, plan)
       fluid_boxes = #stage.recipe.fluids == 2 and plant_fluid_boxes(stage.recipe, job.made_fluid --[[@as string]]) or nil,
     },
     inserter = job.names.inserter, belt = job.names.belt,
+    item_input = #stage.recipe.ingredients == 1 or nil,
     pipe_to_ground = job.names.pipe_to_ground, underground_reach = config.pipe_to_ground_reach,
   }
+end
+
+-- What the blueprint takes a minute of what comes in: the fluid the machines of the row take, then the fluid that comes in beside the
+-- plants and the item, when they take them.
+---@param job bpgen.Job
+---@param plan bpgen.FluidPlantPlan
+---@return bpgen.RawAmount[]
+local function plant_raws(job, plan)
+  local taken = {{name = job.maker.recipe.fluids[1].name, amount = plan.source_per_minute}}
+  for _, list in ipairs({plan.supplied, plan.items}) do
+    for _, brought in ipairs(list) do
+      taken[#taken + 1] = brought
+    end
+  end
+  return taken
 end
 
 -- Plants for the item asked for, with the machines that make the fluid they take, and the words for the player: what the blueprint
@@ -1645,18 +1681,17 @@ local function generate_fluid_plant(job)
     return nil, messages.plan_problem(reason, max_rate)
   end
   local entities, entries = fluid_plant.build(fluid_plant_build(job, plan))
-  local supplied = plan.supplied[1]
-  add_inlet_labels(job, entities, entries.inlets, {input = job.maker.recipe.fluids[1].name, supplied = supplied and supplied.name})
+  local supplied, item = plan.supplied[1], plan.items[1]
+  add_inlet_labels(job, entities, entries.inlets, {
+    input = job.maker.recipe.fluids[1].name, supplied = supplied and supplied.name, items = item and item.name,
+  })
   add_row_lights(job, entities, entries.inlets)
-  local taken = {{name = job.maker.recipe.fluids[1].name, amount = plan.source_per_minute}}
-  for _, supplied in ipairs(plan.supplied) do
-    taken[#taken + 1] = supplied
-  end
+  local taken = plant_raws(job, plan)
   local summaries = {{machines = plan.makers, machine = job.maker.machine}, {machines = plan.plants, machine = job.root.machine}}
   return {
     entities = entities,
     description = messages.description(job.item_name, plan.output_per_minute, summaries),
-    message = messages.ready(plan.output_per_minute, job.root.item, taken, nil),
+    message = messages.ready(plan.output_per_minute, job.root.item, taken, item and {item.name} or nil),
   }
 end
 

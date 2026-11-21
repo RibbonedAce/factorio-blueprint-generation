@@ -603,13 +603,16 @@ function planner.is_fluid_recipe(recipe, product_name)
   return #recipe.ingredients == 0 and #recipe.fluids == 1 and is_supported(recipe, product_name)
 end
 
--- Whether the recipe takes one fluid or two and nothing else and makes the product (see `is_supported`): a plant of machines
--- makes an item from it, from the fluid that machines of a row make and a second that comes in by a pipe, if there is one.
+-- Whether the recipe takes one fluid or two, or one fluid and one item, and nothing else and makes the product (see `is_supported`): a
+-- plant of machines makes an item from it, from the fluid that machines of a row make and a second that comes in by a pipe, or an item
+-- that comes in by a belt, if there is one.
 ---@param recipe bpgen.Recipe
 ---@param product_name string
 ---@return boolean
 function planner.is_plant_recipe(recipe, product_name)
-  return #recipe.ingredients == 0 and (#recipe.fluids == 1 or #recipe.fluids == 2) and is_supported(recipe, product_name)
+  local items, fluids = #recipe.ingredients, #recipe.fluids
+  local fits = (items == 0 and (fluids == 1 or fluids == 2)) or (items == 1 and fluids == 1)
+  return fits and is_supported(recipe, product_name)
 end
 
 -- How many crafts one machine of a row makes in a minute: a craft takes recipe.energy / machine_speed seconds.
@@ -666,12 +669,18 @@ function planner.plan_fluid_row(request)
   return {machines = machines, output_per_minute = machines * per_machine, per_machine = per_machine}
 end
 
--- What one machine of a plant makes a minute: what it makes at full speed, held down to what its output inserter moves.
+-- What one machine of a plant makes a minute: what it makes at full speed, held down to what its output inserter moves and, when it
+-- takes an item, to what its input inserter brings (`request.input_inserter_items_per_minute`, of that item).
 ---@param request bpgen.FluidPlantRequest
 ---@return number
 local function plant_output_each(request)
-  local crafts_per_minute = 60 * request.machine_speed / request.recipe.energy
-  return math.min(crafts_per_minute * planner.amount_made(request.recipe, request.product), request.inserter_items_per_minute)
+  local made = planner.amount_made(request.recipe, request.product)
+  local output = math.min(60 * request.machine_speed / request.recipe.energy * made, request.inserter_items_per_minute)
+  local item = request.recipe.ingredients[1]
+  if not item then
+    return output
+  end
+  return math.min(output, assert(request.input_inserter_items_per_minute, "planner: no input inserter for the item of the plant") / item.amount * made)
 end
 
 -- How many crafts one machine of a plant makes in a minute, making `plant_output_each`.
@@ -722,14 +731,17 @@ local function fluid_plant_supported(request)
 end
 
 -- How many machines the plant has at most: as many as a lane of the output belt carries, as many as stand in the length one run of
--- pipes may have, and as many as the fluid that the most machines that make it (and fit) make. At least one.
+-- pipes may have, as many as the fluid that the most machines that make it (and fit) make, and, when the plant takes an item, as many
+-- as the belt that brings it in carries (`request.item_belt_items_per_minute`). At least one.
 ---@param request bpgen.FluidPlantRequest
 ---@return integer
 local function most_plants(request)
   local source = fluid_source_request(request)
   local by_lane = request.lane_items_per_minute / plant_output_each(request)
   local by_fluid = most_fluid_machines(source) * fluid_output_per_machine(source) / plant_fluid_each(request)
-  return math.max(1, math.floor(math.min(by_lane, by_fluid, request.plants_that_fit) + EPSILON))
+  local item = request.recipe.ingredients[1]
+  local by_item = item and request.item_belt_items_per_minute / (plant_crafts_each(request) * item.amount) or math.huge
+  return math.max(1, math.floor(math.min(by_lane, by_fluid, by_item, request.plants_that_fit) + EPSILON))
 end
 
 -- The most a plant of machines that make an item from a fluid can make a minute. Nil and the reason when a recipe is not one the
@@ -758,6 +770,15 @@ local function supplied_amounts(request, plants)
   return supplied
 end
 
+-- What `plants` machines take a minute of the item of the recipe, which comes in by a belt: a list of one, or none.
+---@param request bpgen.FluidPlantRequest
+---@param plants integer
+---@return bpgen.RawAmount[]
+local function item_amounts(request, plants)
+  local item = request.recipe.ingredients[1]
+  return {item and {name = item.name, amount = plants * plant_crafts_each(request) * item.amount} or nil}
+end
+
 -- How many machines a plant needs for `request.rate_per_minute` of the item (a whole number makes a little more than asked), and
 -- how many machines of the row that makes the fluid they take. Nil, the reason and the most a plant can make when the rate is more
 -- than a lane carries or the fluid allows.
@@ -782,7 +803,7 @@ function planner.plan_fluid_plant(request)
     plants = plants, makers = whole_machines(fluid / fluid_output_per_machine(source)), output_per_minute = plants * each,
     per_plant = each, fluid_per_minute = fluid,
     source_per_minute = fluid / planner.amount_made(maker, source.product) * maker.fluids[1].amount,
-    supplied = supplied_amounts(request, plants),
+    supplied = supplied_amounts(request, plants), items = item_amounts(request, plants),
   }
 end
 

@@ -266,6 +266,173 @@ describe("fluid_plant", function()
       end)
     end)
 
+    describe("for plants that take an item too, which comes in by a belt on the west side, with the pipes going under it", function()
+      -- G, the pipe that takes the gas out, is the column 7. East of it: the column 8, where the underground pipes start (the end that
+      -- opens west), the belt that brings the item in at the column 9, and the inserters at the column 10 with the ends that open east,
+      -- by the plants at the columns 11 to 13. East of the plants as for plants that take no item: the inserters at the column 14 and
+      -- the belt the product leaves by at the column 15.
+      local function with_item(makers, plants)
+        local asked = request(makers, plants)
+        asked.item_input = true
+        asked.pipe_to_ground, asked.underground_reach = NAMES.pipe_to_ground, 10
+        return asked
+      end
+
+      -- The tiles (column, row) of the entities with the name that are in a column, sorted by row.
+      local function in_column(entities, name, column)
+        local found = {}
+        for _, entity in ipairs(entities) do
+          local tile = grid.top_left_tile(entity.position)
+          if entity.name == name and tile.x == column and tile.y >= 0 then
+            found[#found + 1] = {tile.y, entity.direction}
+          end
+        end
+        table.sort(found, function(a, b) return a[1] < b[1] end)
+        return found
+      end
+
+      it("stands the plants east of the pipes and the belt of the item, one under the other from the top", function()
+        local entities = fluid_plant.build(with_item(2, 3))
+
+        assert.are.same({{11, 0}, {11, 3}, {11, 6}}, tiles_of(entities, "chemical-plant", 3))
+      end)
+
+      it("takes the gas under the belt at each connection of each plant: the end that opens east beside the plant, the end that opens west by G", function()
+        local entities = fluid_plant.build(with_item(2, 3))
+
+        local rows = {0, 2, 3, 5, 6, 8}
+        local near, far = in_column(entities, NAMES.pipe_to_ground, 10), in_column(entities, NAMES.pipe_to_ground, 8)
+        local expected_near, expected_far = {}, {}
+        for _, row in ipairs(rows) do
+          expected_near[#expected_near + 1] = {row, east}
+          expected_far[#expected_far + 1] = {row, west}
+        end
+        assert.are.same({expected_near, expected_far}, {near, far})
+      end)
+
+      it("puts an inserter that takes the item from the belt into each plant at its row without a connection, facing the belt", function()
+        local entities = fluid_plant.build(with_item(2, 3))
+
+        assert.are.same({{1, west}, {4, west}, {7, west}}, in_column(entities, NAMES.inserter, 10))
+      end)
+
+      it("runs the belt of the item south between the underground pipes and the inserters as far as the plants go, and the belt of the product east of the plants", function()
+        local entities = fluid_plant.build(with_item(2, 3))
+
+        local coal, product = in_column(entities, NAMES.belt, 9), in_column(entities, NAMES.belt, 15)
+        assert.are.same({range(0, 8), range(0, 8)}, {builders.body_rows_in_column(entities, NAMES.belt, 9), builders.body_rows_in_column(entities, NAMES.belt, 15)})
+        assert.are.same({south, south}, {coal[1][2], product[1][2]})
+      end)
+
+      it("puts the inserters that take the product away east of the plants, as for plants that take no item", function()
+        local entities = fluid_plant.build(with_item(2, 3))
+
+        assert.are.same({{1, west}, {4, west}, {7, west}}, in_column(entities, NAMES.inserter, 14))
+      end)
+
+      it("powers the inserters beside the belt from poles in the column of the underground pipes, wired to each other, and the others as before", function()
+        local entities = fluid_plant.build(with_item(2, 3))
+
+        local west_poles, east_poles = in_column(entities, NAMES.pole, 8), in_column(entities, NAMES.pole, 14)
+        assert.are.same({{1}, {4}, {7}}, {{west_poles[1][1]}, {west_poles[2][1]}, {west_poles[3][1]}})
+        assert.are.same({0, 3, 6}, {east_poles[1][1], east_poles[2][1], east_poles[3][1]})
+      end)
+
+      it("takes the start of the belt that brings the item in to the west edge, the row above the one of the pipe three up", function()
+        local entities, entries = fluid_plant.build(with_item(2, 3))
+
+        assert.are.same({{key = "input", x = 0, y = -1}, {key = "items", x = 0, y = -4}}, entries.inlets)
+        local along, up = {}, {}
+        for _, belt in ipairs(builders.entities_named(entities, NAMES.belt)) do
+          local tile = grid.top_left_tile(belt.position)
+          if tile.y == -4 then
+            along[#along + 1] = tile.x
+          end
+          if tile.x == 9 and tile.y < 0 then
+            up[#up + 1] = tile.y
+          end
+        end
+        table.sort(along)
+        table.sort(up)
+        assert.are.same({range(0, 9), {-4, -3, -2, -1}}, {along, up})
+      end)
+
+      it("runs the pipe that takes the gas out along the plants whichever is longer, for the ends of the underground pipes to meet", function()
+        local entities = fluid_plant.build(with_item(1, 4))
+
+        assert.are.same(range(0, 11), builders.body_rows_in_column(entities, NAMES.pipe, 7))
+      end)
+
+      for _, counts in ipairs({{1, 1}, {2, 3}, {4, 4}, {5, 10}}) do
+        it(string.format("passes the validator for %d machines that make the fluid and %d plants: the underground pipes meet, powered, wired", counts[1], counts[2]), function()
+          local entities = fluid_plant.build(with_item(counts[1], counts[2]))
+
+          assert.are.same({}, validator.validate(entities, catalog()))
+        end)
+      end
+
+      describe("for a plant of 5 x 5, whose connections are at the rows the test says", function()
+        -- one plant, with a box that takes a fluid at each of the rows (as it faces west): a connection above it at the column 4 - row
+        local function five(rows)
+          local asked = with_item(2, 1)
+          asked.plants = {
+            machine = "plant-5", recipe = "r", size = 5, count = 1, rows = {inputs = -1, outputs = 5}, boxes = {},
+          }
+          for _, row in ipairs(rows) do
+            asked.plants.boxes[#asked.plants.boxes + 1] = {production_type = "input", tiles = {{x = 4 - row, y = -1}}}
+          end
+          return asked
+        end
+
+        local function inserter_rows(rows)
+          return in_column(fluid_plant.build(five(rows)), NAMES.inserter, 10)
+        end
+
+        it("puts the inserter at the middle row when it has no connection", function()
+          assert.are.same({{2, west}}, inserter_rows({0, 4}))
+        end)
+
+        it("puts it at the row above the middle when the middle row has a connection", function()
+          assert.are.same({{1, west}}, inserter_rows({2}))
+        end)
+
+        it("puts it at the row under the middle when the rows at the middle and above it have connections", function()
+          assert.are.same({{3, west}}, inserter_rows({1, 2}))
+        end)
+
+        it("puts it at the top row when the three rows in the middle have connections", function()
+          assert.are.same({{0, west}}, inserter_rows({1, 2, 3}))
+        end)
+
+        it("takes two boxes that have a connection at the same row for one connection: one pair of underground pipes", function()
+          local entities = fluid_plant.build(five({2, 2}))
+
+          assert.are.same({{2, east}}, in_column(entities, NAMES.pipe_to_ground, 10))
+        end)
+      end)
+
+      it("stops when there is no pipe to ground for the pipes under the belt, which is a bug of the caller", function()
+        local asked = with_item(2, 3)
+        asked.pipe_to_ground = nil
+
+        local build = function() fluid_plant.build(asked) end
+
+        assert.has_error(build, "fluid_plant: no pipe to ground for the pipes under the belt of the item")
+      end)
+
+      it("refuses plants that have a pipe connection at every row, which leave no row for the inserter", function()
+        local asked = with_item(2, 3)
+        asked.plants.boxes = {
+          {production_type = "input", tiles = {{x = 0, y = -1}}}, {production_type = "input", tiles = {{x = 1, y = -1}}},
+          {production_type = "input", tiles = {{x = 2, y = -1}}},
+        }
+
+        local build = function() fluid_plant.build(asked) end
+
+        assert.has_error(build, "fluid_plant: every row of a plant has a pipe connection, so no inserter can take the item in")
+      end)
+    end)
+
     describe("for plants that take two fluids, one of them that nothing makes in the blueprint", function()
       -- The first of the two boxes of a plant that take a fluid takes the fluid the machines make ("gas") and the second the one that
       -- comes in ("water"). The boxes are above the plant as it faces north, in its columns 0 and 2, so a plant facing west has the first at

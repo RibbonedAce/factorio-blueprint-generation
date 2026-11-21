@@ -90,6 +90,10 @@ describe("config", function()
       assert.is_true(config.recipes["sulfur"])
     end)
 
+    it("has plastic bar, which takes coal and petroleum gas", function()
+      assert.is_true(config.recipes["plastic-bar"])
+    end)
+
     it("has no recipe of solid fuel from the other oils, which the mod does not make", function()
       assert.are.same({nil, nil}, {config.recipes["solid-fuel-from-light-oil"], config.recipes["solid-fuel-from-heavy-oil"]})
     end)

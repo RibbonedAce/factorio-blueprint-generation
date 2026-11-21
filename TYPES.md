@@ -47,8 +47,8 @@ flowchart LR
   fluid_row -->|"Entity list"| generator
   generator -->|"FluidPlantRequest"| planner
   planner -->|"FluidPlantPlan"| generator
-  generator -->|"PipeStart list"| pipe_entries["pipe_entries.lua"]
-  pipe_entries -->|"pipes added to the Entity list, the entries"| generator
+  generator -->|"PipeStart list"| corner_entries["corner_entries.lua"]
+  corner_entries -->|"pipes added to the Entity list, the entries"| generator
   generator -->|"FluidPlantBuild: two FluidRowBuild's worth of machines, inserter, belt"| fluid_plant["fluid_plant.lua"]
   fluid_plant -->|"Entity list"| generator
 
@@ -77,8 +77,8 @@ flowchart TD
   generator --> rows
   generator --> fluid_row
   generator --> fluid_plant
-  generator --> pipe_entries
-  fluid_plant --> pipe_entries
+  generator --> corner_entries
+  fluid_plant --> corner_entries
   fluid_plant --> fluid_row
   fluid_plant --> poles
   fluid_plant --> layout
@@ -547,6 +547,8 @@ classDiagram
     plants_that_fit
     lane_items_per_minute
     inserter_items_per_minute
+    input_inserter_items_per_minute
+    item_belt_items_per_minute
   }
   class FluidPlantPlan {
     plants
@@ -555,12 +557,14 @@ classDiagram
     fluid_per_minute
     source_per_minute
     supplied
+    items
   }
   class FluidPlantBuild {
     inserter
     belt
     pipe_to_ground
     underground_reach
+    item_input
   }
 
   FluidRowRequest *-- Recipe : recipe
