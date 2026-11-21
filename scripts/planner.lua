@@ -594,12 +594,12 @@ local function whole_machines(machines_worth)
   return math.max(1, math.ceil(machines_worth - EPSILON))
 end
 
--- Whether a row of machines can make the product from the recipe: the recipe takes one fluid and nothing else, and its one
--- product is the product (see `is_supported`).
+-- Whether the recipe takes one fluid and nothing else and makes the product (see `is_supported`): a row of machines makes a fluid
+-- from it, or a plant of machines an item.
 ---@param recipe bpgen.Recipe
 ---@param product_name string
 ---@return boolean
-function planner.is_fluid_row_recipe(recipe, product_name)
+function planner.is_fluid_recipe(recipe, product_name)
   return #recipe.ingredients == 0 and #recipe.fluids == 1 and is_supported(recipe, product_name)
 end
 
@@ -634,7 +634,7 @@ end
 ---@return number|nil max_rate
 ---@return bpgen.PlanReason|nil reason
 function planner.max_fluid_row_rate(request)
-  if not planner.is_fluid_row_recipe(request.recipe, request.product) then
+  if not planner.is_fluid_recipe(request.recipe, request.product) then
     return nil, "unsupported-recipe"
   end
   return most_fluid_machines(request) * fluid_output_per_machine(request), nil
@@ -658,6 +658,90 @@ function planner.plan_fluid_row(request)
     return nil, "rate-too-high", max_rate
   end
   return {machines = machines, output_per_minute = machines * per_machine, per_machine = per_machine}
+end
+
+-- What one machine of a plant makes a minute: what it makes at full speed, held down to what its output inserter moves.
+---@param request bpgen.FluidPlantRequest
+---@return number
+local function plant_output_each(request)
+  local crafts_per_minute = 60 * request.machine_speed / request.recipe.energy
+  return math.min(crafts_per_minute * planner.amount_made(request.recipe, request.product), request.inserter_items_per_minute)
+end
+
+-- How much of its fluid one machine of a plant takes in a minute, making `plant_output_each`.
+---@param request bpgen.FluidPlantRequest
+---@return number
+local function plant_fluid_each(request)
+  return plant_output_each(request) / planner.amount_made(request.recipe, request.product) * request.recipe.fluids[1].amount
+end
+
+-- What the planner is asked for the row of machines that make the fluid the plant takes.
+---@param request bpgen.FluidPlantRequest
+---@return bpgen.FluidRowRequest
+local function fluid_source_request(request)
+  return {
+    product = request.recipe.fluids[1].name, recipe = request.maker_recipe, machine_speed = request.maker_speed,
+    rate_per_minute = 0, pipe_flow_per_minute = request.pipe_flow_per_minute,
+  }
+end
+
+-- Whether the recipe of the plant and the recipe that makes its fluid are ones the planner handles.
+---@param request bpgen.FluidPlantRequest
+---@return boolean
+local function fluid_plant_supported(request)
+  return planner.is_fluid_recipe(request.recipe, request.product)
+    and planner.is_fluid_recipe(request.maker_recipe, request.recipe.fluids[1].name)
+end
+
+-- How many machines the plant has at most: as many as a lane of the output belt carries, and as many as the fluid that the most
+-- machines the pipes feed make (the pipe that carries it needs no limit of its own: a machine takes in more crude oil than it makes
+-- gas). At least one.
+---@param request bpgen.FluidPlantRequest
+---@return integer
+local function most_plants(request)
+  local source = fluid_source_request(request)
+  local by_lane = request.lane_items_per_minute / plant_output_each(request)
+  local by_fluid = most_fluid_machines(source) * fluid_output_per_machine(source) / plant_fluid_each(request)
+  return math.max(1, math.floor(math.min(by_lane, by_fluid) + EPSILON))
+end
+
+-- The most a plant of machines that make an item from a fluid can make a minute. Nil and the reason when a recipe is not one the
+-- planner handles.
+---@param request bpgen.FluidPlantRequest
+---@return number|nil max_rate
+---@return bpgen.PlanReason|nil reason
+function planner.max_fluid_plant_rate(request)
+  if not fluid_plant_supported(request) then
+    return nil, "unsupported-recipe"
+  end
+  return most_plants(request) * plant_output_each(request), nil
+end
+
+-- How many machines a plant needs for `request.rate_per_minute` of the item (a whole number makes a little more than asked), and
+-- how many machines of the row that makes the fluid they take. Nil, the reason and the most a plant can make when the rate is more
+-- than a lane carries or the fluid allows.
+---@param request bpgen.FluidPlantRequest
+---@return bpgen.FluidPlantPlan|nil plan
+---@return bpgen.PlanReason|nil reason
+---@return number|nil max_rate  given with "rate-too-high"
+function planner.plan_fluid_plant(request)
+  local max_rate, reason = planner.max_fluid_plant_rate(request)
+  if not max_rate then
+    return nil, reason
+  end
+  local each = plant_output_each(request)
+  local plants = whole_machines(request.rate_per_minute / each)
+  if plants > most_plants(request) then
+    return nil, "rate-too-high", max_rate
+  end
+  local source = fluid_source_request(request)
+  local fluid = plants * plant_fluid_each(request)
+  local maker = request.maker_recipe
+  return {
+    plants = plants, makers = whole_machines(fluid / fluid_output_per_machine(source)), output_per_minute = plants * each,
+    per_plant = each, fluid_per_minute = fluid,
+    source_per_minute = fluid / planner.amount_made(maker, source.product) * maker.fluids[1].amount,
+  }
 end
 
 -- Whether the sides of the machines leave room for a winding belt: they are 3x3 and neither side is full (the plain and the

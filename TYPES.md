@@ -45,6 +45,10 @@ flowchart LR
   planner -->|"FluidRowPlan"| generator
   generator -->|"FluidRowBuild: FluidBox list, FluidRows, SharedNames"| fluid_row["fluid_row.lua"]
   fluid_row -->|"Entity list"| generator
+  generator -->|"FluidPlantRequest"| planner
+  planner -->|"FluidPlantPlan"| generator
+  generator -->|"FluidPlantBuild: two FluidRowBuild's worth of machines, inserter, belt"| fluid_plant["fluid_plant.lua"]
+  fluid_plant -->|"Entity list"| generator
 
   generator -->|"RawAmount, StageSummary, belts"| messages["messages.lua"]
   messages -->|"LocalisedString, description"| generator
@@ -70,6 +74,11 @@ flowchart TD
   generator --> inputs
   generator --> rows
   generator --> fluid_row
+  generator --> fluid_plant
+  fluid_plant --> fluid_row
+  fluid_plant --> poles
+  fluid_plant --> layout
+  fluid_plant --> grid
   generator --> recipes
   gui --> recipes
   fluid_row --> layout
@@ -488,7 +497,7 @@ classDiagram
 
 The order of the work in `rows.build_pure` is: columns are made (`Column`), the leaves are handed to `feeds.plan` (`FeedPlan`), the columns are placed after the band, `inputs.lay` draws the band (`Band`) and says where each leaf's belt ends, the columns get their rows from that, and `poles.join` wires the poles with a `PoleBridge` for the gaps.
 
-### 3d. A row of machines that make a fluid (generator, planner, fluid_row)
+### 3d. A row of machines that make a fluid, and plants that make an item from it (generator, planner, fluid_row, fluid_plant)
 
 A fluid that is made from a fluid (petroleum gas from crude oil in the oil refinery) has no belts and no inserters: the generator reads where the pipes of the machine connect from the game (`FluidBox`), the planner says how many machines the rate needs, and `fluid_row` draws the row.
 
@@ -524,7 +533,31 @@ classDiagram
     pole
   }
 
+  class FluidPlantRequest {
+    product
+    machine_speed
+    maker_speed
+    rate_per_minute
+    lane_items_per_minute
+    inserter_items_per_minute
+  }
+  class FluidPlantPlan {
+    plants
+    makers
+    output_per_minute
+    fluid_per_minute
+    source_per_minute
+  }
+  class FluidPlantBuild {
+    inserter
+    belt
+  }
+
   FluidRowRequest *-- Recipe : recipe
+  FluidPlantRequest *-- Recipe : recipe and maker_recipe
+  FluidPlantRequest ..> FluidPlantPlan : planner.plan_fluid_plant
+  FluidPlantBuild *-- FluidRowBuild : makers
+  FluidPlantBuild ..> Entity : fluid_plant.build
   FluidRowRequest ..> FluidRowPlan : planner.plan_fluid_row
   FluidBox ..> FluidRows : fluid_row.rows_of
   FluidRowBuild o-- FluidBox : boxes
@@ -536,7 +569,7 @@ classDiagram
 
 | Where | Types |
 |---|---|
-| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
+| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, FluidPlantRequest, FluidPlantPlan, FluidPlantBuild, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
 | `scripts/generator.lua` | EnergySource, Candidate, StageData, InserterData, Job, PlannedStage, Demand, DemandTotals |
 | `scripts/planner.lua` | InputInserters, MachineRates, StageContext, Sizes |

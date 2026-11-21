@@ -3243,8 +3243,8 @@ describe("generator", function()
     end)
 
     it("refuses the request when only a machine the config does not name makes the item", function()
-      local plate_in_a_chemical_plant = a_recipe{energy = 1, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "chemistry"}
-      _G.prototypes = fake_prototypes{recipes = {["iron-plate"] = plate_in_a_chemical_plant}}
+      local plate_in_a_centrifuge = a_recipe{energy = 1, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "centrifuging"}
+      _G.prototypes = fake_prototypes{recipes = {["iron-plate"] = plate_in_a_centrifuge}}
 
       local result, error_message = generator.generate("iron-plate", 10)
 
@@ -4028,6 +4028,280 @@ describe("generator", function()
       local result, error_message = generator.generate("crude-oil", 1000)
 
       assert.are.same({nil, {"blueprint-generation.error-unsupported-pick"}}, {result, error_message})
+    end)
+  end)
+
+  describe("an item made from a fluid, in chemical plants fed by the refineries that make the fluid", function()
+    -- 20 petroleum gas make 1 solid fuel in 2 s: a plant of speed 1 makes 30 a minute and takes 600 gas; a refinery makes 540 gas a
+    -- minute from 1,200 crude oil. The plant is 3 x 3 and takes its fluid at its two connections above it as it faces north (the
+    -- tiles of the machine at its edge and the way they point, as the game gives them); the refinery is as in the row of refineries.
+    local north, south = defines.direction.north, defines.direction.south
+    local gas = a_recipe{energy = 5, ingredients = {fluid_of(100, "crude-oil")}, products = {fluid_of(45, "petroleum-gas")}, category = "oil-processing"}
+    local fuel = a_recipe{energy = 2, ingredients = {fluid_of(20, "petroleum-gas")}, products = {amount_of(1, "solid-fuel")}, category = "chemistry"}
+    local REFINERY_BOXES = {
+      {production_type = "input", position = {x = -1, y = 2}, direction = south}, {production_type = "input", position = {x = 1, y = 2}, direction = south},
+      {production_type = "output", position = {x = -2, y = -2}, direction = north}, {production_type = "output", position = {x = 0, y = -2}, direction = north},
+      {production_type = "output", position = {x = 2, y = -2}, direction = north},
+    }
+    local PLANT_BOXES = {
+      {production_type = "input", position = {x = -1, y = -1}, direction = north}, {production_type = "input", position = {x = 1, y = -1}, direction = north},
+      {production_type = "output", position = {x = -1, y = 1}, direction = south}, {production_type = "output", position = {x = 1, y = 1}, direction = south},
+    }
+
+    local function fuel_game(changes)
+      return fake_prototypes(builders.merged({
+        machines = {
+          ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
+          ["chemical-plant"] = a_machine{crafting_speed = 1, size = 3, pipe_boxes = PLANT_BOXES},
+        },
+        recipes = {["basic-oil-processing"] = gas, ["solid-fuel-from-petroleum-gas"] = fuel},
+      }, changes))
+    end
+
+    local function catalog()
+      local entries = builders.a_catalog{}
+      entries["oil-refinery"] = {
+        kind = "machine", width = 5, height = 5, needs_power = true, networks = {input = "crude", output = "gas"},
+        fluid_connections = {input = {{x = 1, y = 5}, {x = 3, y = 5}}, output = {{x = 0, y = -1}, {x = 2, y = -1}, {x = 4, y = -1}}},
+      }
+      entries["chemical-plant"] = {
+        kind = "machine", width = 3, height = 3, needs_power = true, networks = {input = "gas"},
+        fluid_connections = {input = {{x = 0, y = -1}, {x = 2, y = -1}}},
+      }
+      return entries
+    end
+
+    it("builds as many plants as the rate needs and as many refineries as they take gas from", function()
+      _G.prototypes = fuel_game()
+
+      local result = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+      -- 100 / 30 = 3.3, 4 plants, which take 2,400 gas: 4.4 refineries, 5
+      assert.are.same({5, 4}, {count_named(result.entities, "oil-refinery"), count_named(result.entities, "chemical-plant")})
+    end)
+
+    it("sets the recipe of the plants and turns them to face west, the refineries east", function()
+      _G.prototypes = fuel_game()
+
+      local result = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+      local plant = builders.entities_named(result.entities, "chemical-plant")[1]
+      local refinery = builders.entities_named(result.entities, "oil-refinery")[1]
+      assert.are.same({"solid-fuel-from-petroleum-gas", defines.direction.west, "basic-oil-processing", defines.direction.east},
+        {plant.recipe, plant.direction, refinery.recipe, refinery.direction})
+    end)
+
+    it("says what the blueprint makes and the crude oil it takes in a minute, and describes it with its machines", function()
+      _G.prototypes = fuel_game()
+
+      local result = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+      -- 4 plants make 120, from 2,400 gas, which comes from 5,333.3 crude oil
+      assert.are.same({"blueprint-generation.generated", "120", {"item-name.solid-fuel"}}, {result.message[1], result.message[2], result.message[3]})
+      assert.are.same({"fluid-name.crude-oil"}, result.message[4][2][3])
+      assert.are.equal("solid-fuel: 120 per minute from 5 x oil-refinery, 4 x chemical-plant", result.description)
+    end)
+
+    it("builds a blueprint that passes the validator: powered, wired, an inserter and a belt for each plant, two networks of pipes", function()
+      _G.prototypes = fuel_game()
+
+      local result = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+      assert.are.same({}, validator.validate(result.entities, catalog()))
+    end)
+
+    it("builds one that passes it with everything researched: the medium pole, the lamps and the panel", function()
+      _G.prototypes = fuel_game()
+
+      local result = generator.generate("solid-fuel-from-petroleum-gas", 100, fake_force{})
+
+      assert.are.same({}, validator.validate(result.entities, catalog()))
+      assert.are.same({2, true}, {count_named(result.entities, "display-panel") + 1, count_named(result.entities, "small-lamp") > 0})
+    end)
+
+    it("puts a display panel with the crude oil beside the start of the pipe, once the force has unlocked it, and none for the item", function()
+      _G.prototypes = fuel_game()
+
+      local result = generator.generate("solid-fuel-from-petroleum-gas", 100, fake_force{})
+
+      local panels = builders.entities_named(result.entities, "display-panel")
+      assert.are.same({1, "fluid", "crude-oil"}, {#panels, panels[1].icon.type, panels[1].icon.name})
+    end)
+
+    it("names the most one blueprint makes: what the lane of the belt carries", function()
+      _G.prototypes = fuel_game()
+
+      assert.are.same({"blueprint-generation.max-rate", "450"}, generator.max_rate_message("solid-fuel-from-petroleum-gas")) -- 15 plants
+    end)
+
+    it("names the most with fast belts, which carry more than the refineries the pipes feed make gas for: 27 plants", function()
+      -- 30 refineries of 1,200 crude oil make 16,200 gas, which 27 plants take; the lane of a fast belt would carry 30 plants' worth
+      _G.prototypes = fuel_game{fast_belts = true}
+
+      assert.are.same({"blueprint-generation.max-rate", "810"}, generator.max_rate_message("solid-fuel-from-petroleum-gas", fake_force{}))
+    end)
+
+    it("refuses a rate above that, naming the most", function()
+      _G.prototypes = fuel_game()
+
+      local result, error_message = generator.generate("solid-fuel-from-petroleum-gas", 451)
+
+      assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "450"}}, {result, error_message})
+    end)
+
+    it("makes less from a plant whose inserter is slow, with more plants for the rate and the gas they take", function()
+      -- an inserter that swings in 250 ticks moves 14.4 items a minute: 7 plants for 100, which take 2,016 gas, 4 refineries
+      _G.prototypes = fuel_game{inserter_rotation_speed = 0.004}
+
+      local result = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+      assert.are.same({4, 7}, {count_named(result.entities, "oil-refinery"), count_named(result.entities, "chemical-plant")})
+    end)
+
+    it("refuses a recipe the force has not unlocked, naming the item", function()
+      _G.prototypes = fuel_game()
+
+      local result, error_message = generator.generate("solid-fuel-from-petroleum-gas", 100, fake_force{locked = {"solid-fuel-from-petroleum-gas"}})
+
+      assert.are.same({nil, {"blueprint-generation.error-locked", {"item-name.solid-fuel"}}}, {result, error_message})
+    end)
+
+    it("does not look at the recipe of the refineries, which the game unlocks first", function()
+      _G.prototypes = fuel_game()
+
+      local result = generator.generate("solid-fuel-from-petroleum-gas", 100, fake_force{locked = {"basic-oil-processing"}})
+
+      assert.is_not_nil(result)
+    end)
+
+    it("refuses the recipe when the game has no recipe that makes the fluid, naming the fluid", function()
+      _G.prototypes = fuel_game{recipes = {["solid-fuel-from-petroleum-gas"] = fuel}}
+
+      local result, error_message = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+      assert.are.same({nil, {"blueprint-generation.error-no-recipe", {"fluid-name.petroleum-gas"}}}, {result, error_message})
+    end)
+
+    describe("a recipe whose fluid has no recipe the config names", function()
+      before_each(function()
+        config.recipes["wet-fuel"] = true
+      end)
+
+      after_each(function()
+        config.recipes["wet-fuel"] = nil
+      end)
+
+      it("is refused, naming the fluid: water is brought in by a pipe, not made", function()
+        local wet = a_recipe{energy = 2, ingredients = {fluid_of(20, "water")}, products = {amount_of(1, "solid-fuel")}, category = "chemistry"}
+        _G.prototypes = fuel_game{recipes = {["wet-fuel"] = wet}}
+
+        local result, error_message = generator.generate("wet-fuel", 100)
+
+        assert.are.same({nil, {"blueprint-generation.error-no-recipe", {"fluid-name.water"}}}, {result, error_message})
+      end)
+    end)
+
+    -- The recipes of the game with one of them changed.
+    local function recipes_with(changes)
+      return builders.merged({["basic-oil-processing"] = gas, ["solid-fuel-from-petroleum-gas"] = fuel}, changes)
+    end
+
+    local refused = {
+      {label = "the recipe of the plants makes two products", message = "error-fluid-row-recipe", item = "solid-fuel", game = {recipes = recipes_with{
+        ["solid-fuel-from-petroleum-gas"] = a_recipe{energy = 2, ingredients = {fluid_of(20, "petroleum-gas")},
+          products = {amount_of(1, "solid-fuel"), amount_of(1, "coal")}, category = "chemistry"}}}},
+      {label = "the recipe that makes the fluid takes two", message = "error-fluid-row-recipe", item = "petroleum-gas", game = {recipes = recipes_with{
+        ["basic-oil-processing"] = a_recipe{energy = 5, ingredients = {fluid_of(100, "crude-oil"), fluid_of(50, "water")},
+          products = {fluid_of(45, "petroleum-gas")}, category = "oil-processing"}}}},
+      {label = "the recipe that makes the fluid makes another", message = "error-fluid-row-recipe", item = "petroleum-gas", game = {recipes = recipes_with{
+        ["basic-oil-processing"] = a_recipe{energy = 5, ingredients = {fluid_of(100, "crude-oil")}, products = {fluid_of(45, "oil")}, category = "oil-processing"}}}},
+      {label = "the pipe connections of the plants are in two rows", message = "error-fluid-row-pipes", item = "solid-fuel", game = {machines = {
+        ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
+        ["chemical-plant"] = a_machine{crafting_speed = 1, size = 3, pipe_boxes = {
+          {production_type = "input", position = {x = -1, y = -1}, direction = north}, {production_type = "input", position = {x = 1, y = 1}, direction = south},
+          {production_type = "output", position = {x = 1, y = -1}, direction = north}}}}}},
+      {label = "the wire of the pole is shorter than a refinery is wide", message = "error-fluid-row-poles", item = "petroleum-gas", game = {small_pole_wire_distance = 4}},
+    }
+
+    for _, case in ipairs(refused) do
+      it("refuses the item, saying which part cannot be laid out, when " .. case.label, function()
+        _G.prototypes = fuel_game(case.game)
+
+        local result, error_message = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+        local fluid = case.item == "solid-fuel" and "item-name." or "fluid-name."
+        assert.are.same({nil, {"blueprint-generation." .. case.message, {fluid .. case.item}}}, {result, error_message})
+      end)
+    end
+
+    it("refuses plants whose pole would not reach the next plant, naming the item", function()
+      -- plants of 5 x 5 against refineries of 3 x 3: the wire has to reach 5 tiles, and this one reaches 4
+      local big_boxes = {
+        {production_type = "input", position = {x = -1, y = -2}, direction = north}, {production_type = "input", position = {x = 1, y = -2}, direction = north},
+        {production_type = "output", position = {x = -1, y = 2}, direction = south},
+      }
+      local small_refinery = {
+        {production_type = "input", position = {x = -1, y = 1}, direction = south}, {production_type = "output", position = {x = 1, y = -1}, direction = north},
+      }
+      _G.prototypes = fuel_game{small_pole_wire_distance = 4, machines = {
+        ["oil-refinery"] = a_machine{crafting_speed = 1, size = 3, pipe_boxes = small_refinery},
+        ["chemical-plant"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = big_boxes},
+      }}
+
+      local result, error_message = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+      assert.are.same({nil, {"blueprint-generation.error-fluid-row-poles", {"item-name.solid-fuel"}}}, {result, error_message})
+    end)
+
+    describe("plants of 7 x 7, whose middle row is the third, which the pole has to reach", function()
+      -- they take their fluid at the columns 1 and 5 above them, from the tiles of the machine at its top edge
+      local seven = {
+        {production_type = "input", position = {x = -2, y = -3}, direction = north}, {production_type = "input", position = {x = 2, y = -3}, direction = north},
+        {production_type = "output", position = {x = -2, y = 3}, direction = south}, {production_type = "output", position = {x = 2, y = 3}, direction = south},
+      }
+
+      local function game(changes)
+        return fuel_game(builders.merged({machines = {
+          ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
+          ["chemical-plant"] = a_machine{crafting_speed = 1, size = 7, pipe_boxes = seven},
+        }}, changes))
+      end
+
+      it("are built when the pole reaches three tiles and the wire seven, which is as wide as they are", function()
+        _G.prototypes = game{small_pole_supply_distance = 3.5, small_pole_wire_distance = 7}
+
+        local result = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+        assert.are.equal(4, count_named(result.entities, "chemical-plant"))
+      end)
+
+      it("are refused when the pole reaches two tiles, which does not reach the inserter beside the middle row", function()
+        _G.prototypes = game{small_pole_supply_distance = 2.5, small_pole_wire_distance = 7}
+
+        local result, error_message = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+        assert.are.same({nil, {"blueprint-generation.error-fluid-row-poles", {"item-name.solid-fuel"}}}, {result, error_message})
+      end)
+
+      it("are refused when the wire is shorter than they are wide", function()
+        _G.prototypes = game{small_pole_supply_distance = 3.5, small_pole_wire_distance = 6.5}
+
+        local result, error_message = generator.generate("solid-fuel-from-petroleum-gas", 100)
+
+        assert.are.same({nil, {"blueprint-generation.error-fluid-row-poles", {"item-name.solid-fuel"}}}, {result, error_message})
+      end)
+    end)
+
+    it("stops with a message when the game gives a connection of the plant that is not at the edge of the machine", function()
+      local wrong = {{production_type = "input", position = {x = 0, y = 0}, direction = north}}
+      _G.prototypes = fuel_game{machines = {
+        ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
+        ["chemical-plant"] = a_machine{crafting_speed = 1, size = 3, pipe_boxes = wrong},
+      }}
+
+      local generate = function() generator.generate("solid-fuel-from-petroleum-gas", 100) end
+
+      assert.has_error(generate)
     end)
   end)
 end)

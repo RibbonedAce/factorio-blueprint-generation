@@ -9,6 +9,7 @@
 ---@class bpgen.Config
 ---@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, panel: string, pipe: string, pipe_to_ground: string, pump: string, poles: string[], belts: bpgen.BeltTier[]}
 ---@field recipes table<string, true>  the recipes a player may ask for, by recipe name; the rate is of the product of the recipe
+---@field fluid_makers table<string, string>  the recipe that makes a fluid that another recipe takes, by the name of the fluid, built as a row of machines ahead of it
 ---@field fluid_flow_per_second number  how many units of a fluid the pipes of a blueprint are taken to carry in a second
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
 ---@field default_recipe string  the recipe the window starts with; must be a key of `recipes`
@@ -149,6 +150,18 @@ local config = {
     -- fluid a minute. Advanced oil processing and coal liquefaction make petroleum gas too, with other inputs and other products,
     -- which that row does not take.
     ["basic-oil-processing"] = true,
+    -- A recipe that takes one fluid and nothing else and makes an item: chemical plants with the machines that make the fluid ahead
+    -- of them (see `fluid_makers`), a pipe that is the one the fluid goes out of the one and comes in to the other, and the item on a
+    -- belt (see scripts/fluid_plant.lua). The rate is of the item. The other recipes of solid fuel take light oil and heavy oil.
+    ["solid-fuel-from-petroleum-gas"] = true,
+  },
+
+  -- The recipe that makes a fluid that a recipe takes, for a recipe that takes one fluid and nothing else: a row of the machines of
+  -- that recipe makes it, so the blueprint starts from the fluid's own raw material. A fluid that is not named has no recipe the
+  -- mod builds (water and crude oil are raw: they come in by a pipe). Petroleum gas comes from advanced oil processing and coal
+  -- liquefaction too, with other inputs and other products, so the recipe that takes crude oil only is named.
+  fluid_makers = {
+    ["petroleum-gas"] = "basic-oil-processing",
   },
 
   -- How much of a fluid a run of pipes is taken to carry, units a second (ASSUMED, not checked in game: the pipes of the row of a
@@ -167,6 +180,7 @@ local config = {
     ["advanced-crafting"] = {tiers = {"assembling-machine-1", "assembling-machine-2"}}, -- engine units: the assembling machines make this category too
     ["crafting-with-fluid"] = {tiers = {"assembling-machine-2"}}, -- concrete: the first assembling machine with a fluid input, which has a 3 x 3 body
     ["oil-processing"] = {tiers = {"oil-refinery"}}, -- basic oil processing: a machine of 5 x 5 that takes and gives fluids only
+    chemistry = {tiers = {"chemical-plant"}}, -- solid fuel: a machine of 3 x 3 with two connections to take a fluid and two to give one
   },
 
   -- The recipe already picked when the window opens.

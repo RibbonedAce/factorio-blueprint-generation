@@ -2329,41 +2329,41 @@ describe("planner", function()
       return builders.merged({product = "gas", recipe = recipe, machine_speed = 1, rate_per_minute = 1000, pipe_flow_per_minute = 36000}, changes)
     end
 
-    describe("is_fluid_row_recipe", function()
+    describe("is_fluid_recipe", function()
       it("takes a recipe that takes one fluid and makes the product", function()
-        assert.is_true(planner.is_fluid_row_recipe(recipe, "gas"))
+        assert.is_true(planner.is_fluid_recipe(recipe, "gas"))
       end)
 
       it("refuses a recipe that takes an item as well", function()
         local with_item = recipe_with{ingredients = {builders.amount_of(1, "iron-plate")}}
 
-        assert.is_false(planner.is_fluid_row_recipe(with_item, "gas"))
+        assert.is_false(planner.is_fluid_recipe(with_item, "gas"))
       end)
 
       it("refuses a recipe that takes two fluids", function()
         local two_fluids = recipe_with{fluids = {crude, {name = "water", amount = 50}}}
 
-        assert.is_false(planner.is_fluid_row_recipe(two_fluids, "gas"))
+        assert.is_false(planner.is_fluid_recipe(two_fluids, "gas"))
       end)
 
       it("refuses a recipe that takes no fluid", function()
         local no_fluid = recipe_with{fluids = {}}
 
-        assert.is_false(planner.is_fluid_row_recipe(no_fluid, "gas"))
+        assert.is_false(planner.is_fluid_recipe(no_fluid, "gas"))
       end)
 
       it("refuses a recipe that makes more than one product", function()
         local two = recipe_with{products = {builders.fluid_of(45, "gas"), builders.fluid_of(25, "oil")}}
 
-        assert.is_false(planner.is_fluid_row_recipe(two, "gas"))
+        assert.is_false(planner.is_fluid_recipe(two, "gas"))
       end)
 
       it("refuses a recipe that makes something other than the product", function()
-        assert.is_false(planner.is_fluid_row_recipe(recipe, "oil"))
+        assert.is_false(planner.is_fluid_recipe(recipe, "oil"))
       end)
 
       it("refuses a recipe that takes no time, which no rate comes from", function()
-        assert.is_false(planner.is_fluid_row_recipe(recipe_with{energy = 0}, "gas"))
+        assert.is_false(planner.is_fluid_recipe(recipe_with{energy = 0}, "gas"))
       end)
     end)
 
@@ -2448,6 +2448,120 @@ describe("planner", function()
 
       it("gives no rate, and the reason, for a recipe it cannot handle", function()
         local max_rate, reason = planner.max_fluid_row_rate(request{recipe = recipe_with{energy = 0}})
+
+        assert.are.same({nil, "unsupported-recipe"}, {max_rate, reason})
+      end)
+    end)
+  end)
+
+  describe("a plant of machines that make an item from a fluid that a row of machines makes", function()
+    -- 20 gas make 1 solid fuel in 2 s: a machine of speed 1 makes 30 a minute and takes 600 gas. The gas comes from machines that make
+    -- 45 of it from 100 crude oil in 5 s: 540 a minute from 1,200 crude oil each. A lane of the belt carries 450 a minute.
+    local fuel = {energy = 2, ingredients = {}, fluids = {{name = "gas", amount = 20}}, products = {builders.amount_of(1, "fuel")}}
+    local gas_maker = {energy = 5, ingredients = {}, fluids = {{name = "crude", amount = 100}}, products = {builders.fluid_of(45, "gas")}}
+
+    local function request(changes)
+      return builders.merged({
+        product = "fuel", recipe = fuel, machine_speed = 1, maker_recipe = gas_maker, maker_speed = 1, rate_per_minute = 100,
+        pipe_flow_per_minute = 36000, lane_items_per_minute = 450, inserter_items_per_minute = 90,
+      }, changes)
+    end
+
+    describe("plan_fluid_plant", function()
+      it("gives as many machines as the rate needs and as many that make the fluid as those take", function()
+        local plan = planner.plan_fluid_plant(request{rate_per_minute = 100})
+
+        -- 100 / 30 = 3.3 machines, 4: 120 a minute, from 2,400 gas, which takes 4.4 machines of 540, 5, and 5,333.3 crude oil
+        assert.are.equal(4, plan.plants)
+        assert.are.equal(5, plan.makers)
+        assert.are.same({120, 30, 2400}, {plan.output_per_minute, plan.per_plant, plan.fluid_per_minute})
+        assert.near(5333.333, plan.source_per_minute, 1e-3)
+      end)
+
+      it("needs a second machine for the fluid when the first makes less than one machine of the plant takes", function()
+        local plan = planner.plan_fluid_plant(request{rate_per_minute = 30})
+
+        assert.are.same({1, 2}, {plan.plants, plan.makers}) -- 600 gas against 540
+      end)
+
+      it("makes less from a machine whose inserter cannot move what it makes, and takes less fluid for it", function()
+        local plan = planner.plan_fluid_plant(request{rate_per_minute = 100, inserter_items_per_minute = 20})
+
+        -- 20 a minute from each machine, from 400 gas: 5 machines, 2,000 gas, 4 machines for it
+        assert.are.same({5, 4, 100, 20, 2000}, {plan.plants, plan.makers, plan.output_per_minute, plan.per_plant, plan.fluid_per_minute})
+      end)
+
+      it("refuses a rate that needs more machines than a lane of the belt carries, naming the most", function()
+        local plan, reason, max_rate = planner.plan_fluid_plant(request{rate_per_minute = 451})
+
+        assert.are.same({nil, "rate-too-high", 450}, {plan, reason, max_rate}) -- 15 machines of 30
+      end)
+
+      it("allows the most a lane carries", function()
+        local plan = planner.plan_fluid_plant(request{rate_per_minute = 450})
+
+        assert.are.equal(15, plan.plants)
+      end)
+
+      it("allows the most a lane carries when float rounding puts the count just under a whole number", function()
+        -- 3.33 a minute from each machine: 450 / 3.3333333333333335 is 134.99999999999997, which is 135 machines
+        local slow = request{machine_speed = 0.5, recipe = builders.merged(fuel, {energy = 9}), rate_per_minute = 450, inserter_items_per_minute = 1000}
+
+        local plan = planner.plan_fluid_plant(slow)
+
+        assert.are.equal(135, plan.plants)
+      end)
+
+      it("refuses a rate that needs more fluid than the machines that make it make, which are as many as the pipes feed", function()
+        -- pipes of 6,000 a minute feed 5 machines of 1,200 crude oil, which make 2,700 gas: 4 machines of the plant take 2,400, not 3,000
+        local plan, reason, max_rate = planner.plan_fluid_plant(request{pipe_flow_per_minute = 6000, rate_per_minute = 150})
+
+        assert.are.same({nil, "rate-too-high", 120}, {plan, reason, max_rate})
+      end)
+
+      it("has one machine at least, however little the pipes carry", function()
+        local plan = planner.plan_fluid_plant(request{pipe_flow_per_minute = 100, rate_per_minute = 10})
+
+        assert.are.equal(1, plan.plants)
+      end)
+
+      it("counts what a craft makes: a recipe that makes two items a craft makes twice as much from the same fluid", function()
+        local twice = builders.merged(fuel, {products = {builders.amount_of(2, "fuel")}})
+
+        local plan = planner.plan_fluid_plant(request{recipe = twice, rate_per_minute = 100})
+
+        -- 60 a minute from each machine (30 crafts of 2, from 600 gas): 2 machines, 120 a minute, 1,200 gas, 3 machines for it
+        assert.are.same({2, 3, 120, 60, 1200}, {plan.plants, plan.makers, plan.output_per_minute, plan.per_plant, plan.fluid_per_minute})
+      end)
+
+      it("refuses a recipe that takes an item as well", function()
+        local with_item = builders.merged(fuel, {ingredients = {builders.amount_of(1, "iron-plate")}})
+
+        local plan, reason = planner.plan_fluid_plant(request{recipe = with_item})
+
+        assert.are.same({nil, "unsupported-recipe"}, {plan, reason})
+      end)
+
+      it("refuses a fluid that the machines of the row do not make", function()
+        local other = builders.merged(gas_maker, {products = {builders.fluid_of(45, "oil")}})
+
+        local plan, reason = planner.plan_fluid_plant(request{maker_recipe = other})
+
+        assert.are.same({nil, "unsupported-recipe"}, {plan, reason})
+      end)
+    end)
+
+    describe("max_fluid_plant_rate", function()
+      it("gives what the machines make that a lane carries, 15 of 30", function()
+        assert.are.equal(450, planner.max_fluid_plant_rate(request{}))
+      end)
+
+      it("gives one machine's worth at least, however little the pipes carry", function()
+        assert.are.equal(30, planner.max_fluid_plant_rate(request{pipe_flow_per_minute = 100}))
+      end)
+
+      it("gives no rate, and the reason, for a recipe it cannot handle", function()
+        local max_rate, reason = planner.max_fluid_plant_rate(request{recipe = builders.merged(fuel, {energy = 0})})
 
         assert.are.same({nil, "unsupported-recipe"}, {max_rate, reason})
       end)

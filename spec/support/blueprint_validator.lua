@@ -531,17 +531,26 @@ end
 -- Check 8: machines whose fluids come in and go out at fixed tiles (a refinery)
 --------------------------------------------------------------------------------
 
+-- A connection tile of a machine facing north, as it is when the machine faces the way it does: turned a quarter clockwise for
+-- east and a quarter counterclockwise for west.
+local function turned_tile(tile, direction, width)
+  if direction == defines.direction.east then
+    return width - 1 - tile.y, tile.x
+  end
+  if direction == defines.direction.west then
+    return tile.y, width - 1 - tile.x
+  end
+  return tile.x, tile.y
+end
+
 -- The pipe-like entity at each pipe connection of a machine of one flow ("input" or "output"), and a problem for each connection
--- that has none. The tiles are from the top-left tile of the machine facing north, and are turned for one that faces east.
+-- that has none. The tiles are from the top-left tile of the machine facing north, and are turned for one that faces east or west.
 local function pieces_at(index, machine, flow, problems)
   local description = index.catalog[machine.name]
   local left, top = machine.position.x - description.width / 2, machine.position.y - description.height / 2
   local pieces = {}
-  for _, tile in ipairs(description.fluid_connections[flow]) do
-    local x, y = tile.x, tile.y
-    if machine.direction == defines.direction.east then -- turned a quarter clockwise
-      x, y = description.width - 1 - tile.y, tile.x
-    end
+  for _, tile in ipairs(description.fluid_connections[flow] or {}) do
+    local x, y = turned_tile(tile, machine.direction, description.width)
     local piece = index.by_tile[tile_key(left + x, top + y)]
     if piece and is_pipe(index, piece) then
       pieces[#pieces + 1] = piece
@@ -552,77 +561,100 @@ local function pieces_at(index, machine, flow, problems)
   return pieces
 end
 
--- Adds the items of `more` to `list`.
-local function add_all(list, more)
-  for _, item in ipairs(more) do
-    list[#list + 1] = item
+-- The pipes at the connections of one network, added to the groups (a network is a name, and a group is kept only if it has a pipe).
+local function add_group(groups, label, pieces)
+  if #pieces == 0 then
+    return
+  end
+  if not groups.pieces[label] then
+    groups.pieces[label] = {}
+    groups.labels[#groups.labels + 1] = label
+  end
+  for _, piece in ipairs(pieces) do
+    local list = groups.pieces[label]
+    list[#list + 1] = piece
   end
 end
 
--- The pipes of such machines: the ones at the connections of what they take, the ones at those of what they give.
+-- Whether a machine that has fixed fluid connections faces a way they are worked out for.
+local function check_facing(machine, problems)
+  local way = machine.direction
+  if way ~= nil and way ~= defines.direction.north and way ~= defines.direction.east and way ~= defines.direction.west then
+    add_problem(problems, machine, "faces a way its fluid connections are not worked out for")
+  end
+end
+
+-- The pipes of such machines, by the network they are in: the ones at the connections of what they take are in the network
+-- "input", and the ones at those of what they give in the network "output", unless the catalog entry says another name for one
+-- (`networks = {input = "gas"}`), so that machines can take what others give.
 local function connection_pieces(index, problems)
-  local inputs, outputs = {}, {}
+  local groups = {labels = {}, pieces = {}}
   for _, machine in ipairs(usable_of_kind(index, "machine")) do
-    if index.catalog[machine.name].fluid_connections then
-      local way = machine.direction
-      if way ~= nil and way ~= defines.direction.north and way ~= defines.direction.east then
-        add_problem(problems, machine, "faces a way its fluid connections are not worked out for")
+    local description = index.catalog[machine.name]
+    if description.fluid_connections then
+      check_facing(machine, problems)
+      for _, flow in ipairs({"input", "output"}) do
+        add_group(groups, (description.networks or {})[flow] or flow, pieces_at(index, machine, flow, problems))
       end
-      add_all(inputs, pieces_at(index, machine, "input", problems))
-      add_all(outputs, pieces_at(index, machine, "output", problems))
     end
   end
-  return inputs, outputs
+  return groups
 end
 
--- Every piece of `pieces` is in the network of the first, which is the one pipe network of that flow.
-local function in_one_network(groups, pieces, flow, problems)
+-- Every piece of `pieces` is in the network of the first, which is the one pipe network of that name.
+local function in_one_network(groups, pieces, label, problems)
   for _, piece in ipairs(pieces) do
     if not groups.same(piece.entity_number, pieces[1].entity_number) then
-      add_problem(problems, piece, string.format("is at a %s fluid connection that another network of pipes than the first one's serves", flow))
+      add_problem(problems, piece, string.format("is at a %s fluid connection that another network of pipes than the first one's serves", label))
     end
   end
 end
 
--- Which network a pipe is in: that of the fluid the machines take ("input"), that of the fluid they give ("output") or neither (nil).
-local function flow_of(groups, pipe, inputs, outputs)
-  if inputs[1] and groups.same(pipe.entity_number, inputs[1].entity_number) then
-    return "input"
-  end
-  if outputs[1] and groups.same(pipe.entity_number, outputs[1].entity_number) then
-    return "output"
+-- Which network a pipe is in: the name of the first group that has it, or neither (nil).
+local function label_of(groups, pipe, fluid_groups)
+  for _, label in ipairs(fluid_groups.labels) do
+    if groups.same(pipe.entity_number, fluid_groups.pieces[label][1].entity_number) then
+      return label
+    end
   end
   return nil
 end
 
--- The two networks are two, each has an open end, and no pipe is in neither.
-local function check_networks(index, problems, inputs, outputs)
+-- The networks are as many as their names, each has an open end, and no pipe is in none.
+local function check_networks(index, problems, fluid_groups)
   local pipes, groups = pipe_groups(index, problems)
-  in_one_network(groups, inputs, "input", problems)
-  in_one_network(groups, outputs, "output", problems)
-  if inputs[1] and outputs[1] and groups.same(inputs[1].entity_number, outputs[1].entity_number) then
-    add_problem(problems, nil, "the pipes of what the machines take and those of what they give are one network")
+  local labels = fluid_groups.labels
+  for _, label in ipairs(labels) do
+    in_one_network(groups, fluid_groups.pieces[label], label, problems)
   end
-  local ends = {input = {}, output = {}}
+  for first = 1, #labels do
+    for second = first + 1, #labels do
+      if groups.same(fluid_groups.pieces[labels[first]][1].entity_number, fluid_groups.pieces[labels[second]][1].entity_number) then
+        add_problem(problems, nil, string.format("the pipes of the %s fluid and those of the %s fluid are one network", labels[first], labels[second]))
+      end
+    end
+  end
+  local ends = {}
   for _, pipe in ipairs(pipes) do
-    local flow = flow_of(groups, pipe, inputs, outputs)
-    if flow then
-      ends[flow][#ends[flow] + 1] = pipe
+    local label = label_of(groups, pipe, fluid_groups)
+    if label then
+      ends[label] = ends[label] or {}
+      ends[label][#ends[label] + 1] = pipe
     else
       add_problem(problems, pipe, "belongs to a network of pipes that no machine takes its fluid from or gives its fluid to")
     end
   end
-  for flow, network in pairs(ends) do
-    if #network > 0 and not has_open_end(index, network) then
-      add_problem(problems, nil, string.format("the pipes of the %s fluid have no open end", flow))
+  for _, label in ipairs(labels) do
+    if not has_open_end(index, ends[label] or {}) then
+      add_problem(problems, nil, string.format("the pipes of the %s fluid have no open end", label))
     end
   end
 end
 
 local function check_fluid_connections(index, problems)
-  local inputs, outputs = connection_pieces(index, problems)
-  if #inputs > 0 or #outputs > 0 then
-    check_networks(index, problems, inputs, outputs)
+  local groups = connection_pieces(index, problems)
+  if #groups.labels > 0 then
+    check_networks(index, problems, groups)
   end
 end
 
@@ -637,6 +669,7 @@ end
 ---@field reach? number  inserters only: tiles away that it picks up and drops, 1 by default (2 for a long-handed inserter); underground pipes: how far apart their two ends may be, 10 by default
 ---@field fluid_input? boolean|table<string, true>  machines only: it takes a fluid in, in the middle of the side it faces, for every recipe (true) or for the recipes named
 ---@field fluid_connections? {input: {x: integer, y: integer}[], output: {x: integer, y: integer}[]}  machines only: the tiles of its pipe connections, from its top-left tile as it faces north (it has to), those of the fluids it takes and those of the fluids it gives
+---@field networks? {input?: string, output?: string}  machines with `fluid_connections` only: the name of the network of pipes that the connections of each flow are in, "input" and "output" unless said (a machine that takes what another gives names the same network)
 ---@field supply_radius? number  poles only
 ---@field wire_reach? number  poles only
 

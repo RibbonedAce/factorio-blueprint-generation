@@ -26,6 +26,22 @@ describe("config", function()
     end)
   end)
 
+  describe("the machine of the recipes of chemistry", function()
+    it("is the chemical plant, which burns nothing", function()
+      assert.are.same({tiers = {"chemical-plant"}}, config.machines.chemistry)
+    end)
+  end)
+
+  describe("the recipes that make the fluids that other recipes take", function()
+    it("makes petroleum gas by basic oil processing, which takes crude oil only", function()
+      assert.are.same({["petroleum-gas"] = "basic-oil-processing"}, config.fluid_makers)
+    end)
+
+    it("names a recipe that a player can ask for", function()
+      assert.is_true(config.recipes[config.fluid_makers["petroleum-gas"]])
+    end)
+  end)
+
   describe("the tiers of the poles and the belts", function()
     it("has the small pole for every blueprint and the medium pole once it is unlocked", function()
       local poles = config.entities.poles
@@ -54,6 +70,14 @@ describe("config", function()
 
     it("has basic oil processing, whose product is a fluid", function()
       assert.is_true(config.recipes["basic-oil-processing"])
+    end)
+
+    it("has solid fuel from petroleum gas, which takes a fluid and nothing else", function()
+      assert.is_true(config.recipes["solid-fuel-from-petroleum-gas"])
+    end)
+
+    it("has no recipe of solid fuel from the other oils, which the mod does not make", function()
+      assert.are.same({nil, nil}, {config.recipes["solid-fuel-from-light-oil"], config.recipes["solid-fuel-from-heavy-oil"]})
     end)
 
     it("has no recipe that makes petroleum gas from other inputs and makes other products too", function()

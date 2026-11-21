@@ -710,6 +710,45 @@ describe("blueprint validator", function()
       assert.has_item_containing("has no pipe at its input fluid connection", problems)
     end)
 
+    it("turns the connections of a machine that faces west a quarter counterclockwise: the fluid it takes comes in at its west side", function()
+      local entities = blueprint_of(machine(west), pipe(-1, 1), pipe(1, 1))
+
+      local problems = validator.validate(entities, catalog_with_machine())
+
+      assert.are.same({}, problems)
+    end)
+
+    describe("machines that name the network of their pipes, so that one takes what the other gives", function()
+      local grid = require("scripts.grid")
+
+      local function catalog_with_two()
+        local catalog = a_catalog{}
+        catalog["source"] = {kind = "machine", width = 1, height = 1, fluid_connections = {output = {{x = 0, y = 1}}}, networks = {output = "gas"}}
+        catalog["sink"] = {kind = "machine", width = 1, height = 1, fluid_connections = {input = {{x = 0, y = -1}}}, networks = {input = "gas"}}
+        return catalog
+      end
+
+      local function placed(name, tile_x, tile_y)
+        return {name = name, position = grid.position(tile_x, tile_y)}
+      end
+
+      it("reports no problems when the pipe at the connection of one is the pipe at the connection of the other", function()
+        local entities = blueprint_of(placed("source", 0, 1), placed("sink", 0, 3), pipe(0, 2))
+
+        local problems = validator.validate(entities, catalog_with_two())
+
+        assert.are.same({}, problems)
+      end)
+
+      it("reports the machine whose pipe is another network than the one of the same name", function()
+        local entities = blueprint_of(placed("source", 0, 1), pipe(0, 2), placed("sink", 5, 3), pipe(5, 2))
+
+        local problems = validator.validate(entities, catalog_with_two())
+
+        assert.has_item_containing("is at a gas fluid connection that another network of pipes than the first one's serves", problems)
+      end)
+    end)
+
     it("reports a machine that faces south, which its connections are not worked out for", function()
       local entities = blueprint_of(machine(defines.direction.south), pipe(0, 0), pipe(0, 2))
 

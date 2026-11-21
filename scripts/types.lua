@@ -365,6 +365,26 @@
 ---@field rate_per_minute number  units of the fluid a minute
 ---@field pipe_flow_per_minute number  the most units of a fluid a minute that a run of pipes carries
 
+-- What `planner.plan_fluid_plant` is asked for: machines that make an item from one fluid, and the row of machines that make that fluid.
+---@class bpgen.FluidPlantRequest
+---@field product string  the item
+---@field recipe bpgen.Recipe  takes one fluid and nothing else, and makes the product
+---@field machine_speed number
+---@field maker_recipe bpgen.Recipe  makes the fluid the recipe takes, from one fluid
+---@field maker_speed number  the crafting speed of the machines that make it
+---@field rate_per_minute number  of the item
+---@field pipe_flow_per_minute number  the most units of a fluid a minute that a run of pipes carries
+---@field lane_items_per_minute number  what one lane of the output belt carries
+---@field inserter_items_per_minute number  what the output inserter of a machine moves
+
+---@class bpgen.FluidPlantPlan
+---@field plants integer  machines that make the item
+---@field makers integer  machines that make the fluid they take
+---@field output_per_minute number  what all the plants make
+---@field per_plant number  what one plant makes
+---@field fluid_per_minute number  what all the plants take
+---@field source_per_minute number  what the machines that make the fluid take, of the fluid they take
+
 ---@class bpgen.FluidRowPlan
 ---@field machines integer
 ---@field output_per_minute number  what all the machines make
@@ -382,6 +402,13 @@
 ---@field pole string
 ---@field pole_supply_distance number
 ---@field pole_wire_distance number
+
+-- What `fluid_plant.build` is asked for: the machines that make a fluid, and the machines that make an item from it.
+---@class bpgen.FluidPlantBuild
+---@field makers bpgen.FluidRowBuild  the machines that make the fluid, which stand turned (see `fluid_row.turn`)
+---@field plants {machine: string, recipe: string, size: integer, count: integer, boxes: bpgen.FluidBox[], rows: bpgen.FluidRows}  the machines that make the item from it, with the pipe connections they have as they face north
+---@field inserter string  prototype name of the inserter beside each plant
+---@field belt string  prototype name of the belt the inserters drop on
 
 -- What the message and the description of a blueprint are made from --------------
 
