@@ -14,6 +14,7 @@ local fluid_row = require("scripts.fluid_row")
 local labels = require("scripts.labels")
 local lights = require("scripts.lights")
 local messages = require("scripts.messages")
+local recipes = require("scripts.recipes")
 
 local generator = {}
 
@@ -29,8 +30,8 @@ local FLUID_BELTS = 2
 local MOST_FLUID_ITEMS = FLUID_BELTS * LANES_PER_BELT
 
 -- Copy a recipe prototype into a plain table for the planner: the items it takes in `ingredients`, the fluids in `fluids` (the
--- layout brings them in through pipes, which only a step with two or more inputs can have: see `fluid_problem`). (A product
--- that is not an item comes with an item product, and the planner refuses a recipe with more than one product.)
+-- layout brings them in through pipes, which only a step with two or more inputs can have: see `fluid_problem`). Each product
+-- says whether it is an item or a fluid (the planner refuses a recipe with more than one product).
 ---@param prototype LuaRecipePrototype
 ---@return bpgen.Recipe
 local function read_recipe(prototype)
@@ -43,7 +44,7 @@ local function read_recipe(prototype)
   for index, product in ipairs(prototype.products) do
     -- get_product_amount gives the average amount per craft, which also covers
     -- products with a random or ranged amount.
-    recipe.products[#recipe.products + 1] = {name = product.name, amount = prototype.get_product_amount(index)}
+    recipe.products[#recipe.products + 1] = {name = product.name, amount = prototype.get_product_amount(index), type = product.type}
   end
   return recipe
 end
@@ -244,18 +245,15 @@ end
 ---@field prototype LuaRecipePrototype
 ---@field choice bpgen.MachineChoice
 
--- The recipes that make `item_name` (an item, or a fluid the config lists as a fluid product) in a machine the config names: the
--- one recipe the config picks for it, when it picks one.
+-- The recipes that make `item_name` in a machine the config names.
 ---@param item_name string
 ---@return bpgen.Candidate[]
 local function candidate_recipes(item_name)
-  local filter = config.fluid_products[item_name] and "has-product-fluid" or "has-product-item"
-  local filters = {{filter = filter, elem_filters = {{filter = "name", name = item_name}}}}
-  local chosen = config.recipes[item_name]
+  local filters = {{filter = "has-product-item", elem_filters = {{filter = "name", name = item_name}}}}
   local found = {}
   for _, prototype in pairs(prototypes.get_recipe_filtered(filters)) do
     local choice = machine_choice(prototype)
-    if choice and (chosen == nil or prototype.name == chosen) then
+    if choice then
       found[#found + 1] = {prototype = prototype, choice = choice}
     end
   end
@@ -269,11 +267,17 @@ local function production_of(candidate, force)
   return {recipe = read_recipe(candidate.prototype), machine = best_tier(force, candidate.choice.tiers), fuel = candidate.choice.fuel}
 end
 
--- How the game makes an item for a force, in the shape `chain.resolve` asks for (see `bpgen.RecipeLookup`).
+-- How the game makes an item for a force, in the shape `chain.resolve` asks for (see `bpgen.RecipeLookup`). The recipe the player
+-- picked makes its product as it is, whatever other recipes make it too (`picked`, with the product and how it is made); every
+-- other item is made by the one recipe that makes it.
 ---@param force LuaForce|nil
+---@param picked {item: string, production: bpgen.Production}
 ---@return bpgen.RecipeLookup
-local function production_lookup(force)
+local function production_lookup(force, picked)
   return function(item_name)
+    if item_name == picked.item then
+      return picked.production
+    end
     local candidates = candidate_recipes(item_name)
     local only = candidates[1]
     if only and #candidates == 1 then
@@ -356,10 +360,10 @@ end
 -- The steps below take it instead of the same values each: what the player asked
 -- for, the tree of steps that makes it with their machines, and the game's numbers.
 ---@class bpgen.Job
----@field item_name string  what the player wants
----@field fluid_product boolean  whether it is a fluid, made in a row of machines that take and give fluids only (see scripts/fluid_row.lua)
+---@field item_name string  the product of the recipe the player picked (the first, when it makes several, which the planner refuses)
+---@field fluid_product boolean  whether that product is a fluid, made in a row of machines that take and give fluids only (see scripts/fluid_row.lua)
 ---@field rate_per_minute number  how much of it
----@field root bpgen.StageData  the step that makes `item_name`, with the steps below it
+---@field root bpgen.StageData  the step of the recipe the player picked, with the steps below it that make what it takes
 ---@field names bpgen.SharedNames  the prototype names every column builds with
 ---@field belt_speed number
 ---@field inserter bpgen.InserterData
@@ -455,15 +459,24 @@ local function input_options(names, belt_speed, force)
   return {lane_items_per_minute = planner.lane_items_per_minute(belt_speed), underground_reach = reach}
 end
 
--- The steps for an item with the data of their machines, or nil and the message for
--- the player when the item cannot be made from steps we can build or the game lacks
--- a machine.
----@param item_name string
+-- The steps for the recipe the player picked with the data of their machines: the step that makes its product, with the steps that
+-- make what it takes. Nil and the message for the player when it cannot be made from steps we can build or the game lacks a
+-- machine.
+---@param prototype LuaRecipePrototype  the recipe picked
 ---@param force LuaForce|nil  whose research decides the machines
 ---@return bpgen.StageData|nil
 ---@return LocalisedString|nil error_message
-local function read_root(item_name, force)
-  local stage, reason, culprit = chain.resolve(item_name, production_lookup(force))
+local function read_root(prototype, force)
+  local product = prototype.products[1]
+  if not product then
+    return nil, messages.unsupported_recipe()
+  end
+  local choice = machine_choice(prototype)
+  if not choice then
+    return nil, messages.chain_problem("no-recipe", product.name)
+  end
+  local picked = {item = product.name, production = production_of({prototype = prototype, choice = choice}, force)}
+  local stage, reason, culprit = chain.resolve(product.name, production_lookup(force, picked))
   if not stage then
     ---@cast reason bpgen.ChainReason -- there is always a reason when there is no step
     ---@cast culprit string
@@ -508,16 +521,34 @@ local function add_unlocked(job, force)
   return job
 end
 
--- The job for this request, or nil and the message for the player when the item is
--- not supported or something it needs is missing from the game.
----@param item_name string
+-- The prototype of the recipe the player picked, or nil and the message for the player when the config does not list it or
+-- the game does not have it (another mod could have removed a recipe the config names).
+---@param recipe_name string
+---@return LuaRecipePrototype|nil
+---@return LocalisedString|nil error_message
+local function picked_recipe(recipe_name)
+  if not config.recipes[recipe_name] then
+    return nil, messages.unsupported_pick()
+  end
+  local prototype = prototypes.recipe[recipe_name]
+  if not prototype then
+    return nil, messages.chain_problem("no-recipe", recipe_name)
+  end
+  return prototype, nil
+end
+
+-- The job for this request, or nil and the message for the player when the recipe is
+-- not supported or something it needs is missing from the game. The rate is of the
+-- product of the recipe.
+---@param recipe_name string  the recipe the player picked
 ---@param rate_per_minute number
 ---@param force LuaForce|nil  whose research decides the design of the inputs; nil takes the original
 ---@return bpgen.Job|nil
 ---@return LocalisedString|nil error_message
-local function read_job(item_name, rate_per_minute, force)
-  if not (config.products[item_name] or config.fluid_products[item_name]) then
-    return nil, messages.unsupported_item()
+local function read_job(recipe_name, rate_per_minute, force)
+  local prototype, picked_problem = picked_recipe(recipe_name)
+  if not prototype then
+    return nil, picked_problem
   end
   local names = shared_names(force)
   local belt_speed, inserter, long_inserter = read_speeds(names, force)
@@ -525,34 +556,26 @@ local function read_job(item_name, rate_per_minute, force)
     return nil, messages.missing_prototype()
   end
   add_pole_distances(names)
-  local root, problem = read_root(item_name, force)
+  local root, problem = read_root(prototype, force)
   if not root then
     return nil, problem
   end
   return add_unlocked({
-    item_name = item_name,
-    fluid_product = config.fluid_products[item_name] == true,
-    rate_per_minute = rate_per_minute,
-    root = root,
-    names = names,
-    belt_speed = belt_speed,
-    inserter = inserter,
-    long_inserter = long_inserter,
+    item_name = root.item, fluid_product = root.recipe.products[1].type == "fluid", rate_per_minute = rate_per_minute,
+    root = root, names = names, belt_speed = belt_speed, inserter = inserter, long_inserter = long_inserter,
   } --[[@as bpgen.Job]], force) -- what the force has unlocked is added just below
 end
 
 -- The item whose recipe the force has not unlocked yet, or nil when the force has it. Only
--- the recipe of the product is looked at (owner, 2026-11-08): in the game a recipe is never
+-- the recipe the player picked is looked at (owner, 2026-11-08): in the game a recipe is never
 -- unlocked before those of its ingredients, nor before the crafting machine it needs, and
 -- the buildings (long-handed inserter, belt, splitter, underground belt, inserter, pole) are left to a later feature
--- that will unlock by the entities a blueprint places. A recipe the force does not know at
--- all is not held against it: there is nothing to unlock.
+-- that will unlock by the entities a blueprint places.
 ---@param job bpgen.Job
 ---@param force LuaForce
----@return string|nil item
+---@return string|nil item  the product of the recipe
 local function locked_item(job, force)
-  local recipe = force.recipes[job.root.recipe.name or job.root.item]
-  if recipe and not recipe.enabled then
+  if recipes.is_locked(job.root.recipe.name, force) then
     return job.root.item
   end
   return nil
@@ -1363,14 +1386,14 @@ local function generate_fluid_row(job)
 end
 
 -- The job for this request, with every machine checked, or nil and the message for the
--- player. With a `force`, an item whose recipe the force has not unlocked is refused too.
----@param item_name string
+-- player. With a `force`, a recipe the force has not unlocked is refused too.
+---@param recipe_name string
 ---@param rate_per_minute number
 ---@param force LuaForce|nil
 ---@return bpgen.Job|nil
 ---@return LocalisedString|nil error_message
-local function read_buildable_job(item_name, rate_per_minute, force)
-  local job, problem = read_job(item_name, rate_per_minute, force)
+local function read_buildable_job(recipe_name, rate_per_minute, force)
+  local job, problem = read_job(recipe_name, rate_per_minute, force)
   if not job then
     return nil, problem
   end
@@ -1385,23 +1408,6 @@ local function read_buildable_job(item_name, rate_per_minute, force)
   return job, nil
 end
 
--- The products of the config except those whose recipe the force has not unlocked (see
--- `locked_item`): the window starts with one of them. A product that cannot be made for
--- another reason stays in the list, so choosing it still shows the message that says why.
----@param force LuaForce
----@return string[] names  sorted
-function generator.unlocked_products(force)
-  local names = {}
-  for name in pairs(config.products) do
-    local job = read_job(name, 1) -- the rate is not used
-    if not (job and locked_item(job, force)) then
-      names[#names + 1] = name
-    end
-  end
-  table.sort(names)
-  return names
-end
-
 -- The most a blueprint of the job can make a minute, or nil and why not.
 ---@param job bpgen.Job
 ---@return number|nil max_rate
@@ -1414,12 +1420,12 @@ local function max_rate_of(job)
 end
 
 -- The line the window shows under the rate field: the most one blueprint of
--- `item_name` can make per minute, or the message for why it cannot be made.
----@param item_name string
+-- `recipe_name` can make per minute, or the message for why it cannot be made.
+---@param recipe_name string
 ---@param force LuaForce|nil  whose unlocked recipes count; nil counts them all
 ---@return LocalisedString
-function generator.max_rate_message(item_name, force)
-  local job, problem = read_buildable_job(item_name, 1, force) -- the rate is not used
+function generator.max_rate_message(recipe_name, force)
+  local job, problem = read_buildable_job(recipe_name, 1, force) -- the rate is not used
   if not job then
     ---@cast problem LocalisedString -- there is always a message when there is no job
     return problem
@@ -1432,19 +1438,19 @@ function generator.max_rate_message(item_name, force)
   return messages.max_rate(max_rate)
 end
 
--- Make the blueprint for `rate_per_minute` of `item_name`.
+-- Make the blueprint for `rate_per_minute` of what the recipe `recipe_name` makes.
 -- On success returns a table {entities, description, message}:
 --   entities     the blueprint entities, ready for set_blueprint_entities
 --   description  text for the blueprint's description field
 --   message      a LocalisedString to show the player
 -- On failure returns nil and a LocalisedString explaining why.
----@param item_name string
----@param rate_per_minute number
+---@param recipe_name string
+---@param rate_per_minute number  of the product of the recipe
 ---@param force LuaForce|nil  whose unlocked recipes count; nil counts them all
 ---@return bpgen.Generated|nil
 ---@return LocalisedString|nil error_message
-function generator.generate(item_name, rate_per_minute, force)
-  local job, problem = read_buildable_job(item_name, rate_per_minute, force)
+function generator.generate(recipe_name, rate_per_minute, force)
+  local job, problem = read_buildable_job(recipe_name, rate_per_minute, force)
   if not job then
     return nil, problem
   end

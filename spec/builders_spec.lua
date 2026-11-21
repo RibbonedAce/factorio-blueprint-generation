@@ -295,28 +295,32 @@ describe("builders", function()
       end)
     end)
 
-    describe("the recipes it finds by what they make", function()
+    describe("the recipes", function()
       local gas = builders.a_recipe{energy = 5, ingredients = {builders.fluid_of(100, "crude-oil")}, products = {builders.fluid_of(45, "petroleum-gas")}, category = "oil-processing"}
       local plate = builders.a_recipe{energy = 3, ingredients = {builders.amount_of(1, "iron-ore")}, products = {builders.amount_of(1, "iron-plate")}, category = "smelting"}
       local prototypes = builders.fake_prototypes{recipes = {["gas"] = gas, ["plate"] = plate}}
 
-      local function find(filter, name)
-        return prototypes.get_recipe_filtered{{filter = filter, elem_filters = {{filter = "name", name = name}}}}
+      local function find(name)
+        return prototypes.get_recipe_filtered{{filter = "has-product-item", elem_filters = {{filter = "name", name = name}}}}
       end
 
-      it("are those that make the fluid, for a fluid filter", function()
-        assert.are.same({["gas"] = gas}, find("has-product-fluid", "petroleum-gas"))
+      it("are there by name, and nil for a name the game does not have", function()
+        assert.are.same({gas, plate, nil}, {prototypes.recipe["gas"], prototypes.recipe["plate"], prototypes.recipe["wood"]})
       end)
 
-      it("are those that make the item, for an item filter", function()
-        assert.are.same({["plate"] = plate}, find("has-product-item", "iron-plate"))
+      it("know their own name", function()
+        assert.are.same({"gas", "plate"}, {prototypes.recipe["gas"].name, prototypes.recipe["plate"].name})
       end)
 
-      it("are none when a fluid is looked up as an item, or an item as a fluid", function()
-        assert.are.same({{}, {}}, {find("has-product-item", "petroleum-gas"), find("has-product-fluid", "iron-plate")})
+      it("are found by the item they make", function()
+        assert.are.same({["plate"] = plate}, find("iron-plate"))
       end)
 
-      it("stop the test for a filter it does not know", function()
+      it("are not found by a fluid they make", function()
+        assert.are.same({}, find("petroleum-gas"))
+      end)
+
+      it("stop the test for a filter that is not the one by an item they make", function()
         local unknown = function() prototypes.get_recipe_filtered{{filter = "has-ingredient-item", elem_filters = {{filter = "name", name = "iron-ore"}}}} end
 
         assert.has_error(unknown)

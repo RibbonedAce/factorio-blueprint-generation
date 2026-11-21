@@ -83,6 +83,7 @@
 ---@class bpgen.RecipeItem
 ---@field name string
 ---@field amount number
+---@field type? "item"|"fluid"  of a product, as the game gives it (the ingredients are in two lists by type)
 
 ---@class bpgen.Recipe  the numbers the planner needs, copied from a recipe prototype
 ---@field name? string  the name of the recipe prototype, which a blueprint uses to set the recipe of an assembling machine

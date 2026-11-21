@@ -47,8 +47,8 @@ function messages.window_title()
 end
 
 ---@return LocalisedString
-function messages.item_label()
-  return text("item-label")
+function messages.recipe_label()
+  return text("recipe-label")
 end
 
 ---@return LocalisedString
@@ -68,8 +68,8 @@ end
 
 -- The line under the rate field when no item is picked.
 ---@return LocalisedString
-function messages.max_rate_no_item()
-  return text("max-rate-no-item")
+function messages.max_rate_no_pick()
+  return text("max-rate-no-pick")
 end
 
 -- The line under the rate field: the most one blueprint can make a minute.
@@ -82,8 +82,8 @@ end
 -- What the player did wrong in the window --------------------------------------
 
 ---@return LocalisedString
-function messages.no_item()
-  return text("error-no-item")
+function messages.no_pick()
+  return text("error-no-pick")
 end
 
 ---@return LocalisedString
@@ -103,9 +103,10 @@ end
 
 -- Why a blueprint cannot be made --------------------------------------------------
 
+-- The recipe the player picked is not one the config lists.
 ---@return LocalisedString
-function messages.unsupported_item()
-  return text("error-unsupported-item")
+function messages.unsupported_pick()
+  return text("error-unsupported-pick")
 end
 
 ---@return LocalisedString

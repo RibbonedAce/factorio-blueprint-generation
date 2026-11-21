@@ -43,17 +43,35 @@ describe("config", function()
     end)
   end)
 
-  describe("the default product", function()
-    it("chooses iron plate by default when the window opens", function()
-      local default = config.default_product
+  describe("the recipes a player can ask for", function()
+    it("has the recipe of an item that is made from raw items", function()
+      assert.is_true(config.recipes["iron-plate"])
+    end)
+
+    it("has the recipe of an item that is made through other recipes", function()
+      assert.is_true(config.recipes["iron-gear-wheel"])
+    end)
+
+    it("has basic oil processing, whose product is a fluid", function()
+      assert.is_true(config.recipes["basic-oil-processing"])
+    end)
+
+    it("has no recipe that makes petroleum gas from other inputs and makes other products too", function()
+      assert.are.same({nil, nil}, {config.recipes["advanced-oil-processing"], config.recipes["coal-liquefaction"]})
+    end)
+  end)
+
+  describe("the default recipe", function()
+    it("chooses the recipe of iron plate by default when the window opens", function()
+      local default = config.default_recipe
 
       assert.are.equal("iron-plate", default)
     end)
 
     it("chooses a default that can be generated when the window opens", function()
-      local product = config.products[config.default_product]
+      local recipe = config.recipes[config.default_recipe]
 
-      assert.is_not_nil(product)
+      assert.is_not_nil(recipe)
     end)
   end)
 end)

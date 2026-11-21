@@ -648,19 +648,29 @@ describe("generator", function()
       assert.are.equal("iron-gear-wheel", assembler.recipe)
     end)
 
-    it("sets the name of the recipe, which need not be the name of what it makes", function()
-      local pipe_recipe = a_recipe{energy = 0.5, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "pipe")}}
-      _G.prototypes = gear_game{recipes = {["iron-plate"] = plate, ["pipe-from-plates"] = pipe_recipe}}
+    describe("a recipe the config lists whose name is not the name of what it makes", function()
+      before_each(function()
+        config.recipes["pipe-from-plates"] = true
+      end)
 
-      local result = generator.generate("pipe", 10)
+      after_each(function()
+        config.recipes["pipe-from-plates"] = nil
+      end)
 
-      local assembler
-      for _, entity in ipairs(result.entities) do
-        if entity.name == "assembling-machine-1" then
-          assembler = entity
+      it("is set by its own name as the recipe of the machines", function()
+        local pipe_recipe = a_recipe{energy = 0.5, ingredients = {amount_of(1, "iron-plate")}, products = {amount_of(1, "pipe")}}
+        _G.prototypes = gear_game{recipes = {["iron-plate"] = plate, ["pipe-from-plates"] = pipe_recipe}}
+
+        local result = generator.generate("pipe-from-plates", 10)
+
+        local assembler
+        for _, entity in ipairs(result.entities) do
+          if entity.name == "assembling-machine-1" then
+            assembler = entity
+          end
         end
-      end
-      assert.are.equal("pipe-from-plates", assembler.recipe)
+        assert.are.equal("pipe-from-plates", assembler.recipe)
+      end)
     end)
 
     it("builds one furnace for one gear a minute, since two plates are all it takes", function()
@@ -1944,7 +1954,7 @@ describe("generator", function()
     it("gives the message of the refusal when the item cannot be made", function()
       _G.prototypes = fake_prototypes{recipes = {}}
 
-      assert.are.same({"blueprint-generation.error-unsupported-item"}, generator.max_rate_message("advanced-circuit"))
+      assert.are.same({"blueprint-generation.error-unsupported-pick"}, generator.max_rate_message("advanced-circuit"))
       assert.are.same({"blueprint-generation.error-no-recipe", "iron-plate"}, generator.max_rate_message("iron-plate"))
     end)
 
@@ -2114,67 +2124,6 @@ describe("generator", function()
 
       assert.is_not_nil(generator.generate("iron-gear-wheel", 36))
       assert.are.same({"blueprint-generation.max-rate", "225"}, generator.max_rate_message("iron-gear-wheel"))
-    end)
-
-    describe("the products on offer", function()
-      local function contains(list, name)
-        for _, entry in ipairs(list) do
-          if entry == name then
-            return true
-          end
-        end
-        return false
-      end
-
-      it("lists the products whose recipes are unlocked", function()
-        _G.prototypes = game()
-
-        local offered = generator.unlocked_products(fake_force{})
-
-        assert.is_true(contains(offered, "inserter"))
-        assert.is_true(contains(offered, "iron-gear-wheel"))
-        assert.is_true(contains(offered, "iron-plate"))
-      end)
-
-      it("leaves out the product whose own recipe is locked, and not the products made from it", function()
-        _G.prototypes = game()
-
-        local offered = generator.unlocked_products(fake_force{locked = {"iron-gear-wheel"}})
-
-        assert.is_false(contains(offered, "iron-gear-wheel"))
-        assert.is_true(contains(offered, "inserter")) -- its gears are not looked at
-        assert.is_true(contains(offered, "iron-plate"))
-        assert.is_true(contains(offered, "stone-brick"))
-      end)
-
-      it("keeps a product that cannot be made for another reason, so choosing it says why", function()
-        _G.prototypes = game()
-
-        local offered = generator.unlocked_products(fake_force{})
-
-        assert.is_true(contains(offered, "pipe")) -- the game here has no recipe for it
-      end)
-
-      it("lists the names in order", function()
-        _G.prototypes = game()
-
-        local offered = generator.unlocked_products(fake_force{})
-
-        local sorted = {table.unpack(offered)}
-        table.sort(sorted)
-        assert.are.same(sorted, offered)
-      end)
-
-      it("counts the recipes of the force it is given", function()
-        _G.prototypes = game()
-
-        local with_everything = generator.unlocked_products(fake_force{})
-        local without_inserter = generator.unlocked_products(fake_force{locked = {"inserter"}})
-
-        assert.are.equal(#with_everything - 1, #without_inserter)
-        assert.is_false(contains(without_inserter, "inserter"))
-        assert.is_true(contains(without_inserter, "iron-plate"))
-      end)
     end)
   end)
 
@@ -2941,6 +2890,124 @@ describe("generator", function()
     end)
   end)
 
+  describe("the recipe the player picks", function()
+    -- Two recipes make the same iron plates: from an ore in 3.2 s, and from two scraps in 6.4 s, which makes half as many plates in a
+    -- furnace (18.75 a minute and 9.375). The config lists the second for these tests.
+    local plate = a_recipe{energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+    local from_scrap = a_recipe{energy = 6.4, ingredients = {amount_of(2, "scrap")}, products = {amount_of(1, "iron-plate")}, category = "smelting"}
+
+    before_each(function()
+      config.recipes["iron-plate-from-scrap"] = true
+    end)
+
+    after_each(function()
+      config.recipes["iron-plate-from-scrap"] = nil
+    end)
+
+    local function plate_game()
+      return fake_prototypes{recipes = {["iron-plate"] = plate, ["iron-plate-from-scrap"] = from_scrap}}
+    end
+
+    it("builds with the recipe picked, though another recipe makes the same product", function()
+      _G.prototypes = plate_game()
+
+      local by_ore = generator.generate("iron-plate", 75)
+      local by_scrap = generator.generate("iron-plate-from-scrap", 75)
+
+      -- 75 plates a minute: 4 furnaces at 18.75 a minute from ore, 8 at 9.375 from scrap
+      assert.are.same({4, 8}, {count_named(by_ore.entities, "stone-furnace"), count_named(by_scrap.entities, "stone-furnace")})
+    end)
+
+    it("takes the raw items of the recipe picked", function()
+      _G.prototypes = plate_game()
+
+      local by_scrap = generator.generate("iron-plate-from-scrap", 75)
+
+      assert.are.same({"item-name.scrap"}, by_scrap.message[4][2][3]) -- the first raw item in the message
+    end)
+
+    it("names the product, not the recipe, in the message and the description", function()
+      _G.prototypes = plate_game()
+
+      local by_scrap = generator.generate("iron-plate-from-scrap", 75)
+
+      assert.are.same({{"item-name.iron-plate"}, "iron-plate: 75 per minute from 8 x stone-furnace"}, {by_scrap.message[3], by_scrap.description})
+    end)
+
+    it("shows the maximum of the recipe picked under the rate field", function()
+      _G.prototypes = plate_game()
+
+      -- one lane of the input belt carries 450 a minute: 450 ore make 450 plates, and 450 scraps make 225
+      assert.are.same({"blueprint-generation.max-rate", "450"}, generator.max_rate_message("iron-plate"))
+      assert.are.same({"blueprint-generation.max-rate", "225"}, generator.max_rate_message("iron-plate-from-scrap"))
+    end)
+
+    it("refuses a recipe the config does not list", function()
+      _G.prototypes = plate_game()
+      config.recipes["iron-plate-from-scrap"] = nil
+
+      local result, error_message = generator.generate("iron-plate-from-scrap", 75)
+
+      assert.are.same({nil, {"blueprint-generation.error-unsupported-pick"}}, {result, error_message})
+    end)
+
+    it("refuses a recipe the game does not have, naming it", function()
+      _G.prototypes = fake_prototypes{recipes = {["iron-plate"] = plate}}
+
+      local result, error_message = generator.generate("iron-plate-from-scrap", 75)
+
+      assert.are.same({nil, {"blueprint-generation.error-no-recipe", "iron-plate-from-scrap"}}, {result, error_message})
+    end)
+
+    it("refuses a recipe of a category that no machine of the config makes, naming its product", function()
+      local melting = a_recipe{energy = 1, ingredients = {amount_of(1, "scrap")}, products = {amount_of(1, "iron-plate")}, category = "metallurgy"}
+      _G.prototypes = fake_prototypes{recipes = {["iron-plate-from-scrap"] = melting}}
+
+      local result, error_message = generator.generate("iron-plate-from-scrap", 75)
+
+      assert.are.same({nil, {"blueprint-generation.error-no-recipe", {"item-name.iron-plate"}}}, {result, error_message})
+    end)
+
+    it("refuses a recipe that makes nothing", function()
+      local nothing = a_recipe{energy = 1, ingredients = {amount_of(1, "scrap")}, products = {}, category = "smelting"}
+      _G.prototypes = fake_prototypes{recipes = {["iron-plate-from-scrap"] = nothing}}
+
+      local result, error_message = generator.generate("iron-plate-from-scrap", 75)
+
+      assert.are.same({nil, {"blueprint-generation.error-unsupported-recipe"}}, {result, error_message})
+    end)
+
+    it("refuses the recipe picked when its ingredient is made by two recipes, which the player did not pick", function()
+      local gear = a_recipe{energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+      _G.prototypes = fake_prototypes{
+        machines = {["assembling-machine-1"] = a_machine{crafting_speed = 0.5, size = 3}},
+        recipes = {["iron-plate"] = plate, ["iron-plate-from-scrap"] = from_scrap, ["iron-gear-wheel"] = gear},
+      }
+
+      local result, error_message = generator.generate("iron-gear-wheel", 10)
+
+      assert.are.same({nil, {"blueprint-generation.error-ambiguous-recipe", {"item-name.iron-plate"}}}, {result, error_message})
+    end)
+
+    it("checks that the force has unlocked the recipe picked, not the recipes of the other products", function()
+      _G.prototypes = plate_game()
+
+      local locked = generator.generate("iron-plate-from-scrap", 75, fake_force{locked = {"iron-plate-from-scrap"}})
+      local other = generator.generate("iron-plate-from-scrap", 75, fake_force{locked = {"iron-plate"}})
+
+      assert.is_nil(locked)
+      assert.is_not_nil(other)
+    end)
+
+    it("says which product the force has not unlocked the recipe of", function()
+      _G.prototypes = plate_game()
+
+      local _, error_message = generator.generate("iron-plate-from-scrap", 75, fake_force{locked = {"iron-plate-from-scrap"}})
+
+      assert.are.same({"blueprint-generation.error-locked", {"item-name.iron-plate"}}, error_message)
+    end)
+  end)
+
   describe("refusals", function()
     it("refuses the request when the item is not supported", function()
       _G.prototypes = fake_prototypes{}
@@ -2948,7 +3015,7 @@ describe("generator", function()
       local result, error_message = generator.generate("advanced-circuit", 10)
 
       assert.is_nil(result)
-      assert.are.same({"blueprint-generation.error-unsupported-item"}, error_message)
+      assert.are.same({"blueprint-generation.error-unsupported-pick"}, error_message)
     end)
 
     it("refuses the request when a building prototype is missing", function()
@@ -3613,6 +3680,9 @@ describe("generator", function()
       energy = 5, ingredients = {fluid_of(100, "crude-oil"), fluid_of(50, "water")},
       products = {fluid_of(25, "heavy-oil"), fluid_of(45, "light-oil"), fluid_of(55, "petroleum-gas")}, category = "oil-processing",
     }
+    local two_fluids = a_recipe{
+      energy = 5, ingredients = {fluid_of(100, "crude-oil"), fluid_of(50, "water")}, products = {fluid_of(45, "petroleum-gas")}, category = "oil-processing",
+    }
     local PIPES = {
       {production_type = "input", position = {x = -1, y = 2}, direction = south}, {production_type = "input", position = {x = 1, y = 2}, direction = south},
       {production_type = "output", position = {x = -2, y = -2}, direction = north}, {production_type = "output", position = {x = 0, y = -2}, direction = north},
@@ -3642,7 +3712,7 @@ describe("generator", function()
     it("builds as many refineries as the rate needs, which make a little more than asked", function()
       _G.prototypes = oil_game()
 
-      local result = generator.generate("petroleum-gas", 1000)
+      local result = generator.generate("basic-oil-processing", 1000)
 
       assert.are.equal(2, count_named(result.entities, "oil-refinery")) -- 1000 / 540 = 1.85
     end)
@@ -3650,7 +3720,7 @@ describe("generator", function()
     it("sets the recipe on every refinery", function()
       _G.prototypes = oil_game()
 
-      local result = generator.generate("petroleum-gas", 1000)
+      local result = generator.generate("basic-oil-processing", 1000)
 
       local recipes = {}
       for _, refinery_entity in ipairs(builders.entities_named(result.entities, "oil-refinery")) do
@@ -3662,7 +3732,7 @@ describe("generator", function()
     it("says what the refineries make and what they take a minute", function()
       _G.prototypes = oil_game()
 
-      local result = generator.generate("petroleum-gas", 1000)
+      local result = generator.generate("basic-oil-processing", 1000)
 
       -- 2 refineries make 1,080, in 24 crafts a minute of 100 crude oil
       assert.are.same({"blueprint-generation.generated", "1080", {"fluid-name.petroleum-gas"},
@@ -3672,7 +3742,7 @@ describe("generator", function()
     it("describes the blueprint with its refineries", function()
       _G.prototypes = oil_game()
 
-      local result = generator.generate("petroleum-gas", 1000)
+      local result = generator.generate("basic-oil-processing", 1000)
 
       assert.are.equal("petroleum-gas: 1080 per minute from 2 x oil-refinery", result.description)
     end)
@@ -3680,7 +3750,7 @@ describe("generator", function()
     it("builds a blueprint that passes the validator: powered, wired, and two networks of pipes, each with an open end", function()
       _G.prototypes = oil_game()
 
-      local result = generator.generate("petroleum-gas", 1000)
+      local result = generator.generate("basic-oil-processing", 1000)
 
       assert.are.same({}, validator.validate(result.entities, catalog()))
     end)
@@ -3688,7 +3758,7 @@ describe("generator", function()
     it("builds from the recipe the config names when another recipe makes the fluid too", function()
       _G.prototypes = oil_game{recipes = {["basic-oil-processing"] = basic, ["advanced-oil-processing"] = advanced}}
 
-      local result = generator.generate("petroleum-gas", 1000)
+      local result = generator.generate("basic-oil-processing", 1000)
 
       assert.are.equal(2, count_named(result.entities, "oil-refinery"))
     end)
@@ -3697,13 +3767,13 @@ describe("generator", function()
       _G.prototypes = oil_game()
 
       -- the pipes carry 600 a second, 36,000 a minute: 30 refineries of 1,200 crude oil, and 30 x 540 petroleum gas
-      assert.are.same({"blueprint-generation.max-rate", "16200"}, generator.max_rate_message("petroleum-gas"))
+      assert.are.same({"blueprint-generation.max-rate", "16200"}, generator.max_rate_message("basic-oil-processing"))
     end)
 
     it("allows the most a row makes", function()
       _G.prototypes = oil_game()
 
-      local result = generator.generate("petroleum-gas", 16200)
+      local result = generator.generate("basic-oil-processing", 16200)
 
       assert.are.equal(30, count_named(result.entities, "oil-refinery"))
     end)
@@ -3719,7 +3789,7 @@ describe("generator", function()
       local entries = catalog()
       entries["oil-refinery"].fluid_connections = {input = {{x = 0, y = 5}}, output = {{x = 3, y = -1}}}
 
-      local result = generator.generate("petroleum-gas", 1000)
+      local result = generator.generate("basic-oil-processing", 1000)
 
       -- two refineries, at the columns 0 and 5, under the row 0 of the pipe that takes the fluid out, from the column of the first
       -- connection to that of the last refinery (3 to 8); the pipe that brings it in is in the row 6, from the west edge to the
@@ -3732,7 +3802,7 @@ describe("generator", function()
     it("builds with a wire exactly as long as a machine is wide, which reaches from the pole of one machine to the next", function()
       _G.prototypes = oil_game{small_pole_wire_distance = 5}
 
-      local result = generator.generate("petroleum-gas", 1000)
+      local result = generator.generate("basic-oil-processing", 1000)
 
       assert.are.equal(2, count_named(result.entities, "oil-refinery"))
     end)
@@ -3743,22 +3813,22 @@ describe("generator", function()
       local heavy = a_recipe{energy = 5, ingredients = {fluid_of(97, "crude-oil")}, products = {fluid_of(45, "petroleum-gas")}, category = "oil-processing"}
       _G.prototypes = oil_game{recipes = {["basic-oil-processing"] = heavy}}
 
-      assert.are.same({"blueprint-generation.max-rate", "16200"}, generator.max_rate_message("petroleum-gas"))
+      assert.are.same({"blueprint-generation.max-rate", "16200"}, generator.max_rate_message("basic-oil-processing"))
     end)
 
     it("gives the planner the crafting speed of the refinery from the game", function()
       -- a refinery of speed 2 makes 1,080 gas a minute and takes in 2,400 crude oil: 15 of them in 36,000, and 15 x 1,080 gas
       _G.prototypes = oil_game{machines = {["oil-refinery"] = refinery{crafting_speed = 2}}}
 
-      local result = generator.generate("petroleum-gas", 1000)
+      local result = generator.generate("basic-oil-processing", 1000)
 
       assert.are.same({"petroleum-gas: 1080 per minute from 1 x oil-refinery", {"blueprint-generation.max-rate", "16200"}},
-        {result.description, generator.max_rate_message("petroleum-gas")})
+        {result.description, generator.max_rate_message("basic-oil-processing")})
     end)
 
     it("keeps the lamps off the machines and the pipes", function()
       _G.prototypes = oil_game()
-      local lit = generator.generate("petroleum-gas", 1000, fake_force{})
+      local lit = generator.generate("basic-oil-processing", 1000, fake_force{})
 
       local problems = validator.validate(lit.entities, catalog())
 
@@ -3769,7 +3839,7 @@ describe("generator", function()
     it("refuses a rate that needs more refineries than the pipes feed, naming the most", function()
       _G.prototypes = oil_game()
 
-      local result, error_message = generator.generate("petroleum-gas", 16201)
+      local result, error_message = generator.generate("basic-oil-processing", 16201)
 
       assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "16200"}}, {result, error_message})
     end)
@@ -3777,7 +3847,7 @@ describe("generator", function()
     it("refuses a fluid whose recipe the force has not unlocked, naming the fluid", function()
       _G.prototypes = oil_game()
 
-      local result, error_message = generator.generate("petroleum-gas", 1000, fake_force{locked = {"basic-oil-processing"}})
+      local result, error_message = generator.generate("basic-oil-processing", 1000, fake_force{locked = {"basic-oil-processing"}})
 
       assert.are.same({nil, {"blueprint-generation.error-locked", {"fluid-name.petroleum-gas"}}}, {result, error_message})
     end)
@@ -3785,7 +3855,7 @@ describe("generator", function()
     it("builds with the medium pole, one for each refinery, once the force has unlocked it", function()
       _G.prototypes = oil_game()
 
-      local result = generator.generate("petroleum-gas", 1000, fake_force{})
+      local result = generator.generate("basic-oil-processing", 1000, fake_force{})
 
       assert.are.same({2, 0}, {count_named(result.entities, "medium-electric-pole"), count_named(result.entities, "small-electric-pole")})
     end)
@@ -3793,8 +3863,8 @@ describe("generator", function()
     it("puts lamps on the blueprint once the force has unlocked the small lamp", function()
       _G.prototypes = oil_game()
 
-      local lit = generator.generate("petroleum-gas", 1000, fake_force{})
-      local dark = generator.generate("petroleum-gas", 1000, fake_force{locked = {"small-lamp"}})
+      local lit = generator.generate("basic-oil-processing", 1000, fake_force{})
+      local dark = generator.generate("basic-oil-processing", 1000, fake_force{locked = {"small-lamp"}})
 
       assert.is_true(count_named(lit.entities, "small-lamp") > 0)
       assert.are.equal(0, count_named(dark.entities, "small-lamp"))
@@ -3817,7 +3887,7 @@ describe("generator", function()
           {production_type = "output", position = {x = 0, y = -2}, direction = north}}},
       {label = "the machine gives no fluid", message = "error-fluid-row-pipes",
         game = with_boxes{{production_type = "input", position = {x = 1, y = 2}, direction = south}}},
-      {label = "its recipe takes two fluids", message = "error-fluid-row-recipe", game = {recipes = {["basic-oil-processing"] = advanced}}},
+      {label = "its recipe takes two fluids", message = "error-fluid-row-recipe", game = {recipes = {["basic-oil-processing"] = two_fluids}}},
       {label = "its recipe takes an item as well", message = "error-fluid-row-recipe", game = {recipes = {["basic-oil-processing"] = a_recipe{
         energy = 5, ingredients = {fluid_of(100, "crude-oil"), amount_of(1, "iron-plate")}, products = {fluid_of(45, "petroleum-gas")}, category = "oil-processing"}}}},
       {label = "its recipe makes two products", message = "error-fluid-row-recipe", game = {recipes = {["basic-oil-processing"] = a_recipe{
@@ -3831,7 +3901,7 @@ describe("generator", function()
       it("refuses the fluid, saying which part cannot be laid out, when " .. case.label, function()
         _G.prototypes = oil_game(case.game)
 
-        local result, error_message = generator.generate("petroleum-gas", 1000)
+        local result, error_message = generator.generate("basic-oil-processing", 1000)
 
         assert.are.same({nil, {"blueprint-generation." .. case.message, {"fluid-name.petroleum-gas"}}}, {result, error_message})
       end)
@@ -3842,7 +3912,7 @@ describe("generator", function()
       boxes[#boxes + 1] = {production_type = "input", position = {x = -2, y = 0}, direction = west, connection_type = "underground"}
       _G.prototypes = oil_game(with_boxes(boxes))
 
-      local result = generator.generate("petroleum-gas", 1000)
+      local result = generator.generate("basic-oil-processing", 1000)
 
       assert.are.equal(2, count_named(result.entities, "oil-refinery"))
     end)
@@ -3850,7 +3920,7 @@ describe("generator", function()
     describe("a pipe connection the game gives in a way that is not understood stops the generator with a message", function()
       local function generate_with(box)
         _G.prototypes = oil_game(with_boxes{box})
-        return function() generator.generate("petroleum-gas", 1000) end
+        return function() generator.generate("basic-oil-processing", 1000) end
       end
 
       it("when it gives no position", function()
@@ -3890,7 +3960,7 @@ describe("generator", function()
     it("refuses a refinery that is not square", function()
       _G.prototypes = oil_game{machines = {["oil-refinery"] = refinery{height = 4}}}
 
-      local result, error_message = generator.generate("petroleum-gas", 1000)
+      local result, error_message = generator.generate("basic-oil-processing", 1000)
 
       assert.are.same({nil, {"blueprint-generation.error-unsupported-machine"}}, {result, error_message})
     end)
@@ -3898,7 +3968,7 @@ describe("generator", function()
     it("refuses a refinery that burns fuel, which a row of poles does not power", function()
       _G.prototypes = oil_game{machines = {["oil-refinery"] = refinery{burns = {"chemical"}}}}
 
-      local result, error_message = generator.generate("petroleum-gas", 1000)
+      local result, error_message = generator.generate("basic-oil-processing", 1000)
 
       assert.are.same({nil, {"blueprint-generation.error-unsupported-energy"}}, {result, error_message})
     end)
@@ -3906,7 +3976,7 @@ describe("generator", function()
     it("refuses the fluid when the game has no pipe", function()
       _G.prototypes = oil_game{missing_entities = {"pipe"}}
 
-      local result, error_message = generator.generate("petroleum-gas", 1000)
+      local result, error_message = generator.generate("basic-oil-processing", 1000)
 
       assert.are.same({nil, {"blueprint-generation.error-missing-prototype"}}, {result, error_message})
     end)
@@ -3916,7 +3986,7 @@ describe("generator", function()
 
       local result, error_message = generator.generate("crude-oil", 1000)
 
-      assert.are.same({nil, {"blueprint-generation.error-unsupported-item"}}, {result, error_message})
+      assert.are.same({nil, {"blueprint-generation.error-unsupported-pick"}}, {result, error_message})
     end)
   end)
 end)

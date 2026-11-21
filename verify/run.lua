@@ -14,9 +14,9 @@ local only = arg[1]
 local function read_cases()
   local by_environment = {a = {}, b = {}}
   for line in io.lines("verify/cases.txt") do
-    local letter, design, item, rate, expected = line:match("^(%S+) (%S+) (%S+) (%d+) (%S+)$")
+    local letter, design, recipe, rate, expected = line:match("^(%S+) (%S+) (%S+) (%d+) (%S+)$")
     if letter then
-      table.insert(by_environment[letter], {design = design, item = item, rate = tonumber(rate), expected = expected})
+      table.insert(by_environment[letter], {design = design, recipe = recipe, rate = tonumber(rate), expected = expected})
     end
   end
   return by_environment
@@ -27,7 +27,7 @@ end
 ---@param case table
 ---@return string|nil
 local function trouble_with(inst, case)
-  local ok, result = pcall(inst.generate, case.item, case.rate)
+  local ok, result = pcall(inst.generate, case.recipe, case.rate)
   if not ok then
     return "the generator stopped: " .. tostring(result)
   end
@@ -51,7 +51,7 @@ for _, letter in ipairs({"a", "b"}) do
       local trouble = trouble_with(insts[case.design], case)
       if trouble then
         failed = failed + 1
-        print(string.format("%s %s %s %d: %s", letter, case.design, case.item, case.rate, trouble))
+        print(string.format("%s %s %s %d: %s", letter, case.design, case.recipe, case.rate, trouble))
       end
     end
   end

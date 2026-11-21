@@ -17,8 +17,8 @@ How to read the class diagrams: `A *-- B` means A is made of B (it holds one or 
 
 ```mermaid
 flowchart LR
-  player([player]) -->|"item, rate"| gui["gui.lua"]
-  gui -->|"item, rate, force"| generator["generator.lua"]
+  player([player]) -->|"recipe, rate"| gui["gui.lua"]
+  gui -->|"recipe, rate, force"| generator["generator.lua"]
   prototypes[("game prototypes")] -->|"recipes, machines, belt speed"| generator
 
   generator -->|"RecipeLookup"| chain["chain.lua"]
@@ -70,6 +70,8 @@ flowchart TD
   generator --> inputs
   generator --> rows
   generator --> fluid_row
+  generator --> recipes
+  gui --> recipes
   fluid_row --> layout
   fluid_row --> grid
   generator --> labels

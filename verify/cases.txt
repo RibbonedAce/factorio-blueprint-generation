@@ -1,4 +1,4 @@
-# environment design item rate expected   (see .agents/verification.md)
+# environment design recipe rate expected   (see .agents/verification.md)
 a new arithmetic-combinator 1 ok
 a new arithmetic-combinator 30 ok
 a new arithmetic-combinator 31 refused

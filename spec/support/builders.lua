@@ -454,7 +454,7 @@ end
 -- Options (all optional):
 --   items                   names of items that exist without being in any recipe; default none
 --   recipes                 recipes by name, each made with `a_recipe`; default none.
---                           `get_recipe_filtered` finds them by the items they make
+--                           `recipe[name]` gives one, and `get_recipe_filtered` finds them by the items they make
 --   furnace_speed           the stone furnace's crafting speed, default 1;
 --                           `false` makes it an entity that cannot craft
 --   machines                other crafting machines by name, each made with `a_machine`
@@ -671,19 +671,18 @@ function builders.fake_prototypes(options)
     return found
   end
 
-  -- The recipes that make an item or a fluid, by recipe name. Understands only the filters the generator uses,
-  -- {filter = "has-product-item", elem_filters = {{filter = "name", name = item}}} and the same with "has-product-fluid".
+  -- The recipes that make an item, by recipe name. Understands only the filter the generator uses,
+  -- {filter = "has-product-item", elem_filters = {{filter = "name", name = item}}}.
   local function get_recipe_filtered(filters)
-    local kind = ({["has-product-item"] = "item", ["has-product-fluid"] = "fluid"})[filters[1] and filters[1].filter]
-    assert(#filters == 1 and kind and filters[1].mode == nil
+    assert(#filters == 1 and filters[1].filter == "has-product-item" and filters[1].mode == nil
       and #filters[1].elem_filters == 1 and filters[1].elem_filters[1].filter == "name"
       and type(filters[1].elem_filters[1].name) == "string",
-      "the fake recipe filter only knows {filter = \"has-product-item\" or \"has-product-fluid\", elem_filters = {{filter = \"name\", name = item}}}")
+      "the fake recipe filter only knows {filter = \"has-product-item\", elem_filters = {{filter = \"name\", name = item}}}")
     local wanted = filters[1].elem_filters[1].name
     local found = {}
     for recipe_name, recipe in pairs(recipes) do
       for _, product in ipairs(recipe.products) do
-        if product.type == kind and product.name == wanted then
+        if product.type == "item" and product.name == wanted then
           found[recipe_name] = recipe
         end
       end
@@ -691,7 +690,10 @@ function builders.fake_prototypes(options)
     return found
   end
 
-  return {entity = entities, item = items, fluid = fluids, get_item_filtered = get_item_filtered, get_recipe_filtered = get_recipe_filtered}
+  return {
+    entity = entities, item = items, fluid = fluids, recipe = recipes,
+    get_item_filtered = get_item_filtered, get_recipe_filtered = get_recipe_filtered,
+  }
 end
 
 -- A stand-in for a force, which tells the generator which recipes the player can use:

@@ -8,12 +8,10 @@
 
 ---@class bpgen.Config
 ---@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, panel: string, pipe: string, pipe_to_ground: string, pump: string, poles: string[], belts: bpgen.BeltTier[]}
----@field products table<string, true>  the items a player may ask for, by name
----@field fluid_products table<string, true>  the fluids a player may ask for, by name: each is made by a machine that takes fluids and gives one (see scripts/fluid_row.lua)
----@field recipes table<string, string>  the recipe that makes a product (an item or a fluid) when the game has several that a machine of `machines` can make, by the product's name
+---@field recipes table<string, true>  the recipes a player may ask for, by recipe name; the rate is of the product of the recipe
 ---@field fluid_flow_per_second number  how many units of a fluid the pipes of a blueprint are taken to carry in a second
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
----@field default_product string  the item the window starts with; must be a key of `products`
+---@field default_recipe string  the recipe the window starts with; must be a key of `recipes`
 
 ---@type bpgen.Config
 local config = {
@@ -44,10 +42,11 @@ local config = {
     },
   },
 
-  -- The items a player can ask for. How each is made comes from the game's recipes:
-  -- the generator follows the recipe back through the intermediate products it
-  -- needs, until it reaches raw items (see scripts/chain.lua).
-  products = {
+  -- The recipes a player can ask for, which the window offers (the rate is of the product of the recipe). The recipe is built in
+  -- the machine of its category (see `machines`), and how the items it takes are made comes from the game's recipes: the generator
+  -- follows them back through the intermediate products until it reaches raw items (see scripts/chain.lua). Each is named for the
+  -- item it makes but one, basic oil processing, which makes a fluid.
+  recipes = {
     ["iron-plate"] = true,
     ["copper-plate"] = true,
     ["stone-brick"] = true,
@@ -145,19 +144,11 @@ local config = {
     -- Five made ingredients (steel plate, gear wheels, bricks, circuits and pipes): the first step with a third woven belt, which needs the
     -- medium electric pole as well (see scripts/weave.lua).
     ["oil-refinery"] = true,
-  },
-
-  -- The fluids a player can ask for. Each is made from a fluid in a machine that takes fluids only: a row of machines, a pipe along
-  -- one side that brings the fluid in and a pipe along the other that takes the product away (see scripts/fluid_row.lua), and the
-  -- rate is units of the fluid a minute.
-  fluid_products = {
-    ["petroleum-gas"] = true, -- from crude oil in the oil refinery
-  },
-
-  -- The recipe for a product that more than one recipe makes in a machine of the config: petroleum gas comes from advanced oil
-  -- processing and coal liquefaction too, which have other products and other inputs, so the recipe that takes crude oil only is named.
-  recipes = {
-    ["petroleum-gas"] = "basic-oil-processing",
+    -- A recipe that takes a fluid and makes a fluid is built as a row of machines with a pipe along one side that brings the fluid
+    -- in and a pipe along the other that takes the product away, and no belts (see scripts/fluid_row.lua); the rate is units of the
+    -- fluid a minute. Advanced oil processing and coal liquefaction make petroleum gas too, with other inputs and other products,
+    -- which that row does not take.
+    ["basic-oil-processing"] = true,
   },
 
   -- How much of a fluid a run of pipes is taken to carry, units a second (ASSUMED, not checked in game: the pipes of the row of a
@@ -175,11 +166,11 @@ local config = {
     crafting = {tiers = {"assembling-machine-1", "assembling-machine-2"}}, -- electric: no fuel
     ["advanced-crafting"] = {tiers = {"assembling-machine-1", "assembling-machine-2"}}, -- engine units: the assembling machines make this category too
     ["crafting-with-fluid"] = {tiers = {"assembling-machine-2"}}, -- concrete: the first assembling machine with a fluid input, which has a 3 x 3 body
-    ["oil-processing"] = {tiers = {"oil-refinery"}}, -- petroleum gas: a machine of 5 x 5 that takes and gives fluids only (see `fluid_products`)
+    ["oil-processing"] = {tiers = {"oil-refinery"}}, -- basic oil processing: a machine of 5 x 5 that takes and gives fluids only
   },
 
-  -- The item already picked when the window opens.
-  default_product = "iron-plate",
+  -- The recipe already picked when the window opens.
+  default_recipe = "iron-plate",
 }
 
 return config

@@ -13,6 +13,7 @@ rawset(_G, "defines", {
 local builders = require("spec.support.builders")
 local validator = require("spec.support.blueprint_validator")
 local tracer = require("spec.support.belt_tracer")
+local recipe_data = require("verify.recipes")
 
 local harness = {}
 
@@ -104,7 +105,7 @@ end
 -- A fresh set of the repo's modules, watched so that every blueprint says what its machines eat and make.
 ---@param environment table
 ---@param design "new"|"old"
----@return table inst  with `generate(item, rate)` and `check(result)`
+---@return table inst  with `generate(recipe, rate)` and `check(result)`
 local function instance(environment, design)
   for name in pairs(package.loaded) do
     if name:match("^scripts%.") then package.loaded[name] = nil end
@@ -128,10 +129,10 @@ local function instance(environment, design)
   end
   local locked = environment.assembler2 and {} or {"assembling-machine-2"}
   local force = builders.fake_force{locked = locked}
-  function inst.generate(item, rate)
+  function inst.generate(recipe, rate)
     inst.info, inst.inputs = {}, {}
-    local result = generator.generate(item, rate, design == "new" and force or nil)
-    return result and {entities = result.entities, info = inst.info, inputs = inst.inputs, item = item}
+    local result = generator.generate(recipe, rate, design == "new" and force or nil)
+    return result and {entities = result.entities, info = inst.info, inputs = inst.inputs, product = recipe_data[recipe].results[1][1]}
   end
   function inst.check(result)
     return harness.problems(result, environment, design)
@@ -157,7 +158,7 @@ function harness.problems(result, environment, design)
     end
   end
   local problems = validator.validate(result.entities, catalog)
-  local options = {machines = machines, raw = raw, product = result.item, supplies = result.inputs}
+  local options = {machines = machines, raw = raw, product = result.product, supplies = result.inputs}
   if design == "new" then
     options.raw_lanes, options.raw_second_lanes, options.underground_reach = raw_lanes, raw_second_lanes, environment.fast and 7 or 5
     if environment.fast then
