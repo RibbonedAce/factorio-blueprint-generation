@@ -517,7 +517,7 @@ classDiagram
     product
     machine_speed
     rate_per_minute
-    pipe_flow_per_minute
+    machines_that_fit
   }
   class FluidRowPlan {
     machines

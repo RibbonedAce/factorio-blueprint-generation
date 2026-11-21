@@ -363,7 +363,7 @@
 ---@field recipe bpgen.Recipe
 ---@field machine_speed number
 ---@field rate_per_minute number  units of the fluid a minute
----@field pipe_flow_per_minute number  the most units of a fluid a minute that a run of pipes carries
+---@field machines_that_fit integer  how many machines stand one under the other in the length a run of pipes may have
 
 -- What `planner.plan_fluid_plant` is asked for: machines that make an item from one fluid, and the row of machines that make that fluid.
 ---@class bpgen.FluidPlantRequest
@@ -373,7 +373,8 @@
 ---@field maker_recipe bpgen.Recipe  makes the fluid the recipe takes, from one fluid
 ---@field maker_speed number  the crafting speed of the machines that make it
 ---@field rate_per_minute number  of the item
----@field pipe_flow_per_minute number  the most units of a fluid a minute that a run of pipes carries
+---@field makers_that_fit integer  how many machines that make the fluid stand one under the other in the length a run of pipes may have
+---@field plants_that_fit integer  the same for the plants
 ---@field lane_items_per_minute number  what one lane of the output belt carries
 ---@field inserter_items_per_minute number  what the output inserter of a machine moves
 

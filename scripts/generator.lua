@@ -1422,10 +1422,11 @@ local function assemble(job, planned)
   }
 end
 
--- How many units of a fluid a minute the pipes of a blueprint are taken to carry.
----@return number
-local function pipe_flow_per_minute()
-  return config.fluid_flow_per_second * 60
+-- How many machines of `stage` stand one under the other in the length a run of pipes may have.
+---@param stage bpgen.StageData
+---@return integer
+local function machines_that_fit(stage)
+  return math.floor(config.fluid_pipeline_tiles / stage.machine_size)
 end
 
 -- What the planner is asked for a row of machines that make a fluid.
@@ -1435,7 +1436,7 @@ local function fluid_row_request(job)
   local stage = job.root
   return {
     product = stage.item, recipe = stage.recipe, machine_speed = stage.machine_speed,
-    rate_per_minute = job.rate_per_minute, pipe_flow_per_minute = pipe_flow_per_minute(),
+    rate_per_minute = job.rate_per_minute, machines_that_fit = machines_that_fit(stage),
   }
 end
 
@@ -1517,7 +1518,7 @@ local function fluid_plant_request(job)
   return {
     product = stage.item, recipe = stage.recipe, machine_speed = stage.machine_speed,
     maker_recipe = maker.recipe, maker_speed = maker.machine_speed, rate_per_minute = job.rate_per_minute,
-    pipe_flow_per_minute = pipe_flow_per_minute(),
+    makers_that_fit = machines_that_fit(maker), plants_that_fit = machines_that_fit(stage),
     lane_items_per_minute = planner.lane_items_per_minute(job.belt_speed),
     inserter_items_per_minute = planner.inserter_items_per_minute(inserter.rotation_speed, inserter.stack_size, job.belt_speed),
   }

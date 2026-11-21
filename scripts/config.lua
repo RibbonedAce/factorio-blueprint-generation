@@ -10,7 +10,7 @@
 ---@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, panel: string, pipe: string, pipe_to_ground: string, pump: string, poles: string[], belts: bpgen.BeltTier[]}
 ---@field recipes table<string, true>  the recipes a player may ask for, by recipe name; the rate is of the product of the recipe
 ---@field fluid_makers table<string, string>  the recipe that makes a fluid that another recipe takes, by the name of the fluid, built as a row of machines ahead of it
----@field fluid_flow_per_second number  how many units of a fluid the pipes of a blueprint are taken to carry in a second
+---@field fluid_pipeline_tiles integer  how many tiles a run of pipes may span along a side, the machines that are fed from it with it
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
 ---@field default_recipe string  the recipe the window starts with; must be a key of `recipes`
 
@@ -164,9 +164,10 @@ local config = {
     ["petroleum-gas"] = "basic-oil-processing",
   },
 
-  -- How much of a fluid a run of pipes is taken to carry, units a second (ASSUMED, not checked in game: the pipes of the row of a
-  -- blueprint, a hundred and some tiles at most, carry well over this). The row has no more machines than the pipes feed.
-  fluid_flow_per_second = 600,
+  -- How far a run of pipes without a pump may spread: the wiki (Fluid system) says a pipeline "has no limit on its flow" and carries
+  -- fluid instantly "as long as the pipeline is not too long", which it takes as outside an area of 320 x 320 tiles. A row of machines
+  -- has no more of them than stand in that many tiles one under the other.
+  fluid_pipeline_tiles = 320,
 
   -- The machine that makes the recipes of each category, and the item it burns
   -- (leave `fuel` out for an electric machine). A recipe whose categories are not
