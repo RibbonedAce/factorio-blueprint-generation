@@ -10,11 +10,14 @@ local planner = require("scripts.planner")
 local layout = require("scripts.layout")
 local inputs = require("scripts.inputs")
 local rows = require("scripts.rows")
+local fluid_row = require("scripts.fluid_row")
 local labels = require("scripts.labels")
 local lights = require("scripts.lights")
 local messages = require("scripts.messages")
 
 local generator = {}
+
+local north, east, south, west = defines.direction.north, defines.direction.east, defines.direction.south, defines.direction.west
 
 -- How many ingredients one input belt carries: two, one on each lane. A step with more takes them from more belts: two
 -- reached by long-handed inserters, or two or three woven.
@@ -241,15 +244,18 @@ end
 ---@field prototype LuaRecipePrototype
 ---@field choice bpgen.MachineChoice
 
--- The recipes that make `item_name` in a machine the config names.
+-- The recipes that make `item_name` (an item, or a fluid the config lists as a fluid product) in a machine the config names: the
+-- one recipe the config picks for it, when it picks one.
 ---@param item_name string
 ---@return bpgen.Candidate[]
 local function candidate_recipes(item_name)
-  local filters = {{filter = "has-product-item", elem_filters = {{filter = "name", name = item_name}}}}
+  local filter = config.fluid_products[item_name] and "has-product-fluid" or "has-product-item"
+  local filters = {{filter = filter, elem_filters = {{filter = "name", name = item_name}}}}
+  local chosen = config.recipes[item_name]
   local found = {}
   for _, prototype in pairs(prototypes.get_recipe_filtered(filters)) do
     local choice = machine_choice(prototype)
-    if choice then
+    if choice and (chosen == nil or prototype.name == chosen) then
       found[#found + 1] = {prototype = prototype, choice = choice}
     end
   end
@@ -351,6 +357,7 @@ end
 -- for, the tree of steps that makes it with their machines, and the game's numbers.
 ---@class bpgen.Job
 ---@field item_name string  what the player wants
+---@field fluid_product boolean  whether it is a fluid, made in a row of machines that take and give fluids only (see scripts/fluid_row.lua)
 ---@field rate_per_minute number  how much of it
 ---@field root bpgen.StageData  the step that makes `item_name`, with the steps below it
 ---@field names bpgen.SharedNames  the prototype names every column builds with
@@ -509,7 +516,7 @@ end
 ---@return bpgen.Job|nil
 ---@return LocalisedString|nil error_message
 local function read_job(item_name, rate_per_minute, force)
-  if not config.products[item_name] then
+  if not (config.products[item_name] or config.fluid_products[item_name]) then
     return nil, messages.unsupported_item()
   end
   local names = shared_names(force)
@@ -524,6 +531,7 @@ local function read_job(item_name, rate_per_minute, force)
   end
   return add_unlocked({
     item_name = item_name,
+    fluid_product = config.fluid_products[item_name] == true,
     rate_per_minute = rate_per_minute,
     root = root,
     names = names,
@@ -705,10 +713,123 @@ local function stage_problem(job, stage)
   return nil
 end
 
+-- The tile beyond a tile of a machine, as a step in tiles, by the way a pipe connection points.
+---@type table<defines.direction, {x: integer, y: integer}>
+local CONNECTION_STEPS = {
+  [north] = {x = 0, y = -1}, [east] = {x = 1, y = 0}, [south] = {x = 0, y = 1}, [west] = {x = -1, y = 0},
+}
+
+-- Whether a tile is one of the tiles of a machine of `size` tiles on a side, counted from its top-left tile.
+---@param tile {x: integer, y: integer}
+---@param size integer
+---@return boolean
+local function on_machine(tile, size)
+  return tile.x >= 0 and tile.x < size and tile.y >= 0 and tile.y < size
+end
+
+-- The tile of the pipe at a pipe connection of a machine of `size` tiles, from its top-left tile, as it faces north. The game gives
+-- a connection as the position, from the centre of the machine, of the tile OF THE MACHINE it is on, at its edge, and the way it
+-- points (its own example is the assembling machine 2: `position = {0, -1}`, `direction = north`, so the connection is on the top
+-- row, in the middle). The pipe stands on the tile beyond, outside the machine. `positions` has the position for each of the four
+-- ways the machine can face, the one for north first. Nil for a connection that is not an ordinary one (an underground one, a
+-- linked one).
+---@param connection PipeConnectionDefinition
+---@param size integer
+---@return {x: integer, y: integer}|nil
+local function connection_tile(connection, size)
+  if connection.connection_type ~= "normal" then
+    return nil
+  end
+  local position = assert(connection.positions[1], "generator: the game does not give the position of a pipe connection of the machine")
+  local step = assert(CONNECTION_STEPS[connection.direction], "generator: the game gives a pipe connection of the machine a direction other than north, east, south or west")
+  local on = {x = math.floor(size / 2 + position.x), y = math.floor(size / 2 + position.y)}
+  local beyond = {x = on.x + step.x, y = on.y + step.y}
+  assert(on_machine(on, size) and not on_machine(beyond, size), string.format(
+    "generator: a pipe connection of the machine is on the tile %d,%d and points to the tile %d,%d, which is not from a tile at the edge of the machine to one outside it (%d tiles on a side)",
+    on.x, on.y, beyond.x, beyond.y, size))
+  return beyond
+end
+
+-- The fluid boxes of a machine as plain data: where the pipes of each connect, for the machine facing north.
+---@param machine LuaEntityPrototype
+---@param size integer
+---@return bpgen.FluidBox[]
+local function read_fluid_boxes(machine, size)
+  local boxes = {}
+  for _, box in ipairs(machine.fluidbox_prototypes) do
+    local tiles = {}
+    for _, connection in ipairs(box.pipe_connections) do
+      tiles[#tiles + 1] = connection_tile(connection, size)
+    end
+    boxes[#boxes + 1] = {production_type = box.production_type, tiles = tiles}
+  end
+  return boxes
+end
+
+-- The rows of pipes of the machines of a step that makes a fluid (see `fluid_row.rows_of`), or nil when their pipe
+-- connections are not in rows of the kind the layout draws.
+---@param stage bpgen.StageData  its machine is square
+---@return bpgen.FluidRows|nil
+local function fluid_rows_of(stage)
+  local size = stage.machine_size --[[@as integer]]
+  return fluid_row.rows_of(read_fluid_boxes(prototypes.entity[stage.machine], size), size)
+end
+
+-- Whether the pole of the blueprint can power a machine from beyond the pipes beside it (two tiles away) and reach the pole of the
+-- next machine.
+---@param names bpgen.SharedNames
+---@param size integer  the machine's size
+---@return boolean
+local function poles_fit_row(names, size)
+  return layout.pole_reach(names.pole_supply_distance) >= 2 and size <= names.pole_wire_distance
+end
+
+-- The reason the machine of a step that makes a fluid cannot be built with, as a message for the player, or nil: it is square,
+-- electric, and the pipe exists.
+---@param job bpgen.Job
+---@param stage bpgen.StageData
+---@return LocalisedString|nil
+local function fluid_row_machine_problem(job, stage)
+  if not stage.machine_size then
+    return messages.unsupported_machine()
+  end
+  if not (stage.energy_source and stage.energy_source.kind == "electric") then
+    return messages.unsupported_energy()
+  end
+  if not prototypes.entity[job.names.pipe] then
+    return messages.missing_prototype()
+  end
+  return nil
+end
+
+-- The reason a fluid cannot be made as a row of machines, as a message for the player, or nil.
+---@param job bpgen.Job
+---@return LocalisedString|nil
+local function fluid_row_problem(job)
+  local stage = job.root
+  local problem = fluid_row_machine_problem(job, stage)
+  if problem then
+    return problem
+  end
+  if not planner.is_fluid_row_recipe(stage.recipe, stage.item) then
+    return messages.fluid_row_recipe(stage.item)
+  end
+  if not fluid_rows_of(stage) then
+    return messages.fluid_row_pipes(stage.item)
+  end
+  if not poles_fit_row(job.names, stage.machine_size --[[@as integer]]) then
+    return messages.fluid_row_poles(stage.item)
+  end
+  return nil
+end
+
 -- The reason one of the machines cannot be built with, as a message for the player, or nil.
 ---@param job bpgen.Job
 ---@return LocalisedString|nil
 local function machine_problem(job)
+  if job.fluid_product then
+    return fluid_row_problem(job)
+  end
   for _, stage in ipairs(in_order(job.root, {})) do
     local problem = stage_problem(job, stage)
     if problem then
@@ -1178,6 +1299,69 @@ local function assemble(job, planned)
   }
 end
 
+-- What the planner is asked for a row of machines that make a fluid.
+---@param job bpgen.Job
+---@return bpgen.FluidRowRequest
+local function fluid_row_request(job)
+  local stage = job.root
+  return {
+    product = stage.item, recipe = stage.recipe, machine_speed = stage.machine_speed,
+    rate_per_minute = job.rate_per_minute, pipe_flow_per_minute = config.fluid_flow_per_second * 60,
+  }
+end
+
+-- What `fluid_row.build` is asked for `count` machines of the step: `fluid_row_problem` has already checked the machine.
+---@param job bpgen.Job
+---@param count integer
+---@return bpgen.FluidRowBuild
+local function fluid_row_build(job, count)
+  local stage = job.root
+  local size = machine_size_of(stage)
+  local boxes = read_fluid_boxes(prototypes.entity[stage.machine], size)
+  return {
+    machine = stage.machine, recipe = stage.recipe.name, size = size, count = count, boxes = boxes,
+    rows = assert(fluid_row.rows_of(boxes, size), "generator: the pipe connections of the machine are not in rows"),
+    pipe = job.names.pipe, pole = job.names.pole,
+    pole_supply_distance = job.names.pole_supply_distance, pole_wire_distance = job.names.pole_wire_distance,
+  }
+end
+
+-- Puts the lamps on a row of machines when the job asks for them (see scripts/lights.lua).
+---@param job bpgen.Job
+---@param entities bpgen.Entity[]
+local function add_row_lights(job, entities)
+  if not job.lamp_supply_distance then
+    return
+  end
+  local sizes = {[job.root.machine] = machine_size_of(job.root)}
+  lights.add(entities, {
+    lamp = job.names.lamp, pole = job.names.pole, supply_distance = job.lamp_supply_distance,
+    size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
+  })
+end
+
+-- A row of machines for the fluid asked for, and the words for the player: what the row makes and takes a minute.
+---@param job bpgen.Job
+---@return bpgen.Generated|nil
+---@return LocalisedString|nil error_message
+local function generate_fluid_row(job)
+  local stage = job.root
+  local plan, reason, max_rate = planner.plan_fluid_row(fluid_row_request(job))
+  if not plan then
+    ---@cast reason bpgen.PlanReason -- the planner always gives a reason when it gives no plan
+    return nil, messages.plan_problem(reason, max_rate)
+  end
+  local entities = fluid_row.build(fluid_row_build(job, plan.machines))
+  add_row_lights(job, entities)
+  local crafts = plan.output_per_minute / planner.amount_made(stage.recipe, stage.item)
+  local taken = {name = stage.recipe.fluids[1].name, amount = crafts * stage.recipe.fluids[1].amount}
+  return {
+    entities = entities,
+    description = messages.description(job.item_name, plan.output_per_minute, {{machines = plan.machines, machine = stage.machine}}),
+    message = messages.ready(plan.output_per_minute, stage.item, {taken}, nil),
+  }
+end
+
 -- The job for this request, with every machine checked, or nil and the message for the
 -- player. With a `force`, an item whose recipe the force has not unlocked is refused too.
 ---@param item_name string
@@ -1201,10 +1385,9 @@ local function read_buildable_job(item_name, rate_per_minute, force)
   return job, nil
 end
 
--- The products the item picker offers a force: every product of the config except those
--- whose recipe the force has not unlocked (see `locked_item`). A product that cannot be
--- made for another reason stays in the list, so choosing it still shows the message that
--- says why.
+-- The products of the config except those whose recipe the force has not unlocked (see
+-- `locked_item`): the window starts with one of them. A product that cannot be made for
+-- another reason stays in the list, so choosing it still shows the message that says why.
 ---@param force LuaForce
 ---@return string[] names  sorted
 function generator.unlocked_products(force)
@@ -1219,6 +1402,17 @@ function generator.unlocked_products(force)
   return names
 end
 
+-- The most a blueprint of the job can make a minute, or nil and why not.
+---@param job bpgen.Job
+---@return number|nil max_rate
+---@return bpgen.PlanReason|nil reason
+local function max_rate_of(job)
+  if job.fluid_product then
+    return planner.max_fluid_row_rate(fluid_row_request(job))
+  end
+  return planner.max_tree_rate(tree_request(job))
+end
+
 -- The line the window shows under the rate field: the most one blueprint of
 -- `item_name` can make per minute, or the message for why it cannot be made.
 ---@param item_name string
@@ -1230,7 +1424,7 @@ function generator.max_rate_message(item_name, force)
     ---@cast problem LocalisedString -- there is always a message when there is no job
     return problem
   end
-  local max_rate, reason = planner.max_tree_rate(tree_request(job))
+  local max_rate, reason = max_rate_of(job)
   if not max_rate then
     ---@cast reason bpgen.PlanReason
     return messages.plan_problem(reason)
@@ -1253,6 +1447,9 @@ function generator.generate(item_name, rate_per_minute, force)
   local job, problem = read_buildable_job(item_name, rate_per_minute, force)
   if not job then
     return nil, problem
+  end
+  if job.fluid_product then
+    return generate_fluid_row(job)
   end
 
   local planned, refusal = make_plans(job)

@@ -594,6 +594,72 @@ local function whole_machines(machines_worth)
   return math.max(1, math.ceil(machines_worth - EPSILON))
 end
 
+-- Whether a row of machines can make the product from the recipe: the recipe takes one fluid and nothing else, and its one
+-- product is the product (see `is_supported`).
+---@param recipe bpgen.Recipe
+---@param product_name string
+---@return boolean
+function planner.is_fluid_row_recipe(recipe, product_name)
+  return #recipe.ingredients == 0 and #recipe.fluids == 1 and is_supported(recipe, product_name)
+end
+
+-- How many crafts one machine of a row makes in a minute: a craft takes recipe.energy / machine_speed seconds.
+---@param request bpgen.FluidRowRequest
+---@return number
+local function fluid_crafts_per_minute(request)
+  return 60 * request.machine_speed / request.recipe.energy
+end
+
+-- How much of its fluid one machine of a row makes in a minute.
+---@param request bpgen.FluidRowRequest
+---@return number
+local function fluid_output_per_machine(request)
+  return fluid_crafts_per_minute(request) * planner.amount_made(request.recipe, request.product)
+end
+
+-- How many machines the pipes of a row feed at most. A machine takes in or gives out a minute as much as a craft takes in of its
+-- fluid or makes of its product (whichever is more) times its crafts, and the pipes carry `request.pipe_flow_per_minute`. A
+-- machine is always fed, even one that takes more than the pipes carry.
+---@param request bpgen.FluidRowRequest
+---@return integer
+local function most_fluid_machines(request)
+  local most_a_craft = math.max(request.recipe.fluids[1].amount, planner.amount_made(request.recipe, request.product))
+  local one_machine = fluid_crafts_per_minute(request) * most_a_craft
+  return math.max(1, math.floor(request.pipe_flow_per_minute / one_machine + EPSILON))
+end
+
+-- The most a row of machines that make a fluid can make a minute: as much as the machines the pipes feed make. Nil and the
+-- reason when the recipe is not one the planner handles.
+---@param request bpgen.FluidRowRequest
+---@return number|nil max_rate
+---@return bpgen.PlanReason|nil reason
+function planner.max_fluid_row_rate(request)
+  if not planner.is_fluid_row_recipe(request.recipe, request.product) then
+    return nil, "unsupported-recipe"
+  end
+  return most_fluid_machines(request) * fluid_output_per_machine(request), nil
+end
+
+-- How many machines a row needs for `request.rate_per_minute` units of the fluid a minute, and what they make in all (a whole
+-- number of machines makes a little more than asked). Nil, the reason and the most a row can make when the rate is more
+-- than the pipes feed.
+---@param request bpgen.FluidRowRequest
+---@return bpgen.FluidRowPlan|nil plan
+---@return bpgen.PlanReason|nil reason
+---@return number|nil max_rate  given with "rate-too-high"
+function planner.plan_fluid_row(request)
+  local max_rate, reason = planner.max_fluid_row_rate(request)
+  if not max_rate then
+    return nil, reason
+  end
+  local per_machine = fluid_output_per_machine(request)
+  local machines = whole_machines(request.rate_per_minute / per_machine)
+  if machines > most_fluid_machines(request) then
+    return nil, "rate-too-high", max_rate
+  end
+  return {machines = machines, output_per_minute = machines * per_machine, per_machine = per_machine}
+end
+
 -- Whether the sides of the machines leave room for a winding belt: they are 3x3 and neither side is full (the plain and the
 -- long-handed inserters of the input side together). Not knowing the size (`limits.machine_size` nil) leaves the question
 -- open and says yes. A side of woven belts is full and takes no row of poles, which stand beside the belts (see

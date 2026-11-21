@@ -46,3 +46,7 @@ The cases do not follow the code. When a change adds a product or a regime, add 
 - A case is shown to be needed the way a test is: break the code on purpose in a copy of the repo and see that some case fails.
 
 If a layout feature is large (it touches `layout`, `rows`, `weave` or `inputs`), compare the blueprints of the cases with the commit before as well: a hash of the entities of each case, made on both trees (the cases that should not change must not).
+
+## What the cases do not cover yet
+
+- **Petroleum gas, the row of oil refineries (5ao).** It is a new product and a new regime (a fluid made from a fluid, with no belts), and `verify/` has no case for it: the suite takes the recipes from the game's `recipe.lua`, and the recipe of basic oil processing (its amounts, its time, any `fluidbox_index` on its fluids) has not been copied into `verify/recipes.lua` yet. Its specs (`spec/fluid_row_spec.lua`, the oil refinery block of `spec/generator_spec.lua`) use a stand-in refinery of 5 x 5 and a made-up recipe. To add the cases: copy the recipe, give `verify/harness.lua` a refinery with the game's fluid boxes (`pipe_boxes` of `builders.a_machine`), and add the cases the rule above asks for (rate 1, 2 and 3, 4 or 5 machines, the maximum and the maximum plus one) in both environments and both designs (the force changes the pole and the lamps of the row, not its belts, which it has none of).

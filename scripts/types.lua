@@ -344,6 +344,44 @@
 ---@field first_row integer  the first row of any tile, which is -1 when belt a or a tap has to start before row 0
 ---@field starts table<"a"|"b"|"c", integer>  the row of the first tile of each belt, where the belt that brings it ends
 
+-- A row of machines that make a fluid from a fluid (scripts/fluid_row.lua) --------------
+
+-- One fluid box of a machine, as plain data: where its pipes connect, for the machine facing north.
+---@class bpgen.FluidBox
+---@field production_type "input"|"output"|"input-output"
+---@field tiles {x: integer, y: integer}[]  the tiles of its pipe connections, from the top-left tile of the machine (a tile outside the machine has x or y below 0 or from its size on)
+
+-- The tile rows, outside the machines of a row, that the pipes of the fluids they take and the fluids they give run along.
+---@class bpgen.FluidRows
+---@field inputs integer  -1 above the machines, their size under them
+---@field outputs integer  the other of the two
+
+-- What `planner.plan_fluid_row` is asked for.
+---@class bpgen.FluidRowRequest
+---@field product string  the fluid
+---@field recipe bpgen.Recipe
+---@field machine_speed number
+---@field rate_per_minute number  units of the fluid a minute
+---@field pipe_flow_per_minute number  the most units of a fluid a minute that a run of pipes carries
+
+---@class bpgen.FluidRowPlan
+---@field machines integer
+---@field output_per_minute number  what all the machines make
+---@field per_machine number  what one machine makes
+
+-- What `fluid_row.build` is asked for.
+---@class bpgen.FluidRowBuild
+---@field machine string  prototype name of the machines
+---@field recipe string  the recipe they are set to
+---@field size integer  tiles across and along the map
+---@field count integer  how many machines
+---@field boxes bpgen.FluidBox[]
+---@field rows bpgen.FluidRows
+---@field pipe string
+---@field pole string
+---@field pole_supply_distance number
+---@field pole_wire_distance number
+
 -- What the message and the description of a blueprint are made from --------------
 
 ---@class bpgen.RawAmount  how much of one raw item (or of the fuel) the blueprint uses

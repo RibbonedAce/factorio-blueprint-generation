@@ -9,6 +9,9 @@
 ---@class bpgen.Config
 ---@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, panel: string, pipe: string, pipe_to_ground: string, pump: string, poles: string[], belts: bpgen.BeltTier[]}
 ---@field products table<string, true>  the items a player may ask for, by name
+---@field fluid_products table<string, true>  the fluids a player may ask for, by name: each is made by a machine that takes fluids and gives one (see scripts/fluid_row.lua)
+---@field recipes table<string, string>  the recipe that makes a product (an item or a fluid) when the game has several that a machine of `machines` can make, by the product's name
+---@field fluid_flow_per_second number  how many units of a fluid the pipes of a blueprint are taken to carry in a second
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none
 ---@field default_product string  the item the window starts with; must be a key of `products`
 
@@ -144,6 +147,23 @@ local config = {
     ["oil-refinery"] = true,
   },
 
+  -- The fluids a player can ask for. Each is made from a fluid in a machine that takes fluids only: a row of machines, a pipe along
+  -- one side that brings the fluid in and a pipe along the other that takes the product away (see scripts/fluid_row.lua), and the
+  -- rate is units of the fluid a minute.
+  fluid_products = {
+    ["petroleum-gas"] = true, -- from crude oil in the oil refinery
+  },
+
+  -- The recipe for a product that more than one recipe makes in a machine of the config: petroleum gas comes from advanced oil
+  -- processing and coal liquefaction too, which have other products and other inputs, so the recipe that takes crude oil only is named.
+  recipes = {
+    ["petroleum-gas"] = "basic-oil-processing",
+  },
+
+  -- How much of a fluid a run of pipes is taken to carry, units a second (ASSUMED, not checked in game: the pipes of the row of a
+  -- blueprint, a hundred and some tiles at most, carry well over this). The row has no more machines than the pipes feed.
+  fluid_flow_per_second = 600,
+
   -- The machine that makes the recipes of each category, and the item it burns
   -- (leave `fuel` out for an electric machine). A recipe whose categories are not
   -- listed here cannot be made. Only a step fed raw items can burn fuel, since the fuel
@@ -155,6 +175,7 @@ local config = {
     crafting = {tiers = {"assembling-machine-1", "assembling-machine-2"}}, -- electric: no fuel
     ["advanced-crafting"] = {tiers = {"assembling-machine-1", "assembling-machine-2"}}, -- engine units: the assembling machines make this category too
     ["crafting-with-fluid"] = {tiers = {"assembling-machine-2"}}, -- concrete: the first assembling machine with a fluid input, which has a 3 x 3 body
+    ["oil-processing"] = {tiers = {"oil-refinery"}}, -- petroleum gas: a machine of 5 x 5 that takes and gives fluids only (see `fluid_products`)
   },
 
   -- The item already picked when the window opens.

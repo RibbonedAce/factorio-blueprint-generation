@@ -221,6 +221,35 @@ function builders.belt_rows(entities, column)
   return rows
 end
 
+-- The columns of the entities of one name, one tile each, in one tile row, in order.
+---@param entities table[]
+---@param name string
+---@param row integer
+---@return integer[]
+function builders.columns_in_row(entities, name, row)
+  local columns = {}
+  for _, entity in ipairs(builders.entities_named(entities, name)) do
+    local tile = grid.top_left_tile(entity.position)
+    if tile.y == row then
+      columns[#columns + 1] = tile.x
+    end
+  end
+  table.sort(columns)
+  return columns
+end
+
+-- The whole numbers from `first` to `last`.
+---@param first integer
+---@param last integer
+---@return integer[]
+function builders.range(first, last)
+  local numbers = {}
+  for number = first, last do
+    numbers[#numbers + 1] = number
+  end
+  return numbers
+end
+
 -- The directions the belts of one tile column face, each once, in the order they are first met.
 ---@param entities table[]
 ---@param column integer
@@ -395,7 +424,14 @@ end
 -- `type` is the prototype type, "assembling-machine" unless given; a furnace is "furnace" (it picks its own recipe).
 -- `fluid_input = true` gives the machine a fluid box that takes a fluid in and one that gives one out (an assembling machine 2 has
 -- both); `fluid_boxes` says the production type of each box instead ("input", "output", "input-output").
----@param options {crafting_speed: number|false, size: integer, height?: integer, burns?: string[], heat?: boolean, energy_usage?: number, type?: string, fluid_input?: boolean, fluid_boxes?: string[]}  `height` defaults to `size`; give it for a machine that is not square; `fluid_input` gives it a fluid box that takes a fluid in; `fluid_boxes` the production types of its fluid boxes, which `fluid_input` leaves to {"input", "output"}
+-- `pipe_boxes` gives the machine fluid boxes with a pipe connection each, as the game describes them: the production type, the
+-- position of the connection from the centre of the machine as it faces north, which is the position of the tile of the MACHINE at
+-- its edge (not of the pipe outside it), and the direction the connection points in. A refinery of 5 x 5 has an input under it at
+-- {x = 1, y = 2}, pointing south (the game's own example is the assembling machine 2: `position = {0, -1}`, `direction = north`).
+-- A box may say `connection_type` too, "normal" unless it says "underground" or "linked", and `no_position = true` for a connection
+-- the game gives no position for.
+--     a_machine{crafting_speed = 1, size = 5, pipe_boxes = {{production_type = "input", position = {x = 1, y = 2}, direction = defines.direction.south}}}
+---@param options {crafting_speed: number|false, size: integer, height?: integer, burns?: string[], heat?: boolean, energy_usage?: number, type?: string, fluid_input?: boolean, fluid_boxes?: string[], pipe_boxes?: {production_type: string, position: {x: number, y: number}, direction: defines.direction, connection_type?: string, no_position?: boolean}[]}  `height` defaults to `size`; give it for a machine that is not square; `fluid_input` gives it a fluid box that takes a fluid in; `fluid_boxes` the production types of its fluid boxes, which `fluid_input` leaves to {"input", "output"}; `pipe_boxes` its fluid boxes with their pipe connections
 ---@return table
 function builders.a_machine(options)
   return {
@@ -408,6 +444,7 @@ function builders.a_machine(options)
     energy_usage = options.energy_usage or 1500,
     fluid_input = options.fluid_input,
     fluid_boxes = options.fluid_boxes,
+    pipe_boxes = options.pipe_boxes,
   }
 end
 
@@ -490,11 +527,30 @@ function builders.fake_prototypes(options)
     end
     return set
   end
-  -- The fluid boxes of a machine: those `fluid_boxes` names, else an input and an output when `fluid_input` is set, else none.
+  -- The four positions of a pipe connection, one for each way the machine faces (north, east, south, west), from the one it has facing
+  -- north: turning the machine a quarter clockwise moves the connection from (x, y) to (-y, x). The `direction` of a connection is the
+  -- one it has facing north only, as in the game.
+  local function turned_positions(position)
+    return {
+      {x = position.x, y = position.y}, {x = -position.y, y = position.x},
+      {x = -position.x, y = -position.y}, {x = position.y, y = -position.x},
+    }
+  end
+  -- The fluid boxes of a machine: those `pipe_boxes` has, each with the one pipe connection it says, else those `fluid_boxes`
+  -- names, else an input and an output when `fluid_input` is set, else none.
   local function fluid_boxes(fields)
     local boxes = {}
+    for index, box in ipairs(fields.pipe_boxes or {}) do
+      boxes[#boxes + 1] = {
+        production_type = box.production_type, index = index,
+        pipe_connections = {{
+          connection_type = box.connection_type or "normal", positions = box.no_position and {} or turned_positions(box.position),
+          direction = box.direction,
+        }},
+      }
+    end
     for _, production_type in ipairs(fields.fluid_boxes or (fields.fluid_input and {"input", "output"} or {})) do
-      boxes[#boxes + 1] = {production_type = production_type}
+      boxes[#boxes + 1] = {production_type = production_type, index = #boxes + 1, pipe_connections = {}}
     end
     return boxes
   end
@@ -590,7 +646,11 @@ function builders.fake_prototypes(options)
       end
     end
     for _, amount in ipairs(recipe.products) do
-      items[amount.name] = items[amount.name] or item(amount.name)
+      if amount.type == "fluid" then
+        fluids[amount.name] = {localised_name = {"fluid-name." .. amount.name}}
+      else
+        items[amount.name] = items[amount.name] or item(amount.name)
+      end
     end
   end
 
@@ -611,18 +671,19 @@ function builders.fake_prototypes(options)
     return found
   end
 
-  -- The recipes that make an item, by recipe name. Understands only the filter the
-  -- generator uses, {filter = "has-product-item", elem_filters = {{filter = "name", name = item}}}.
+  -- The recipes that make an item or a fluid, by recipe name. Understands only the filters the generator uses,
+  -- {filter = "has-product-item", elem_filters = {{filter = "name", name = item}}} and the same with "has-product-fluid".
   local function get_recipe_filtered(filters)
-    assert(#filters == 1 and filters[1].filter == "has-product-item" and filters[1].mode == nil
+    local kind = ({["has-product-item"] = "item", ["has-product-fluid"] = "fluid"})[filters[1] and filters[1].filter]
+    assert(#filters == 1 and kind and filters[1].mode == nil
       and #filters[1].elem_filters == 1 and filters[1].elem_filters[1].filter == "name"
       and type(filters[1].elem_filters[1].name) == "string",
-      "the fake recipe filter only knows {filter = \"has-product-item\", elem_filters = {{filter = \"name\", name = item}}}")
+      "the fake recipe filter only knows {filter = \"has-product-item\" or \"has-product-fluid\", elem_filters = {{filter = \"name\", name = item}}}")
     local wanted = filters[1].elem_filters[1].name
     local found = {}
     for recipe_name, recipe in pairs(recipes) do
       for _, product in ipairs(recipe.products) do
-        if product.type == "item" and product.name == wanted then
+        if product.type == kind and product.name == wanted then
           found[recipe_name] = recipe
         end
       end

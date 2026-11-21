@@ -3601,4 +3601,322 @@ describe("generator", function()
         "generator: the game does not give the wire distance of medium-electric-pole")
     end)
   end)
+
+  describe("a fluid made from a fluid, in a row of oil refineries", function()
+    -- 100 crude oil make 45 petroleum gas in 5 s: a refinery of speed 1 makes 540 a minute and takes 1,200 crude oil. The refinery is
+    -- 5 x 5. The game gives each pipe connection as the tile of the machine it is on, at its edge, and the way it points: the two
+    -- that take a fluid are on the bottom row (one tile either side of the middle) and point south, the three that give one are on
+    -- the top row and point north. The pipes stand on the tiles outside, under it and above it.
+    local north, south, west = defines.direction.north, defines.direction.south, defines.direction.west
+    local basic = a_recipe{energy = 5, ingredients = {fluid_of(100, "crude-oil")}, products = {fluid_of(45, "petroleum-gas")}, category = "oil-processing"}
+    local advanced = a_recipe{
+      energy = 5, ingredients = {fluid_of(100, "crude-oil"), fluid_of(50, "water")},
+      products = {fluid_of(25, "heavy-oil"), fluid_of(45, "light-oil"), fluid_of(55, "petroleum-gas")}, category = "oil-processing",
+    }
+    local PIPES = {
+      {production_type = "input", position = {x = -1, y = 2}, direction = south}, {production_type = "input", position = {x = 1, y = 2}, direction = south},
+      {production_type = "output", position = {x = -2, y = -2}, direction = north}, {production_type = "output", position = {x = 0, y = -2}, direction = north},
+      {production_type = "output", position = {x = 2, y = -2}, direction = north},
+    }
+
+    local function refinery(changes)
+      return a_machine(builders.merged({crafting_speed = 1, size = 5, pipe_boxes = PIPES}, changes))
+    end
+
+    local function oil_game(changes)
+      return fake_prototypes(builders.merged({
+        machines = {["oil-refinery"] = refinery()},
+        recipes = {["basic-oil-processing"] = basic},
+      }, changes))
+    end
+
+    local function catalog()
+      local entries = builders.a_catalog{}
+      entries["oil-refinery"] = {
+        kind = "machine", width = 5, height = 5, needs_power = true,
+        fluid_connections = {input = {{x = 1, y = 5}, {x = 3, y = 5}}, output = {{x = 0, y = -1}, {x = 2, y = -1}, {x = 4, y = -1}}},
+      }
+      return entries
+    end
+
+    it("builds as many refineries as the rate needs, which make a little more than asked", function()
+      _G.prototypes = oil_game()
+
+      local result = generator.generate("petroleum-gas", 1000)
+
+      assert.are.equal(2, count_named(result.entities, "oil-refinery")) -- 1000 / 540 = 1.85
+    end)
+
+    it("sets the recipe on every refinery", function()
+      _G.prototypes = oil_game()
+
+      local result = generator.generate("petroleum-gas", 1000)
+
+      local recipes = {}
+      for _, refinery_entity in ipairs(builders.entities_named(result.entities, "oil-refinery")) do
+        recipes[#recipes + 1] = refinery_entity.recipe
+      end
+      assert.are.same({"basic-oil-processing", "basic-oil-processing"}, recipes)
+    end)
+
+    it("says what the refineries make and what they take a minute", function()
+      _G.prototypes = oil_game()
+
+      local result = generator.generate("petroleum-gas", 1000)
+
+      -- 2 refineries make 1,080, in 24 crafts a minute of 100 crude oil
+      assert.are.same({"blueprint-generation.generated", "1080", {"fluid-name.petroleum-gas"},
+        {"", {"blueprint-generation.raw-amount", "2400", {"fluid-name.crude-oil"}}}}, result.message)
+    end)
+
+    it("describes the blueprint with its refineries", function()
+      _G.prototypes = oil_game()
+
+      local result = generator.generate("petroleum-gas", 1000)
+
+      assert.are.equal("petroleum-gas: 1080 per minute from 2 x oil-refinery", result.description)
+    end)
+
+    it("builds a blueprint that passes the validator: powered, wired, and two networks of pipes, each with an open end", function()
+      _G.prototypes = oil_game()
+
+      local result = generator.generate("petroleum-gas", 1000)
+
+      assert.are.same({}, validator.validate(result.entities, catalog()))
+    end)
+
+    it("builds from the recipe the config names when another recipe makes the fluid too", function()
+      _G.prototypes = oil_game{recipes = {["basic-oil-processing"] = basic, ["advanced-oil-processing"] = advanced}}
+
+      local result = generator.generate("petroleum-gas", 1000)
+
+      assert.are.equal(2, count_named(result.entities, "oil-refinery"))
+    end)
+
+    it("names the most a row makes, which is as many refineries as the pipes feed", function()
+      _G.prototypes = oil_game()
+
+      -- the pipes carry 600 a second, 36,000 a minute: 30 refineries of 1,200 crude oil, and 30 x 540 petroleum gas
+      assert.are.same({"blueprint-generation.max-rate", "16200"}, generator.max_rate_message("petroleum-gas"))
+    end)
+
+    it("allows the most a row makes", function()
+      _G.prototypes = oil_game()
+
+      local result = generator.generate("petroleum-gas", 16200)
+
+      assert.are.equal(30, count_named(result.entities, "oil-refinery"))
+    end)
+
+    it("reads where the pipes connect from the game, as tiles from the top-left of the machine", function()
+      -- a refinery that takes its fluid at the west end of its bottom side and gives its own at the east of its top side. The game
+      -- gives the positions from the centre: -2 and 1 across are the tiles 0 and 3 (floor(2.5 - 2), floor(2.5 + 1)), 2 and -2 down
+      -- the rows 4 and 0, the bottom and the top row of the machine, so that the pipes are on the rows 5 and -1 beside them
+      local lopsided = {
+        {production_type = "input", position = {x = -2, y = 2}, direction = south}, {production_type = "output", position = {x = 1, y = -2}, direction = north},
+      }
+      _G.prototypes = oil_game{machines = {["oil-refinery"] = refinery{pipe_boxes = lopsided}}}
+      local entries = catalog()
+      entries["oil-refinery"].fluid_connections = {input = {{x = 0, y = 5}}, output = {{x = 3, y = -1}}}
+
+      local result = generator.generate("petroleum-gas", 1000)
+
+      -- two refineries, at the columns 0 and 5, under the row 0 of the pipe that takes the fluid out, from the column of the first
+      -- connection to that of the last refinery (3 to 8); the pipe that brings it in is in the row 6, from the west edge to the
+      -- column of the connection of the last refinery (0 to 5)
+      local out_row, in_row = builders.columns_in_row(result.entities, "pipe", 0), builders.columns_in_row(result.entities, "pipe", 6)
+      assert.are.same({builders.range(3, 8), builders.range(0, 5)}, {out_row, in_row})
+      assert.are.same({}, validator.validate(result.entities, entries))
+    end)
+
+    it("builds with a wire exactly as long as a machine is wide, which reaches from the pole of one machine to the next", function()
+      _G.prototypes = oil_game{small_pole_wire_distance = 5}
+
+      local result = generator.generate("petroleum-gas", 1000)
+
+      assert.are.equal(2, count_named(result.entities, "oil-refinery"))
+    end)
+
+    it("gives the planner the flow of the pipes in the config, in units a minute", function()
+      -- the config says 600 a second, 36,000 a minute. A recipe of 97 crude oil takes in 1,164 a minute a refinery: 30.9 of them (30), so
+      -- 30 x 540 gas (a flow taken as 36,600 would feed 31)
+      local heavy = a_recipe{energy = 5, ingredients = {fluid_of(97, "crude-oil")}, products = {fluid_of(45, "petroleum-gas")}, category = "oil-processing"}
+      _G.prototypes = oil_game{recipes = {["basic-oil-processing"] = heavy}}
+
+      assert.are.same({"blueprint-generation.max-rate", "16200"}, generator.max_rate_message("petroleum-gas"))
+    end)
+
+    it("gives the planner the crafting speed of the refinery from the game", function()
+      -- a refinery of speed 2 makes 1,080 gas a minute and takes in 2,400 crude oil: 15 of them in 36,000, and 15 x 1,080 gas
+      _G.prototypes = oil_game{machines = {["oil-refinery"] = refinery{crafting_speed = 2}}}
+
+      local result = generator.generate("petroleum-gas", 1000)
+
+      assert.are.same({"petroleum-gas: 1080 per minute from 1 x oil-refinery", {"blueprint-generation.max-rate", "16200"}},
+        {result.description, generator.max_rate_message("petroleum-gas")})
+    end)
+
+    it("keeps the lamps off the machines and the pipes", function()
+      _G.prototypes = oil_game()
+      local lit = generator.generate("petroleum-gas", 1000, fake_force{})
+
+      local problems = validator.validate(lit.entities, catalog())
+
+      assert.is_true(count_named(lit.entities, "small-lamp") > 0)
+      assert.are.same({}, problems)
+    end)
+
+    it("refuses a rate that needs more refineries than the pipes feed, naming the most", function()
+      _G.prototypes = oil_game()
+
+      local result, error_message = generator.generate("petroleum-gas", 16201)
+
+      assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "16200"}}, {result, error_message})
+    end)
+
+    it("refuses a fluid whose recipe the force has not unlocked, naming the fluid", function()
+      _G.prototypes = oil_game()
+
+      local result, error_message = generator.generate("petroleum-gas", 1000, fake_force{locked = {"basic-oil-processing"}})
+
+      assert.are.same({nil, {"blueprint-generation.error-locked", {"fluid-name.petroleum-gas"}}}, {result, error_message})
+    end)
+
+    it("builds with the medium pole, one for each refinery, once the force has unlocked it", function()
+      _G.prototypes = oil_game()
+
+      local result = generator.generate("petroleum-gas", 1000, fake_force{})
+
+      assert.are.same({2, 0}, {count_named(result.entities, "medium-electric-pole"), count_named(result.entities, "small-electric-pole")})
+    end)
+
+    it("puts lamps on the blueprint once the force has unlocked the small lamp", function()
+      _G.prototypes = oil_game()
+
+      local lit = generator.generate("petroleum-gas", 1000, fake_force{})
+      local dark = generator.generate("petroleum-gas", 1000, fake_force{locked = {"small-lamp"}})
+
+      assert.is_true(count_named(lit.entities, "small-lamp") > 0)
+      assert.are.equal(0, count_named(dark.entities, "small-lamp"))
+    end)
+
+    -- The game with the refinery's fluid boxes as given.
+    local function with_boxes(boxes)
+      return {machines = {["oil-refinery"] = refinery{pipe_boxes = boxes}}}
+    end
+
+    local refused = {
+      {label = "the pipe connections of what it takes and of what it gives are on the same side of the machine", message = "error-fluid-row-pipes",
+        game = with_boxes{{production_type = "input", position = {x = 1, y = 2}, direction = south},
+          {production_type = "output", position = {x = -1, y = 2}, direction = south}}},
+      {label = "the pipe connections of what it takes are in two rows, one on each side of the machine", message = "error-fluid-row-pipes",
+        game = with_boxes{{production_type = "input", position = {x = 1, y = 2}, direction = south},
+          {production_type = "input", position = {x = 1, y = -2}, direction = north}, {production_type = "output", position = {x = 0, y = -2}, direction = north}}},
+      {label = "a pipe connection is at a side of the machine", message = "error-fluid-row-pipes",
+        game = with_boxes{{production_type = "input", position = {x = -2, y = 0}, direction = west},
+          {production_type = "output", position = {x = 0, y = -2}, direction = north}}},
+      {label = "the machine gives no fluid", message = "error-fluid-row-pipes",
+        game = with_boxes{{production_type = "input", position = {x = 1, y = 2}, direction = south}}},
+      {label = "its recipe takes two fluids", message = "error-fluid-row-recipe", game = {recipes = {["basic-oil-processing"] = advanced}}},
+      {label = "its recipe takes an item as well", message = "error-fluid-row-recipe", game = {recipes = {["basic-oil-processing"] = a_recipe{
+        energy = 5, ingredients = {fluid_of(100, "crude-oil"), amount_of(1, "iron-plate")}, products = {fluid_of(45, "petroleum-gas")}, category = "oil-processing"}}}},
+      {label = "its recipe makes two products", message = "error-fluid-row-recipe", game = {recipes = {["basic-oil-processing"] = a_recipe{
+        energy = 5, ingredients = {fluid_of(100, "crude-oil")}, products = {fluid_of(45, "petroleum-gas"), fluid_of(5, "light-oil")}, category = "oil-processing"}}}},
+      {label = "the pole of the blueprint reaches one tile only, which does not power a machine from beyond its pipes", message = "error-fluid-row-poles",
+        game = {small_pole_supply_distance = 1.5}},
+      {label = "the wire of the pole is shorter than a machine is wide", message = "error-fluid-row-poles", game = {small_pole_wire_distance = 4}},
+    }
+
+    for _, case in ipairs(refused) do
+      it("refuses the fluid, saying which part cannot be laid out, when " .. case.label, function()
+        _G.prototypes = oil_game(case.game)
+
+        local result, error_message = generator.generate("petroleum-gas", 1000)
+
+        assert.are.same({nil, {"blueprint-generation." .. case.message, {"fluid-name.petroleum-gas"}}}, {result, error_message})
+      end)
+    end
+
+    it("leaves out a pipe connection that is not an ordinary one, which an underground pipe's is not", function()
+      local boxes = {table.unpack(PIPES)}
+      boxes[#boxes + 1] = {production_type = "input", position = {x = -2, y = 0}, direction = west, connection_type = "underground"}
+      _G.prototypes = oil_game(with_boxes(boxes))
+
+      local result = generator.generate("petroleum-gas", 1000)
+
+      assert.are.equal(2, count_named(result.entities, "oil-refinery"))
+    end)
+
+    describe("a pipe connection the game gives in a way that is not understood stops the generator with a message", function()
+      local function generate_with(box)
+        _G.prototypes = oil_game(with_boxes{box})
+        return function() generator.generate("petroleum-gas", 1000) end
+      end
+
+      it("when it gives no position", function()
+        local generate = generate_with{production_type = "input", direction = south, no_position = true}
+
+        assert.has_error(generate, "generator: the game does not give the position of a pipe connection of the machine")
+      end)
+
+      it("when it points in a direction that is not north, east, south or west", function()
+        local generate = generate_with{production_type = "input", position = {x = 1, y = 2}, direction = "northeast"}
+
+        assert.has_error(generate, "generator: the game gives a pipe connection of the machine a direction other than north, east, south or west")
+      end)
+
+      it("when its position is the tile of the pipe outside the machine, not the tile of the machine at its edge", function()
+        -- {x = 1, y = 3} is the tile 3,5, under the machine, and south of it 3,6: neither is a tile at the edge of the machine
+        local generate = generate_with{production_type = "input", position = {x = 1, y = 3}, direction = south}
+
+        assert.has_error(generate, "generator: a pipe connection of the machine is on the tile 3,5 and points to the tile 3,6, which is not from a tile at the edge of the machine to one outside it (5 tiles on a side)")
+      end)
+
+      it("when its position is the tile past the east edge of the machine", function()
+        -- {x = 3, y = 2} is the tile 5,4, one column past the machine of 5 tiles, and south of it 5,5: not a tile of the machine
+        local generate = generate_with{production_type = "input", position = {x = 3, y = 2}, direction = south}
+
+        assert.has_error(generate, "generator: a pipe connection of the machine is on the tile 5,4 and points to the tile 5,5, which is not from a tile at the edge of the machine to one outside it (5 tiles on a side)")
+      end)
+
+      it("when it points into the machine", function()
+        -- {x = 1, y = -2} is the tile 3,0, on the top row, and pointing south it goes to the tile 3,1, inside the machine
+        local generate = generate_with{production_type = "input", position = {x = 1, y = -2}, direction = south}
+
+        assert.has_error(generate, "generator: a pipe connection of the machine is on the tile 3,0 and points to the tile 3,1, which is not from a tile at the edge of the machine to one outside it (5 tiles on a side)")
+      end)
+    end)
+
+    it("refuses a refinery that is not square", function()
+      _G.prototypes = oil_game{machines = {["oil-refinery"] = refinery{height = 4}}}
+
+      local result, error_message = generator.generate("petroleum-gas", 1000)
+
+      assert.are.same({nil, {"blueprint-generation.error-unsupported-machine"}}, {result, error_message})
+    end)
+
+    it("refuses a refinery that burns fuel, which a row of poles does not power", function()
+      _G.prototypes = oil_game{machines = {["oil-refinery"] = refinery{burns = {"chemical"}}}}
+
+      local result, error_message = generator.generate("petroleum-gas", 1000)
+
+      assert.are.same({nil, {"blueprint-generation.error-unsupported-energy"}}, {result, error_message})
+    end)
+
+    it("refuses the fluid when the game has no pipe", function()
+      _G.prototypes = oil_game{missing_entities = {"pipe"}}
+
+      local result, error_message = generator.generate("petroleum-gas", 1000)
+
+      assert.are.same({nil, {"blueprint-generation.error-missing-prototype"}}, {result, error_message})
+    end)
+
+    it("refuses a fluid that is not on offer", function()
+      _G.prototypes = oil_game()
+
+      local result, error_message = generator.generate("crude-oil", 1000)
+
+      assert.are.same({nil, {"blueprint-generation.error-unsupported-item"}}, {result, error_message})
+    end)
+  end)
 end)

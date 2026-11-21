@@ -32,22 +32,22 @@ local function close_window(player)
   end
 end
 
--- The item picker only offers the products the generator supports and the player's
--- force can build: every recipe the blueprint needs is unlocked (the list is read each
--- time the window opens, so new research shows up the next time). `elem_filters` takes
--- a list of filters; this one means "items whose name is one of these".
----@param names string[]
-local function item_filters(names)
-  return {{filter = "name", name = names}}
+-- The name of what the player picked, an item or a fluid, or nil when nothing is picked. The picker is a "signal" picker, the
+-- game's picker for items and fluids both, so what it holds is a SignalID: a table with the name and a type (nil for an item).
+---@param frame LuaGuiElement  our window
+---@return string|nil
+local function picked_name(frame)
+  local signal = frame[ITEM_BUTTON_NAME].elem_value --[[@as SignalID|nil]]
+  return signal and signal.name
 end
 
--- Show, under the rate field, the most one blueprint of the picked item can make
--- per minute (or why that item cannot be made). The text is read from the game's
+-- Show, under the rate field, the most one blueprint of the picked item or fluid can make
+-- per minute (or why that cannot be made). The text is read from the game's
 -- data each time, so it follows the belt, inserters and recipe in the current game.
 ---@param frame LuaGuiElement  our window
 ---@param force LuaForce  the force of the player who has it open
 local function update_max_rate(frame, force)
-  local item_name = frame[ITEM_BUTTON_NAME].elem_value --[[@as string|nil]] -- nil if nothing picked
+  local item_name = picked_name(frame) -- nil if nothing picked
   local label = frame[MAX_RATE_LABEL_NAME]
   if item_name then
     label.caption = generator.max_rate_message(item_name, force)
@@ -71,18 +71,15 @@ local function open_window(player)
   }
   frame.auto_center = true
 
+  -- One picker for items and fluids: a "signal" picker. The game cannot filter it ("signal" does not support `elem_filters`), so
+  -- it offers everything in the game, and what cannot be made (not supported, or not unlocked by the force) is answered with the
+  -- message under the rate field.
   frame.add{type = "label", caption = messages.item_label()}
-  local unlocked = generator.unlocked_products(player.force)
-  local item_button = frame.add{
-    type = "choose-elem-button",
-    name = ITEM_BUTTON_NAME,
-    elem_type = "item",
-    elem_filters = item_filters(unlocked),
-  }
+  local item_button = frame.add{type = "choose-elem-button", name = ITEM_BUTTON_NAME, elem_type = "signal"}
   -- The player can still change or clear it. The default only shows when it is on offer.
-  for _, name in ipairs(unlocked) do
+  for _, name in ipairs(generator.unlocked_products(player.force)) do
     if name == config.default_product then
-      item_button.elem_value = name
+      item_button.elem_value = {type = "item", name = name}
     end
   end
 
@@ -114,8 +111,8 @@ local function generate_blueprint(player)
     return
   end
 
-  local item_name = frame[ITEM_BUTTON_NAME].elem_value -- nil if nothing picked
-  local rate = tonumber(frame[RATE_FIELD_NAME].text)   -- nil if the box is empty
+  local item_name = picked_name(frame)                -- nil if nothing picked
+  local rate = tonumber(frame[RATE_FIELD_NAME].text) -- nil if the box is empty
 
   if not item_name then
     player.print(messages.no_item())
@@ -192,13 +189,14 @@ function gui.on_click(event)
   end
 end
 
--- The player picked another item, or cleared it: show that item's maximum rate.
+-- The player picked another item or fluid, or cleared it: show its maximum rate.
 ---@param event EventData.on_gui_elem_changed
 function gui.on_elem_changed(event)
-  if event.element.name ~= ITEM_BUTTON_NAME then
+  local element = event.element
+  if element.name ~= ITEM_BUTTON_NAME then
     return -- some other mod's button
   end
-  local frame = event.element.parent
+  local frame = element.parent
   local player = game.get_player(event.player_index)
   if frame and frame.name == FRAME_NAME and player then
     update_max_rate(frame, player.force)

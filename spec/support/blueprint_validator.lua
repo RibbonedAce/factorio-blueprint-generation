@@ -15,6 +15,9 @@
 --   6. every wire joins two poles within reach, and all poles form one network
 --   7. every machine that takes a fluid has a pipe at its fluid connection, every end of an underground pipe meets the other
 --      end, and the machines and the pipes form one network with a free end to bring the fluid to
+--   8. every machine with fixed fluid connections (the catalog's `fluid_connections`) has a pipe at each, the pipes at what the
+--      machines take are one network and those at what they give another, every pipe is in one of the two, and each has an
+--      open end
 --
 -- Deliberately NOT checked (the owner's decision): belt paths, because later
 -- layouts may bend belts to save space, and item flow, because that is a
@@ -525,6 +528,100 @@ local function check_fluids(index, problems)
 end
 
 --------------------------------------------------------------------------------
+-- Check 8: machines whose fluids come in and go out at fixed tiles (a refinery)
+--------------------------------------------------------------------------------
+
+-- The pipe-like entity at each pipe connection of a machine of one flow ("input" or "output"), and a problem for each connection
+-- that has none. The tiles are from the top-left tile of the machine facing north.
+local function pieces_at(index, machine, flow, problems)
+  local description = index.catalog[machine.name]
+  local left, top = machine.position.x - description.width / 2, machine.position.y - description.height / 2
+  local pieces = {}
+  for _, tile in ipairs(description.fluid_connections[flow]) do
+    local piece = index.by_tile[tile_key(left + tile.x, top + tile.y)]
+    if piece and is_pipe(index, piece) then
+      pieces[#pieces + 1] = piece
+    else
+      add_problem(problems, machine, string.format("has no pipe at its %s fluid connection, tile %d,%d of the machine", flow, tile.x, tile.y))
+    end
+  end
+  return pieces
+end
+
+-- Adds the items of `more` to `list`.
+local function add_all(list, more)
+  for _, item in ipairs(more) do
+    list[#list + 1] = item
+  end
+end
+
+-- The pipes of such machines: the ones at the connections of what they take, the ones at those of what they give.
+local function connection_pieces(index, problems)
+  local inputs, outputs = {}, {}
+  for _, machine in ipairs(usable_of_kind(index, "machine")) do
+    if index.catalog[machine.name].fluid_connections then
+      if machine.direction ~= nil and machine.direction ~= defines.direction.north then
+        add_problem(problems, machine, "faces a way its fluid connections are not worked out for")
+      end
+      add_all(inputs, pieces_at(index, machine, "input", problems))
+      add_all(outputs, pieces_at(index, machine, "output", problems))
+    end
+  end
+  return inputs, outputs
+end
+
+-- Every piece of `pieces` is in the network of the first, which is the one pipe network of that flow.
+local function in_one_network(groups, pieces, flow, problems)
+  for _, piece in ipairs(pieces) do
+    if not groups.same(piece.entity_number, pieces[1].entity_number) then
+      add_problem(problems, piece, string.format("is at a %s fluid connection that another network of pipes than the first one's serves", flow))
+    end
+  end
+end
+
+-- Which network a pipe is in: that of the fluid the machines take ("input"), that of the fluid they give ("output") or neither (nil).
+local function flow_of(groups, pipe, inputs, outputs)
+  if inputs[1] and groups.same(pipe.entity_number, inputs[1].entity_number) then
+    return "input"
+  end
+  if outputs[1] and groups.same(pipe.entity_number, outputs[1].entity_number) then
+    return "output"
+  end
+  return nil
+end
+
+-- The two networks are two, each has an open end, and no pipe is in neither.
+local function check_networks(index, problems, inputs, outputs)
+  local pipes, groups = pipe_groups(index, problems)
+  in_one_network(groups, inputs, "input", problems)
+  in_one_network(groups, outputs, "output", problems)
+  if inputs[1] and outputs[1] and groups.same(inputs[1].entity_number, outputs[1].entity_number) then
+    add_problem(problems, nil, "the pipes of what the machines take and those of what they give are one network")
+  end
+  local ends = {input = {}, output = {}}
+  for _, pipe in ipairs(pipes) do
+    local flow = flow_of(groups, pipe, inputs, outputs)
+    if flow then
+      ends[flow][#ends[flow] + 1] = pipe
+    else
+      add_problem(problems, pipe, "belongs to a network of pipes that no machine takes its fluid from or gives its fluid to")
+    end
+  end
+  for flow, network in pairs(ends) do
+    if #network > 0 and not has_open_end(index, network) then
+      add_problem(problems, nil, string.format("the pipes of the %s fluid have no open end", flow))
+    end
+  end
+end
+
+local function check_fluid_connections(index, problems)
+  local inputs, outputs = connection_pieces(index, problems)
+  if #inputs > 0 or #outputs > 0 then
+    check_networks(index, problems, inputs, outputs)
+  end
+end
+
+--------------------------------------------------------------------------------
 
 ---@class bpgen.CatalogEntry  what the validator knows about one entity name
 ---@field kind "belt"|"machine"|"inserter"|"pole"|"lamp"|"panel"|"pipe"|"pipe_to_ground"|"pump"
@@ -534,6 +631,7 @@ end
 ---@field needs_power? boolean
 ---@field reach? number  inserters only: tiles away that it picks up and drops, 1 by default (2 for a long-handed inserter); underground pipes: how far apart their two ends may be, 10 by default
 ---@field fluid_input? boolean|table<string, true>  machines only: it takes a fluid in, in the middle of the side it faces, for every recipe (true) or for the recipes named
+---@field fluid_connections? {input: {x: integer, y: integer}[], output: {x: integer, y: integer}[]}  machines only: the tiles of its pipe connections, from its top-left tile as it faces north (it has to), those of the fluids it takes and those of the fluids it gives
 ---@field supply_radius? number  poles only
 ---@field wire_reach? number  poles only
 
@@ -548,6 +646,7 @@ function validator.validate(entities, catalog)
   check_power(index, problems)
   check_wires(index, problems)
   check_fluids(index, problems)
+  check_fluid_connections(index, problems)
   return problems
 end
 

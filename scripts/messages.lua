@@ -191,6 +191,29 @@ function messages.fluid_needs_weave(item_name)
   return text("error-fluid-needs-weave", messages.item(item_name))
 end
 
+-- Why a fluid cannot be made as a row of machines, by the part that does not fit. The recipe takes one fluid and nothing else and
+-- makes the fluid only.
+---@param item_name string  the fluid
+---@return LocalisedString
+function messages.fluid_row_recipe(item_name)
+  return text("error-fluid-row-recipe", messages.item(item_name))
+end
+
+-- The machine has the pipe connections of what it takes in one row along one side and those of what it gives in one row along the
+-- opposite side.
+---@param item_name string  the fluid
+---@return LocalisedString
+function messages.fluid_row_pipes(item_name)
+  return text("error-fluid-row-pipes", messages.item(item_name))
+end
+
+-- The pole reaches two tiles, to power a machine from beyond its pipes, and its wire reaches the width of a machine.
+---@param item_name string  the fluid
+---@return LocalisedString
+function messages.fluid_row_poles(item_name)
+  return text("error-fluid-row-poles", messages.item(item_name))
+end
+
 ---@param max_rate number  the most one blueprint can make a minute
 ---@return LocalisedString
 function messages.rate_too_high(max_rate)

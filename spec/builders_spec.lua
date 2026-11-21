@@ -235,6 +235,104 @@ describe("builders", function()
       assert.is_nil(prototypes.entity["splitter"])
       assert.is_not_nil(prototypes.entity["underground-belt"])
     end)
+
+    describe("the fluid boxes of a machine", function()
+      local function boxes_of(machine_options)
+        local machine = builders.a_machine(builders.merged({crafting_speed = 1, size = 5}, machine_options))
+        return builders.fake_prototypes{machines = {["refinery"] = machine}}.entity["refinery"].fluidbox_prototypes
+      end
+
+      local south = defines.direction.south
+
+      it("are the ones it is told with a pipe connection each, in the order told", function()
+        local boxes = boxes_of{pipe_boxes = {
+          {production_type = "input", position = {x = 1, y = 2}, direction = south}, {production_type = "output", position = {x = -2, y = -2}, direction = defines.direction.north}}}
+
+        assert.are.same({{"input", 1}, {"output", 2}}, {{boxes[1].production_type, boxes[1].index}, {boxes[2].production_type, boxes[2].index}})
+      end)
+
+      it("give the position of a connection for each way the machine faces, north first, turning a quarter clockwise each time", function()
+        local boxes = boxes_of{pipe_boxes = {{production_type = "input", position = {x = 1, y = 2}, direction = south}}}
+
+        local north, east, south_position, west = table.unpack(boxes[1].pipe_connections[1].positions)
+
+        assert.are.same({{x = 1, y = 2}, {x = -2, y = 1}, {x = -1, y = -2}, {x = 2, y = -1}}, {north, east, south_position, west})
+      end)
+
+      it("give the direction a connection points in, which is the one it has facing north", function()
+        local boxes = boxes_of{pipe_boxes = {{production_type = "input", position = {x = 1, y = 2}, direction = south}}}
+
+        assert.are.equal(south, boxes[1].pipe_connections[1].direction)
+      end)
+
+      it("make the connection an ordinary one, which the machine has one of in each box", function()
+        local boxes = boxes_of{pipe_boxes = {{production_type = "input", position = {x = 1, y = 2}, direction = south}}}
+
+        assert.are.same({1, "normal"}, {#boxes[1].pipe_connections, boxes[1].pipe_connections[1].connection_type})
+      end)
+
+      it("make the connection of the type it is told", function()
+        local boxes = boxes_of{pipe_boxes = {{production_type = "input", position = {x = 1, y = 2}, direction = south, connection_type = "underground"}}}
+
+        assert.are.equal("underground", boxes[1].pipe_connections[1].connection_type)
+      end)
+
+      it("give a connection no position when it is told so", function()
+        local boxes = boxes_of{pipe_boxes = {{production_type = "input", direction = south, no_position = true}}}
+
+        assert.are.same({}, boxes[1].pipe_connections[1].positions)
+      end)
+
+      it("are an input and an output with no connection for a machine that takes a fluid in", function()
+        local boxes = boxes_of{fluid_input = true}
+
+        assert.are.same({{"input", 1, {}}, {"output", 2, {}}},
+          {{boxes[1].production_type, boxes[1].index, boxes[1].pipe_connections}, {boxes[2].production_type, boxes[2].index, boxes[2].pipe_connections}})
+      end)
+
+      it("are none for a machine that is told nothing about fluids", function()
+        assert.are.same({}, boxes_of{})
+      end)
+    end)
+
+    describe("the recipes it finds by what they make", function()
+      local gas = builders.a_recipe{energy = 5, ingredients = {builders.fluid_of(100, "crude-oil")}, products = {builders.fluid_of(45, "petroleum-gas")}, category = "oil-processing"}
+      local plate = builders.a_recipe{energy = 3, ingredients = {builders.amount_of(1, "iron-ore")}, products = {builders.amount_of(1, "iron-plate")}, category = "smelting"}
+      local prototypes = builders.fake_prototypes{recipes = {["gas"] = gas, ["plate"] = plate}}
+
+      local function find(filter, name)
+        return prototypes.get_recipe_filtered{{filter = filter, elem_filters = {{filter = "name", name = name}}}}
+      end
+
+      it("are those that make the fluid, for a fluid filter", function()
+        assert.are.same({["gas"] = gas}, find("has-product-fluid", "petroleum-gas"))
+      end)
+
+      it("are those that make the item, for an item filter", function()
+        assert.are.same({["plate"] = plate}, find("has-product-item", "iron-plate"))
+      end)
+
+      it("are none when a fluid is looked up as an item, or an item as a fluid", function()
+        assert.are.same({{}, {}}, {find("has-product-item", "petroleum-gas"), find("has-product-fluid", "iron-plate")})
+      end)
+
+      it("stop the test for a filter it does not know", function()
+        local unknown = function() prototypes.get_recipe_filtered{{filter = "has-ingredient-item", elem_filters = {{filter = "name", name = "iron-ore"}}}} end
+
+        assert.has_error(unknown)
+      end)
+    end)
+
+    it("has the fluids the recipes take and make as fluids, and the items as items", function()
+      local recipe = builders.a_recipe{energy = 5, ingredients = {builders.fluid_of(100, "crude-oil"), builders.amount_of(1, "iron-plate")},
+        products = {builders.fluid_of(45, "petroleum-gas")}, category = "oil-processing"}
+
+      local prototypes = builders.fake_prototypes{recipes = {["gas"] = recipe}}
+
+      assert.are.same({{true, true, false}, {false, false, true}},
+        {{prototypes.fluid["crude-oil"] ~= nil, prototypes.fluid["petroleum-gas"] ~= nil, prototypes.fluid["iron-plate"] ~= nil},
+         {prototypes.item["crude-oil"] ~= nil, prototypes.item["petroleum-gas"] ~= nil, prototypes.item["iron-plate"] ~= nil}})
+    end)
   end)
 
   describe("the numbering of entities", function()
@@ -282,6 +380,28 @@ describe("builders", function()
       local directions = builders.belt_directions(entities, 3)
 
       assert.are.same({east, south}, directions)
+    end)
+
+    it("lists the columns of the entities that have the name in a tile row, from the west", function()
+      local entities = {builders.pipe(4, 2), builders.pipe(1, 2), builders.pipe(3, 3), builders.belt(2, 2), builders.pipe(0, 1)}
+
+      local columns = builders.columns_in_row(entities, builders.NAMES.pipe, 2)
+
+      assert.are.same({1, 4}, columns)
+    end)
+  end)
+
+  describe("a run of whole numbers", function()
+    it("goes from the first to the last, both included", function()
+      assert.are.same({3, 4, 5}, builders.range(3, 5))
+    end)
+
+    it("is one number when the first is the last", function()
+      assert.are.same({7}, builders.range(7, 7))
+    end)
+
+    it("is empty when the first is past the last", function()
+      assert.are.same({}, builders.range(5, 4))
     end)
   end)
 
