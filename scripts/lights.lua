@@ -66,6 +66,9 @@ function lights.taken_tiles(entities, options)
   local taken = grid.taken_tiles(entities, options.size_of)
   mark_next_to(taken, entities, set_of(options.belts), options.size_of, 1)
   mark_next_to(taken, entities, set_of(options.inlets), options.size_of, -1) -- where its input is
+  for _, tile in ipairs(options.free_tiles or {}) do
+    taken[grid.key(tile.x, tile.y)] = true
+  end
   return taken
 end
 

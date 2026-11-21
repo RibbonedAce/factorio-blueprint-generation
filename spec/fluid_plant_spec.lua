@@ -104,7 +104,16 @@ describe("fluid_plant", function()
     it("leaves the pipe that brings the fluid in as it is for the row of machines alone", function()
       local entities = fluid_plant.build(request(2, 3))
 
-      assert.are.same(range(0, 8), builders.rows_in_column(entities, NAMES.pipe, 1))
+      assert.are.same(range(0, 8), builders.body_rows_in_column(entities, NAMES.pipe, 1))
+    end)
+
+    it("takes the start of the pipe that brings the fluid in to the west edge above the blueprint, where the belts start", function()
+      local entities, entries = fluid_plant.build(request(2, 3))
+
+      -- up from the tile (1, 0) to the row -1, and west along it to the column 0, whose end is open to the west
+      assert.are.same({{key = "input", x = 0, y = -1}}, entries.inlets)
+      assert.are.same({-1}, builders.rows_in_column(entities, NAMES.pipe, 0))
+      assert.are.same({-1}, {builders.rows_in_column(entities, NAMES.pipe, 1)[1]})
     end)
 
     it("puts an inserter beside the middle of each plant, picking up from the plant", function()
@@ -284,7 +293,7 @@ describe("fluid_plant", function()
         local found = {}
         for _, entity in ipairs(entities) do
           local tile = grid.top_left_tile(entity.position)
-          if tile.x == column and (entity.name == NAMES.pipe or entity.name == NAMES.pipe_to_ground) then
+          if tile.x == column and tile.y >= 0 and (entity.name == NAMES.pipe or entity.name == NAMES.pipe_to_ground) then
             found[tile.y] = entity.name == NAMES.pipe and "pipe" or ("ground " .. entity.direction)
           end
         end
@@ -323,20 +332,47 @@ describe("fluid_plant", function()
       it("has a pipe beside each pipe of the fluid the machines make, in the column that is beside their pipe, and none for the other", function()
         local entities = fluid_plant.build(two_fluids(2, 3))
 
-        assert.are.same({2, 3, 8}, builders.rows_in_column(entities, NAMES.pipe, 8))
+        assert.are.same({2, 3, 8}, builders.body_rows_in_column(entities, NAMES.pipe, 8))
       end)
 
       it("runs the pipe that takes the fluid out along the machines that make it and the plants, whichever is longer", function()
         local more_plants = fluid_plant.build(two_fluids(1, 4))
         local more_makers = fluid_plant.build(two_fluids(3, 1))
 
-        assert.are.same({range(0, 11), range(0, 14)}, {builders.rows_in_column(more_plants, NAMES.pipe, 7), builders.rows_in_column(more_makers, NAMES.pipe, 7)})
+        assert.are.same({range(0, 11), range(0, 14)}, {builders.body_rows_in_column(more_plants, NAMES.pipe, 7), builders.body_rows_in_column(more_makers, NAMES.pipe, 7)})
       end)
 
       it("gives the tile where the pipe of the fluid that comes in starts", function()
         local _, entries = fluid_plant.build(two_fluids(2, 3))
 
         assert.are.same({x = 9, y = 0}, entries.supplied)
+      end)
+
+      it("takes both pipes that come in to the west edge above the blueprint, the one that starts furthest east on the top row", function()
+        local entities, entries = fluid_plant.build(two_fluids(2, 3))
+
+        -- the pipe at the column 1 goes up to the row -1 (3 rows apart), the one at the column 9 to the row -4, whose end is the tile 0, -4
+        assert.are.same({{key = "input", x = 0, y = -1}, {key = "supplied", x = 0, y = -4}}, entries.inlets)
+        assert.are.same(range(-4, -1), {-4, -3, -2, -1}) -- the pipes in the column 9 above the blueprint
+        assert.are.same({-4}, {builders.rows_in_column(entities, NAMES.pipe, 0)[1]})
+      end)
+
+      it("joins the pipe of the fluid that comes in up the column 9 to the row -4, and along it to the column 0, and not to the pipe of the other", function()
+        local entities = fluid_plant.build(two_fluids(2, 3))
+
+        local along, up = {}, {}
+        for _, pipe in ipairs(builders.entities_named(entities, NAMES.pipe)) do
+          local tile = grid.top_left_tile(pipe.position)
+          if tile.y == -4 then
+            along[#along + 1] = tile.x
+          end
+          if tile.x == 9 and tile.y < 0 then
+            up[#up + 1] = tile.y
+          end
+        end
+        table.sort(along)
+        table.sort(up)
+        assert.are.same({range(0, 9), range(-4, -1)}, {along, up})
       end)
 
       it("puts the inserters and the belt east of the plants all the same", function()

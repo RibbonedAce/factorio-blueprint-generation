@@ -12,6 +12,7 @@ local inputs = require("scripts.inputs")
 local rows = require("scripts.rows")
 local fluid_row = require("scripts.fluid_row")
 local fluid_plant = require("scripts.fluid_plant")
+local pipe_entries = require("scripts.pipe_entries")
 local labels = require("scripts.labels")
 local lights = require("scripts.lights")
 local messages = require("scripts.messages")
@@ -1526,48 +1527,51 @@ local function fluid_row_build(job, stage, count)
   }
 end
 
--- Puts the lamps on a row of machines, or on plants with the machines that make their fluid, when the job asks for them (see
--- scripts/lights.lua). The tile a belt runs on to stays free.
+-- The sizes of the machines of a row, or of the plants and the machines that make their fluid, by name.
 ---@param job bpgen.Job
----@param entities bpgen.Entity[]
-local function add_row_lights(job, entities)
-  if not job.lamp_supply_distance then
-    return
-  end
+---@return table<string, integer>
+local function row_sizes(job)
   local sizes = {[job.root.machine] = machine_size_of(job.root)}
   if job.maker then
     sizes[job.maker.machine] = machine_size_of(job.maker)
   end
+  return sizes
+end
+
+-- Puts the lamps on a row of machines, or on plants with the machines that make their fluid, when the job asks for them (see
+-- scripts/lights.lua). The tile a belt runs on to stays free, and so does the tile west of each entry of a pipe, where the player joins it.
+---@param job bpgen.Job
+---@param entities bpgen.Entity[]
+---@param inlets bpgen.PipeStart[]  the entries of the pipes that come in
+local function add_row_lights(job, entities, inlets)
+  if not job.lamp_supply_distance then
+    return
+  end
+  local sizes, free = row_sizes(job), {}
+  for _, inlet in ipairs(inlets) do
+    free[#free + 1] = {x = inlet.x - 1, y = inlet.y}
+  end
   lights.add(entities, {
     lamp = job.names.lamp, pole = job.names.pole, supply_distance = job.lamp_supply_distance, belts = {job.names.belt},
-    size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
+    free_tiles = free, size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
   })
 end
 
--- Puts a display panel with the fluid that comes in beside the start of the pipe of a row of machines, once the force has
--- unlocked the display panel (see `fluid_row.add_panels`).
+-- Puts a display panel with the fluid beside each entry of a pipe that comes in at the top left corner, as the belts that come in have
+-- one, once the force has unlocked the display panel (see scripts/labels.lua).
 ---@param job bpgen.Job
 ---@param entities bpgen.Entity[]
----@param entries {input: {x: integer, y: integer}, output: {x: integer, y: integer}}  where the pipes of the row start and end
----@param stage bpgen.StageData  the step that makes the fluid, whose machines are the row
-local function add_row_panel(job, entities, entries, stage)
-  if job.row_labels then
-    fluid_row.add_panels(entities, entries, {panel = job.names.panel, machine = stage.machine, input = stage.recipe.fluids[1].name})
+---@param inlets bpgen.PipeStart[]  the entries
+---@param fluids table<string, string>  the name of the fluid of each entry, by its key
+local function add_inlet_labels(job, entities, inlets, fluids)
+  if not job.row_labels then
+    return
   end
-end
-
--- Puts a display panel with the second fluid of plants that take two beside the start of its pipe, as `add_row_panel` does for the one
--- the machines that make the fluid take (the fluid is raw: it comes in by a pipe, as ore comes in by a belt).
----@param job bpgen.Job
----@param entities bpgen.Entity[]
----@param entries {input: {x: integer, y: integer}, output: {x: integer, y: integer}, supplied?: {x: integer, y: integer}}
----@param plan bpgen.FluidPlantPlan
-local function add_supplied_panel(job, entities, entries, plan)
-  if job.row_labels and entries.supplied then
-    fluid_row.add_panels(entities, {input = entries.supplied, output = entries.output}, {
-      panel = job.names.panel, machine = job.root.machine, input = plan.supplied[1].name,
-    })
+  local supplies, sizes = {}, row_sizes(job)
+  for _, inlet in ipairs(inlets) do
+    supplies[#supplies + 1] = {x = inlet.x, y = inlet.y, item = fluids[inlet.key], type = "fluid"}
   end
+  labels.add(entities, supplies, {panel = job.names.panel, size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end})
 end
 
 -- A row of machines for the fluid asked for, and the words for the player: what the row makes and takes a minute.
@@ -1583,8 +1587,9 @@ local function generate_fluid_row(job)
   end
   local entities, entries = fluid_row.build(fluid_row_build(job, stage, plan.machines))
   fluid_row.turn(entities, entries, stage.machine, machine_size_of(stage))
-  add_row_panel(job, entities, entries, stage)
-  add_row_lights(job, entities)
+  local inlets = pipe_entries.add(entities, job.names.pipe, {{key = "input", x = entries.input.x, y = entries.input.y}})
+  add_inlet_labels(job, entities, inlets, {input = stage.recipe.fluids[1].name})
+  add_row_lights(job, entities, inlets)
   local crafts = plan.output_per_minute / planner.amount_made(stage.recipe, stage.item)
   local taken = {name = stage.recipe.fluids[1].name, amount = crafts * stage.recipe.fluids[1].amount}
   return {
@@ -1640,9 +1645,9 @@ local function generate_fluid_plant(job)
     return nil, messages.plan_problem(reason, max_rate)
   end
   local entities, entries = fluid_plant.build(fluid_plant_build(job, plan))
-  add_row_panel(job, entities, entries, job.maker)
-  add_supplied_panel(job, entities, entries, plan)
-  add_row_lights(job, entities)
+  local supplied = plan.supplied[1]
+  add_inlet_labels(job, entities, entries.inlets, {input = job.maker.recipe.fluids[1].name, supplied = supplied and supplied.name})
+  add_row_lights(job, entities, entries.inlets)
   local taken = {{name = job.maker.recipe.fluids[1].name, amount = plan.source_per_minute}}
   for _, supplied in ipairs(plan.supplied) do
     taken[#taken + 1] = supplied

@@ -1,5 +1,5 @@
 -- scripts/labels.lua
--- Puts a display panel beside every belt that the player brings in, showing the item it carries, so that it is easy to
+-- Puts a display panel beside every belt that the player brings in, showing the item it carries (or the fluid a pipe carries), so that it is easy to
 -- see which resource goes where. Pure, like scripts/lights.lua, and it runs on the finished blueprint. Only the design that
 -- brings in one belt of each material has such belts, each carrying one item (see scripts/inputs.lua).
 --
@@ -63,7 +63,7 @@ function labels.add(entities, supplies, options)
     if spot then
       entity_list.append(entities, {
         name = options.panel, position = grid.position(spot.x, spot.y),
-        icon = {type = "item", name = supply.item}, always_show = true,
+        icon = {type = supply.type or "item", name = supply.item}, always_show = true,
       })
     end
   end

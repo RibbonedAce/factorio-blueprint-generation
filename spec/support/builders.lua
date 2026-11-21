@@ -255,6 +255,22 @@ function builders.rows_in_column(entities, name, column)
   return rows
 end
 
+-- The rows from the top of the blueprint (the row 0) down of the entities with the name, in a column, in order: what is in the blueprint
+-- and not the pipes that bring the start of a pipe to the corner above it (see scripts/pipe_entries.lua).
+---@param entities bpgen.Entity[]
+---@param name string
+---@param column integer
+---@return integer[]
+function builders.body_rows_in_column(entities, name, column)
+  local rows = {}
+  for _, row in ipairs(builders.rows_in_column(entities, name, column)) do
+    if row >= 0 then
+      rows[#rows + 1] = row
+    end
+  end
+  return rows
+end
+
 -- The whole numbers from `first` to `last`.
 ---@param first integer
 ---@param last integer

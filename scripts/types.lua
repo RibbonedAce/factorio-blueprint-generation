@@ -31,6 +31,7 @@
 ---@field size_of fun(entity: bpgen.Entity): integer, integer  how many tiles across and along the map an entity covers
 ---@field belts? string[]  prototype names of belts, whose tile ahead of them stays free for the belt to go on
 ---@field inlets? string[]  prototype names of things whose input is the tile behind them (a pump, facing east, where the fluid comes in), which stays free
+---@field free_tiles? {x: integer, y: integer}[]  tiles that stay free, such as the tile west of the open end of a pipe the player joins
 
 -- What `labels.add` needs to know of the game.
 ---@class bpgen.LabelOptions
@@ -271,10 +272,11 @@
 ---@field underground_reach integer  the most tiles an underground belt spans, from its entrance to its exit
 
 -- A belt of one material that the player brings in: the tile where it starts, at the west edge. The item rides both lanes.
----@class bpgen.Supply  a belt the player brings in
+---@class bpgen.Supply  a belt the player brings in, or a pipe
 ---@field x integer  tile column
 ---@field y integer  tile row
----@field item string
+---@field item string  the item, or the fluid when `type` says so
+---@field type? "item"|"fluid"  what `item` names, an item by default
 
 -- What `scripts/poles.lua` needs to put poles between two that are further apart than a wire reaches: the blueprint's
 -- entities to add them to, which tiles are taken, and the pole's name and wire.

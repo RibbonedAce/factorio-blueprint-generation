@@ -25,6 +25,7 @@ A Factorio 2.1 mod where the player gives only an item to produce and a rate of 
 - `scripts/entity_list.lua`: `entity_list.append(list, entity)` numbers an entity as it is added to a blueprint's entity list; every module that adds entities uses it.
 - `scripts/labels.lua`: the display panels beside the belts that come in (see 5ak in [feature-log.md](feature-log.md)).
 - `scripts/recipes.lua`: which recipes the window offers: the config's recipes that the force has unlocked (`LuaForce.recipes`) and the filters of the picker of recipes; the generator uses `recipes.is_locked` too (see 5ap in [feature-log.md](feature-log.md)).
+- `scripts/pipe_entries.lua`: pure, takes the start of each pipe the player connects (crude oil, water) to the top left corner: up above the blueprint and west along a row of its own to the west edge, three rows apart, the one furthest east on the top row (5au in [feature-log.md](feature-log.md)); the panels beside them are `labels.lua`'s.
 - `scripts/fluid_plant.lua`: pure, the blueprint of an item made from a fluid and nothing else (solid fuel from petroleum gas, see 5ar in [feature-log.md](feature-log.md)): the refineries that make the gas, as `fluid_row` draws them turned, and east of the pipe that takes the gas out the chemical plants facing west with an inserter each and a belt south; the poles are wired together. `planner.plan_fluid_plant` says how many of each.
 - `scripts/fluid_row.lua`: pure, the blueprint of a product that is a fluid made from a fluid (petroleum gas in the oil refinery, see 5ao in [feature-log.md](feature-log.md)): a row of machines side by side with a pipe along each of their two sides and a pole for each machine, no belts and no inserters. Where the pipes of a machine connect comes from the game (`generator.read_fluid_boxes`); `planner.plan_fluid_row` says how many machines.
 - `scripts/grid.lua`: pure, converts between a TILE (the top-left tile an entity covers, whole numbers, y grows down) and a POSITION (the entity's centre, which Factorio blueprints use): `grid.position(tile_x, tile_y, width, height)` and `grid.top_left_tile(position, width, height)`; sizes default to 1x1. The only place the "+ half the size" lives (owner request 2026-10-27). The validator deliberately does NOT use it, so a mistake in `grid` cannot hide behind the same mistake in the checker.
@@ -41,7 +42,7 @@ A Factorio 2.1 mod where the player gives only an item to produce and a rate of 
 
 The owner wants the mod built very iteratively: for each step, the simplest solution that is still good code, meeting only the current criteria. The order follows a normal playthrough, with products getting more complex over time. First-tier belts and inserters are hardcoded.
 
-The steps of the ladder, 1 to 5at, are in [feature-log.md](feature-log.md), oldest first. What comes next:
+The steps of the ladder, 1 to 5au, are in [feature-log.md](feature-log.md), oldest first. What comes next:
 
 6. Next criteria are for the owner to set. Candidates the assistant could suggest when asked (not decided): assembler recipes with several ingredients, higher rates (more than one belt lane), better machines and belts chosen from research. Steel plate (a furnace step after the iron plate step) is NOT buildable yet: only the first step may burn fuel (see "Chains").
 

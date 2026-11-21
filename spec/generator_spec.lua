@@ -3807,7 +3807,7 @@ describe("generator", function()
       -- two refineries, 5 tiles apart, in a row that is turned: the pipe that takes the fluid out is in the column 7, from the tile of
       -- the first connection to that of the last refinery (3 to 8); the pipe that brings it in is in the column 1, from the north end
       -- to the tile of the connection of the last refinery (0 to 5)
-      local out_column, in_column = builders.rows_in_column(result.entities, "pipe", 7), builders.rows_in_column(result.entities, "pipe", 1)
+      local out_column, in_column = builders.body_rows_in_column(result.entities, "pipe", 7), builders.body_rows_in_column(result.entities, "pipe", 1)
       assert.are.same({builders.range(3, 8), builders.range(0, 5)}, {out_column, in_column})
       assert.are.same({}, validator.validate(result.entities, entries))
     end)
@@ -3826,10 +3826,39 @@ describe("generator", function()
       table.sort(tiles, function(a, b) return a[2] < b[2] end)
       -- the crude oil pipe is the column 1 on their west, from the north end of the blueprint, and the petroleum gas pipe the column 7
       assert.are.same({{2, 0, east}, {2, 5, east}}, tiles)
-      assert.are.same({builders.range(0, 8), builders.range(0, 9)}, {builders.rows_in_column(result.entities, "pipe", 1), builders.rows_in_column(result.entities, "pipe", 7)})
+      assert.are.same({builders.range(0, 8), builders.range(0, 9)}, {builders.body_rows_in_column(result.entities, "pipe", 1), builders.body_rows_in_column(result.entities, "pipe", 7)})
     end)
 
-    it("puts a display panel with the crude oil beside the start of the pipe, away from the refineries, once the force has unlocked it", function()
+    it("takes the start of the crude oil pipe to the top left corner, up above the blueprint and west to the edge, as the belts start there", function()
+      _G.prototypes = oil_game()
+
+      local result = generator.generate("basic-oil-processing", 1000)
+
+      -- the pipe goes up from the tile (1, 0) to the row -1 and west along it: the tiles (0, -1) and (1, -1), the end open to the west
+      local above = {}
+      for _, pipe in ipairs(builders.entities_named(result.entities, "pipe")) do
+        local tile = grid.top_left_tile(pipe.position)
+        if tile.y < 0 then
+          above[#above + 1] = {tile.x, tile.y}
+        end
+      end
+      table.sort(above, function(a, b) return a[1] < b[1] end)
+      assert.are.same({{0, -1}, {1, -1}}, above)
+    end)
+
+    it("keeps the tile west of the entry of the crude oil pipe free of lamps, where the player joins it", function()
+      _G.prototypes = oil_game()
+      local lights = require("scripts.lights")
+      local add, told = lights.add, nil
+      lights.add = function(entities, options) told = options return add(entities, options) end
+
+      generator.generate("basic-oil-processing", 1000, fake_force{})
+      lights.add = add
+
+      assert.are.same({{x = -1, y = -1}}, told.free_tiles)
+    end)
+
+    it("puts a display panel with the crude oil beside the entry at the top left corner, above it, once the force has unlocked it", function()
       _G.prototypes = oil_game()
 
       local result = generator.generate("basic-oil-processing", 1000, fake_force{})
@@ -3840,7 +3869,7 @@ describe("generator", function()
         panels[#panels + 1] = {tile.x, tile.y, panel.icon.type, panel.icon.name}
       end
       table.sort(panels, function(a, b) return a[1] < b[1] end)
-      assert.are.same({{0, 0, "fluid", "crude-oil"}}, panels)
+      assert.are.same({{0, -2, "fluid", "crude-oil"}}, panels)
     end)
 
     it("has no panels without the force's display panel, nor without a force", function()
@@ -4243,6 +4272,38 @@ describe("generator", function()
         assert.are.same({"blueprint-generation.generated", "100.8", {"item-name.sulfur"}}, {result.message[1], result.message[2], result.message[3]})
         assert.are.same({"fluid-name.crude-oil"}, result.message[4][2][3])
         assert.are.same({"fluid-name.water"}, result.message[4][4][3])
+      end)
+
+      it("takes both pipes that come in to the top left corner, the water on the top row, and leaves the tile west of each free of lamps", function()
+        _G.prototypes = sulfur_game()
+
+        local result = generator.generate("sulfur", 100, fake_force{})
+
+        local ends, west_lamps = {}, 0
+        for _, pipe in ipairs(builders.entities_named(result.entities, "pipe")) do
+          local tile = grid.top_left_tile(pipe.position)
+          if tile.x == 0 and tile.y < 0 then
+            ends[#ends + 1] = tile.y
+          end
+        end
+        for _, lamp in ipairs(builders.entities_named(result.entities, "small-lamp")) do
+          local tile = grid.top_left_tile(lamp.position)
+          west_lamps = west_lamps + ((tile.x == -1 and (tile.y == -1 or tile.y == -4)) and 1 or 0)
+        end
+        table.sort(ends)
+        assert.are.same({{-4, -1}, 0}, {ends, west_lamps})
+      end)
+
+      it("keeps the tile west of each entry free of lamps, where the player joins the pipe", function()
+        _G.prototypes = sulfur_game()
+        local lights = require("scripts.lights")
+        local add, told = lights.add, nil
+        lights.add = function(entities, options) told = options return add(entities, options) end
+
+        generator.generate("sulfur", 100, fake_force{})
+        lights.add = add
+
+        assert.are.same({{x = -1, y = -1}, {x = -1, y = -4}}, told.free_tiles)
       end)
 
       it("puts a display panel with each fluid that comes in at the north end, once the force has unlocked the panel", function()

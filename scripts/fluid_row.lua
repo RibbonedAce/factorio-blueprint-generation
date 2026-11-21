@@ -182,26 +182,4 @@ function fluid_row.turn(entities, entries, machine, size)
   return entries
 end
 
--- A display panel beside the tile where the pipe that brings the fluid in starts, on the side away from the machines, showing the
--- fluid, as the panels of the belts the player brings in do (the pipe that takes the product away has none). For a row that has
--- been turned. A panel needs no power.
----@param entities bpgen.Entity[]
----@param entries {input: {x: integer, y: integer}, output: {x: integer, y: integer}}  where the pipes start and end
----@param options {panel: string, machine: string, input: string}  the names of the panel, the machines and the fluid that comes in
-function fluid_row.add_panels(entities, entries, options)
-  local machine_x
-  for _, entity in ipairs(entities) do
-    if entity.name == options.machine then
-      machine_x = entity.position.x
-      break
-    end
-  end
-  local entry = entries.input
-  local away = entry.x + 0.5 < machine_x and -1 or 1
-  entity_list.append(entities, {
-    name = options.panel, position = grid.position(entry.x + away, entry.y),
-    icon = {type = "fluid", name = options.input}, always_show = true,
-  })
-end
-
 return fluid_row

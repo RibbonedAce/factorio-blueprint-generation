@@ -139,3 +139,8 @@ What the specs cannot show: each section lists what a feature assumes about the 
 - That an underground pipe whose `direction` is north has its open end on the north side and goes under the tiles to the south (and the reverse for south), as the hand-built blueprint has it. The validator reads it this way too.
 - That the display panel for the water, in the column between the water's entry pipe (the top pipe of the column beside the plants) and the pipe of the refineries, does not connect to or block a pipe, and that the player can bring the water to the open north side of that top pipe.
 - That the connections of the chemical plant are the two at the top row and the bottom row of its west side as it faces west (the stand-in of the specs has it so; the real data is not in the repo), and that the recipe of sulfur is 30 water and 30 petroleum gas for 2 sulfur in 1 second (recalled, not read), category `chemistry`.
+
+## Unverified in the entries iteration (5au)
+
+- That a pipe whose end is open to the west at the west edge, in a row above the blueprint, is where a player joins a pipe, as the open end of the water inlet of the concrete columns is, and that the pipes up and along join no other pipe: the rows are three apart, so none touches another, and the validator checks that the two networks stay apart.
+- That the display panel above each entry (the labels of the belts that come in) is where a player looks for it, and does not touch a pipe.

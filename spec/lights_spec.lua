@@ -125,6 +125,17 @@ describe("lights", function()
       assert.are.same({x = 5, y = 5}, grid.top_left_tile(lamp.position)) -- the closest free tile to (5, 4), which would have it
     end)
 
+    it("leaves the tiles it is told to free, such as the one west of the open end of a pipe", function()
+      -- the pole at (5, 5) powers the tiles (3, 3) to (7, 7); the first, (3, 3), would have the lamp
+      local entities = builders.numbered({builders.pole(5, 5)})
+      local told = options()
+      told.free_tiles = {{x = 3, y = 3}}
+
+      lights.add(entities, told)
+
+      assert.are.same({x = 4, y = 3}, grid.top_left_tile(entities[2].position)) -- the closest free tile to (3, 3), the one after it in its row
+    end)
+
     it("does not keep the tile ahead of an inserter free, which is no belt", function()
       local inserter = {name = NAMES.inserter, position = grid.position(3, 4), direction = defines.direction.north}
 

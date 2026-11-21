@@ -323,17 +323,4 @@ describe("fluid_row", function()
     end)
   end)
 
-  describe("add_panels", function()
-    it("puts a panel with the fluid beside the start of the pipe that brings it in, away from the machines, and none at the other end", function()
-      local entities, entries = fluid_row.build(request{count = 2})
-      fluid_row.turn(entities, entries, "oil-refinery", 5)
-
-      fluid_row.add_panels(entities, entries, {panel = "display-panel", machine = "oil-refinery", input = "crude-oil"})
-
-      local panels = builders.entities_named(entities, "display-panel")
-      local first = grid.top_left_tile(panels[1].position)
-      assert.are.same({1, {0, 0, "crude-oil"}}, {#panels, {first.x, first.y, panels[1].icon.name}})
-      assert.are.same({"fluid", true}, {panels[1].icon.type, panels[1].always_show})
-    end)
-  end)
 end)
