@@ -91,6 +91,16 @@ local function turned(tile, size, facing)
   return {x = size - 1 - tile.y, y = tile.x}
 end
 
+-- Where a tile outside a plant facing north is when the plant faces west or east (see `turned`), for the modules that lay out plants of their
+-- own beside the machines of this one.
+---@param tile {x: integer, y: integer}
+---@param size integer
+---@param facing defines.direction  west or east
+---@return {x: integer, y: integer}
+function fluid_plant.turn_tile(tile, size, facing)
+  return turned(tile, size, facing)
+end
+
 -- The first and the last row, from the top of a plant, of the pipe connections of what it takes.
 ---@param plants table  `bpgen.FluidPlantBuild.plants`
 ---@param facing defines.direction
@@ -314,6 +324,8 @@ local function inserter_row(plants, rows)
   error("fluid_plant: every row of a plant has a pipe connection, so no inserter can take the item in")
 end
 
+fluid_plant.inserter_row = inserter_row
+
 -- The west side of plants that take an item too (see the head of this file): the belt that brings the item in, the underground
 -- pipes that take the fluid under it to each connection of each plant, the inserter at each plant, and the poles that power them, in
 -- the column T, wired to each other. Gives the poles.
@@ -380,15 +392,13 @@ local function join_poles(entities, request, groups)
   })
 end
 
--- The pipes and the belt that take the start of what comes in to the west edge, above the blueprint (see scripts/corner_entries.lua):
--- the pipe that brings the fluid to the machines that make it, the one of the fluid that comes in beside the plants, if there is one,
--- and the belt of the item the plants take, if they take one.
----@param entities bpgen.Entity[]
+-- Where what comes in starts (see scripts/corner_entries.lua): the pipe that brings the fluid to the machines that make it, the one of
+-- the fluid that comes in beside the plants, if there is one, and the belt of the item the plants take, if they take one.
 ---@param request bpgen.FluidPlantBuild
----@param entries table  `fluid_plant.build`'s
+---@param entries table  `fluid_plant.build_block`'s
 ---@param belt_column? integer  of the belt that brings the item in, for plants that take one
 ---@return bpgen.EntryStart[]
-local function add_inlets(entities, request, entries, belt_column)
+local function inlet_starts(request, entries, belt_column)
   local pipe = request.makers.pipe
   local starts = {{key = "input", x = entries.input.x, y = entries.input.y, name = pipe}}
   if entries.supplied then
@@ -397,7 +407,7 @@ local function add_inlets(entities, request, entries, belt_column)
   if belt_column then
     starts[#starts + 1] = {key = "items", x = belt_column, y = 0, name = request.belt, belt = true}
   end
-  return corner_entries.add(entities, starts)
+  return starts
 end
 
 -- The plants and the pipes beside them, east of the pipe that takes the fluid out of the machines that make it (the column given).
@@ -424,14 +434,13 @@ local function add_plants_and_pipes(entities, entries, request, column, facing)
   return column + 3
 end
 
--- The entities of the machines that make the fluid (turned, see `fluid_row.build` and `fluid_row.turn`) and of the plants east of
--- the pipe that takes the fluid out, with the inserters, the belt and the poles, numbered, with the blueprint starting at its
--- top-left tile (0, 0). Gives the tiles where the pipes of the machines that make the fluid start and end too: the plants take
--- from the second.
+-- The blueprint of the machines that make the fluid (turned, see `fluid_row.build` and `fluid_row.turn`) and of the plants east of the pipe
+-- that takes the fluid out, with the inserters, the belts and the poles, numbered, with the blueprint starting at its top-left tile
+-- (0, 0), but not the entries of what comes in, which `entries.starts` says (see scripts/corner_entries.lua), and not the joining of
+-- the groups of poles. For a blueprint made of several (see scripts/item_fluid_chain.lua), which does those.
 ---@param request bpgen.FluidPlantBuild
----@return bpgen.Entity[]
----@return {input: {x: integer, y: integer}, output: {x: integer, y: integer}, supplied?: {x: integer, y: integer}, inlets: bpgen.EntryStart[]} entries  `supplied`: where the fluid that comes in beside the machines that make the fluid starts, for plants that take two; `inlets`: the entries of the pipes that come in, at the west edge (keys "input", "supplied", "items"), see scripts/corner_entries.lua
-function fluid_plant.build(request)
+---@return {entities: bpgen.Entity[], entries: table, groups: bpgen.Entity[][], product_belt: {column: integer, last_row: integer}}
+function fluid_plant.build_block(request)
   local makers, plants = request.makers, request.plants
   assert(makers.rows.inputs == makers.size, "fluid_plant: the machines that make the fluid have to take it in on the side that turns to the west")
   assert(layout.pole_reach(makers.pole_supply_distance) >= math.floor(plants.size / 2), "fluid_plant: a pole has to reach the inserter beside a plant")
@@ -443,14 +452,29 @@ function fluid_plant.build(request)
   local facing = facing_of(plants.rows, plants.size)
   local plant_column = add_plants_and_pipes(entities, entries, request, column, facing)
   local inserter_column = plant_column + plants.size
-  entries.inlets = add_inlets(entities, request, entries, request.item_input and column + 2 or nil)
+  entries.starts = inlet_starts(request, entries, request.item_input and column + 2 or nil)
   add_items_out(entities, request, inserter_column)
   local groups = {maker_poles, add_plant_poles(entities, request, inserter_column)}
   if request.item_input then
     groups[3] = add_item_side(entities, request, column, facing)
   end
-  join_poles(entities, request, groups)
-  return entities, entries
+  return {
+    entities = entities, entries = entries, groups = groups,
+    product_belt = {column = inserter_column + 1, last_row = plants.count * plants.size - 1},
+  }
+end
+
+-- The entities of the machines that make the fluid and of the plants east of the pipe that takes the fluid out, with the inserters, the
+-- belts, the poles and the entries of what comes in, numbered, with the blueprint starting at its top-left tile (0, 0). Gives the tiles
+-- where the pipes of the machines that make the fluid start and end too: the plants take from the second.
+---@param request bpgen.FluidPlantBuild
+---@return bpgen.Entity[]
+---@return {input: {x: integer, y: integer}, output: {x: integer, y: integer}, supplied?: {x: integer, y: integer}, inlets: bpgen.EntryStart[]} entries  `supplied`: where the fluid that comes in beside the machines that make the fluid starts, for plants that take two; `inlets`: the entries of what comes in, at the west edge (keys "input", "supplied", "items"), see scripts/corner_entries.lua
+function fluid_plant.build(request)
+  local block = fluid_plant.build_block(request)
+  block.entries.inlets = corner_entries.add(block.entities, block.entries.starts)
+  join_poles(block.entities, request, block.groups)
+  return block.entities, block.entries
 end
 
 return fluid_plant

@@ -97,12 +97,154 @@ describe("corner_entries", function()
       assert.are.same({{key = "crude", x = 0, y = -1}, {key = "coal", x = 0, y = -4}}, entries)
     end)
 
+    it("takes a belt that turns east to a block: down its column to the row of the block, and east along that row to the column it says", function()
+      local entities = {}
+
+      local entries = corner_entries.add(entities, {
+        {key = "coal", x = 2, y = 2, name = "belt", belt = true, until_x = 4}, {key = "crude", x = 6, y = 0, name = "pipe"},
+      })
+
+      local ways = {}
+      for _, belt in ipairs(entities) do
+        local tile = grid.top_left_tile(belt.position)
+        if belt.name == "belt" then
+          ways[#ways + 1] = string.format("%d,%d %s", tile.x, tile.y, belt.direction)
+        end
+      end
+      table.sort(ways)
+      -- the row -1 from the edge to the column 2, the column 2 from the row -1 to the row 1, the row 2 from the column 2 to the column 4
+      assert.are.same({"0,-1 east", "1,-1 east", "2,-1 south", "2,0 south", "2,1 south", "2,2 east", "3,2 east", "4,2 east"}, ways)
+      assert.are.same({key = "coal", x = 0, y = -1}, entries[1])
+    end)
+
     it("numbers the entities from 1 with no gap", function()
       local entities = {}
 
       corner_entries.add(entities, {{key = "a", x = 2, y = 0, name = "pipe"}, {key = "b", x = 4, y = 0, name = "pipe"}})
 
       assert.has_consecutive_numbers(entities)
+    end)
+
+    describe("with a start that joins the entry of another", function()
+      -- the water starts at the columns 3 and 7, the crude oil at the column 1, west of both
+      local function water_and_crude(extra)
+        local starts = {
+          {key = "crude", x = 1, y = 0, name = "pipe"}, {key = "water", x = 3, y = 0, name = "pipe"},
+          {key = "more_water", x = 7, y = 0, name = "pipe", joins = "water"},
+        }
+        for _, start in ipairs(extra or {}) do
+          starts[#starts + 1] = start
+        end
+        return starts
+      end
+
+      it("brings the two pipes to one row, the row of the one that starts furthest east, with a pipe down at each column", function()
+        local entities = {}
+
+        corner_entries.add(entities, water_and_crude())
+
+        -- the row -4 from the edge to the column 7 (the entry), the columns 3 and 7 down from it to the row -1, the crude oil in the row -1
+        assert.are.same({
+          {0, -4}, {1, -4}, {2, -4}, {3, -4}, {4, -4}, {5, -4}, {6, -4}, {7, -4},
+          {3, -3}, {7, -3}, {3, -2}, {7, -2},
+          {0, -1}, {1, -1}, {3, -1}, {7, -1},
+        }, pipe_tiles(entities))
+      end)
+
+      it("gives one entry for the two, with the key of the start that the other joins, above the one that starts west of both", function()
+        local entities = {}
+
+        local entries = corner_entries.add(entities, water_and_crude())
+
+        assert.are.same({{key = "crude", x = 0, y = -1}, {key = "water", x = 0, y = -4}}, entries)
+      end)
+
+      it("takes the row by the furthest start whichever of the two the other joins", function()
+        local entities = {}
+        local starts = {
+          {key = "east", x = 7, y = 0, name = "pipe"}, {key = "west", x = 3, y = 0, name = "pipe", joins = "east"}, {key = "belt", x = 9, y = 0, name = "belt", belt = true},
+        }
+
+        local entries = corner_entries.add(entities, starts)
+
+        assert.are.same({{key = "east", x = 0, y = -1}, {key = "belt", x = 0, y = -4}}, entries)
+      end)
+
+      it("goes up from a start in the row of the entry, with no pipe between, when the entry is right above it", function()
+        local entities = {}
+
+        corner_entries.add(entities, {{key = "water", x = 5, y = 0, name = "pipe"}, {key = "more_water", x = 2, y = 0, name = "pipe", joins = "water"}})
+
+        assert.are.same({{0, -1}, {1, -1}, {2, -1}, {3, -1}, {4, -1}, {5, -1}}, pipe_tiles(entities))
+      end)
+
+      it("lets an entry that starts east of both starts take a row above", function()
+        local entities = {}
+
+        local entries = corner_entries.add(entities, water_and_crude({{key = "coal", x = 11, y = 0, name = "belt", belt = true}}))
+
+        assert.are.same({"crude", "water", "coal"}, {entries[1].key, entries[2].key, entries[3].key})
+      end)
+
+      it("refuses an entry that starts between the two starts, which would have to cross the pipe", function()
+        local entities = {}
+
+        local add = function() corner_entries.add(entities, water_and_crude({{key = "coal", x = 5, y = 0, name = "belt", belt = true}})) end
+
+        assert.has_error(add, "corner_entries: an entry has the start of another entry between two of its own starts, which it would cross")
+      end)
+
+      it("refuses an entry that starts in the column of the start that is not the furthest", function()
+        local entities = {}
+
+        local add = function() corner_entries.add(entities, water_and_crude({{key = "coal", x = 3, y = 1, name = "belt", belt = true}})) end
+
+        assert.has_error(add, "corner_entries: an entry has the start of another entry between two of its own starts, which it would cross")
+      end)
+
+      it("refuses an entry that starts in the column of the furthest start of the pipe, which would be in its way whichever is above", function()
+        local entities = {}
+
+        local add = function() corner_entries.add(entities, water_and_crude({{key = "coal", x = 7, y = 1, name = "belt", belt = true}})) end
+
+        assert.has_error(add, "corner_entries: an entry has the start of another entry between two of its own starts, which it would cross")
+      end)
+
+      it("refuses two starts of one entry in the same column", function()
+        local entities = {}
+
+        local add = function() corner_entries.add(entities, {{key = "water", x = 3, y = 0, name = "pipe"}, {key = "more", x = 3, y = 2, name = "pipe", joins = "water"}}) end
+
+        assert.has_error(add, "corner_entries: two starts of an entry are in the same column")
+      end)
+
+      it("refuses a start that joins one that is not there", function()
+        local entities = {}
+
+        local add = function() corner_entries.add(entities, {{key = "water", x = 3, y = 0, name = "pipe", joins = "nothing"}}) end
+
+        assert.has_error(add, "corner_entries: a start joins the entry of a start that is not there")
+      end)
+
+      it("refuses a belt that joins a pipe, and a pipe that joins a belt", function()
+        local belt_joins = function()
+          corner_entries.add({}, {{key = "water", x = 3, y = 0, name = "pipe"}, {key = "coal", x = 5, y = 0, name = "belt", belt = true, joins = "water"}})
+        end
+        local pipe_joins = function()
+          corner_entries.add({}, {{key = "coal", x = 3, y = 0, name = "belt", belt = true}, {key = "water", x = 5, y = 0, name = "pipe", joins = "coal"}})
+        end
+
+        assert.has_error(belt_joins, "corner_entries: only pipes join each other")
+        assert.has_error(pipe_joins, "corner_entries: only pipes join each other")
+      end)
+
+      it("numbers the entities from 1 with no gap", function()
+        local entities = {}
+
+        corner_entries.add(entities, water_and_crude())
+
+        assert.has_consecutive_numbers(entities)
+      end)
     end)
   end)
 end)

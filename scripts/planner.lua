@@ -807,6 +807,104 @@ function planner.plan_fluid_plant(request)
   }
 end
 
+-- How many ticks ONE INSERTER takes to bring the items of one craft, `amounts` of each of several items (the items of a belt that two
+-- items share): it moves them in turn, each in swings of a hand of `stack_size` (the last swing of an item with what is left), each swing
+-- taking what `planner.inserter_items_per_minute` says for a hand of its size: a turn there and back and a wait for each item after the
+-- first.
+---@param rotation_speed number
+---@param stack_size integer
+---@param belt_speed number
+---@param amounts number[]
+---@return number
+function planner.inserter_ticks_for(rotation_speed, stack_size, belt_speed, amounts)
+  local rotation_ticks, interval = 1 / rotation_speed, planner.item_interval_ticks(belt_speed)
+  local ticks = 0
+  for _, amount in ipairs(amounts) do
+    local full = math.floor(amount / stack_size + EPSILON)
+    local rest = amount - full * stack_size
+    ticks = ticks + full * (rotation_ticks + (stack_size - 1) * interval)
+    if rest > EPSILON then
+      ticks = ticks + rotation_ticks + (rest - 1) * interval
+    end
+  end
+  return ticks
+end
+
+-- Whether the recipe of plants that make a fluid from two items and a fluid is one the planner handles: two items, one fluid, one
+-- product, which is the fluid.
+---@param recipe bpgen.Recipe
+---@param product_name string
+---@return boolean
+function planner.is_item_fluid_recipe(recipe, product_name)
+  return #recipe.ingredients == 2 and #recipe.fluids == 1 and is_supported(recipe, product_name)
+end
+
+-- How many crafts one plant of `request` makes a minute: what its machine does at full speed, held down to what its one inserter brings
+-- of the two items of a craft.
+---@param request bpgen.ItemFluidPlantsRequest
+---@return number
+local function item_fluid_crafts_each(request)
+  local machine = 60 * request.machine_speed / request.recipe.energy
+  local amounts = {}
+  for _, item in ipairs(request.recipe.ingredients) do
+    amounts[#amounts + 1] = item.amount
+  end
+  local ticks = planner.inserter_ticks_for(request.inserter_rotation_speed, request.inserter_stack_size, request.belt_speed, amounts)
+  return math.min(machine, TICKS_PER_SECOND * SECONDS_PER_MINUTE / ticks)
+end
+
+-- What `plants` plants take a minute of what their recipe takes, as a list of the amounts, from the item that comes first.
+---@param request bpgen.ItemFluidPlantsRequest
+---@param plants integer
+---@return bpgen.RawAmount[] items
+---@return bpgen.RawAmount[] fluids
+local function item_fluid_amounts(request, plants)
+  local crafts = plants * item_fluid_crafts_each(request)
+  local items, fluids = {}, {}
+  for _, item in ipairs(request.recipe.ingredients) do
+    items[#items + 1] = {name = item.name, amount = crafts * item.amount}
+  end
+  for _, fluid in ipairs(request.recipe.fluids) do
+    fluids[#fluids + 1] = {name = fluid.name, amount = crafts * fluid.amount}
+  end
+  return items, fluids
+end
+
+-- The most a plant of machines that make a fluid from two items and a fluid can make a minute: as many machines as stand in the length one
+-- run of pipes may have, each making what its inserter brings the items of. Nil and the reason when the recipe is not one the planner
+-- handles.
+---@param request bpgen.ItemFluidPlantsRequest
+---@return number|nil max_rate
+---@return bpgen.PlanReason|nil reason
+function planner.max_item_fluid_plants_rate(request)
+  if not planner.is_item_fluid_recipe(request.recipe, request.product) then
+    return nil, "unsupported-recipe"
+  end
+  return math.max(1, request.plants_that_fit) * item_fluid_crafts_each(request) * planner.amount_made(request.recipe, request.product), nil
+end
+
+-- How many machines make `request.rate_per_minute` of the fluid (a whole number makes a little more than asked), what each makes, and what
+-- they take of the two items and the fluid. Nil, the reason and the most they can make when the rate is more than stand in the length of a
+-- run of pipes.
+---@param request bpgen.ItemFluidPlantsRequest
+---@return bpgen.ItemFluidPlantsPlan|nil plan
+---@return bpgen.PlanReason|nil reason
+---@return number|nil max_rate  given with "rate-too-high"
+function planner.plan_item_fluid_plants(request)
+  local max_rate, reason = planner.max_item_fluid_plants_rate(request)
+  if not max_rate then
+    return nil, reason
+  end
+  local crafts = item_fluid_crafts_each(request)
+  local each = crafts * planner.amount_made(request.recipe, request.product)
+  local plants = whole_machines(request.rate_per_minute / each)
+  if plants > math.max(1, request.plants_that_fit) then
+    return nil, "rate-too-high", max_rate
+  end
+  local items, fluids = item_fluid_amounts(request, plants)
+  return {plants = plants, crafts_each = crafts, per_plant = each, output_per_minute = plants * each, items = items, fluids = fluids}
+end
+
 -- Whether the sides of the machines leave room for a winding belt: they are 3x3 and neither side is full (the plain and the
 -- long-handed inserters of the input side together). Not knowing the size (`limits.machine_size` nil) leaves the question
 -- open and says yes. A side of woven belts is full and takes no row of poles, which stand beside the belts (see

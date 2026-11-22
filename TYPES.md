@@ -47,10 +47,14 @@ flowchart LR
   fluid_row -->|"Entity list"| generator
   generator -->|"FluidPlantRequest"| planner
   planner -->|"FluidPlantPlan"| generator
-  generator -->|"PipeStart list"| corner_entries["corner_entries.lua"]
+  generator -->|"EntryStart list"| corner_entries["corner_entries.lua"]
   corner_entries -->|"pipes added to the Entity list, the entries"| generator
   generator -->|"FluidPlantBuild: two FluidRowBuild's worth of machines, inserter, belt"| fluid_plant["fluid_plant.lua"]
   fluid_plant -->|"Entity list"| generator
+  generator -->|"ItemFluidPlantsRequest"| planner
+  planner -->|"ItemFluidPlantsPlan"| generator
+  generator -->|"ItemFluidChainBuild: FluidPlantBuild, BeltsBlock, ItemFluidPlantsBuild"| item_fluid_chain["item_fluid_chain.lua"]
+  item_fluid_chain -->|"ItemFluidChain: Entity list, entries"| generator
 
   generator -->|"RawAmount, StageSummary, belts"| messages["messages.lua"]
   messages -->|"LocalisedString, description"| generator
@@ -78,6 +82,16 @@ flowchart TD
   generator --> fluid_row
   generator --> fluid_plant
   generator --> corner_entries
+  generator --> item_fluid_chain
+  generator --> item_fluid_plants
+  item_fluid_chain --> item_fluid_plants
+  item_fluid_chain --> fluid_plant
+  item_fluid_chain --> corner_entries
+  item_fluid_chain --> poles
+  item_fluid_chain --> grid
+  item_fluid_plants --> fluid_plant
+  item_fluid_plants --> layout
+  item_fluid_plants --> grid
   fluid_plant --> corner_entries
   fluid_plant --> fluid_row
   fluid_plant --> poles
@@ -502,7 +516,7 @@ classDiagram
 
 The order of the work in `rows.build_pure` is: columns are made (`Column`), the leaves are handed to `feeds.plan` (`FeedPlan`), the columns are placed after the band, `inputs.lay` draws the band (`Band`) and says where each leaf's belt ends, the columns get their rows from that, and `poles.join` wires the poles with a `PoleBridge` for the gaps.
 
-### 3d. A row of machines that make a fluid, and plants that make an item from it (generator, planner, fluid_row, fluid_plant)
+### 3d. A row of machines that make a fluid, plants that make an item from it, and a chain of them (generator, planner, fluid_row, fluid_plant, item_fluid_plants, item_fluid_chain)
 
 A fluid that is made from a fluid (petroleum gas from crude oil in the oil refinery) has no belts and no inserters: the generator reads where the pipes of the machine connect from the game (`FluidBox`), the planner says how many machines the rate needs, and `fluid_row` draws the row.
 
@@ -567,6 +581,60 @@ classDiagram
     item_input
   }
 
+  class ItemFluidPlantsRequest {
+    product
+    machine_speed
+    rate_per_minute
+    inserter_rotation_speed
+    inserter_stack_size
+    belt_speed
+    plants_that_fit
+  }
+  class ItemFluidPlantsPlan {
+    plants
+    crafts_each
+    per_plant
+    output_per_minute
+    items
+    fluids
+  }
+  class ItemFluidPlantsBuild {
+    inserter
+    belt
+    pipe
+    pipe_to_ground
+    pole
+    underground_reach
+  }
+  class ItemFluidPlantsBlock {
+    columns
+    groups
+    last_row
+    output_exit_row
+  }
+  class BeltsBlock {
+    entities
+    poles
+    product
+    raw
+  }
+  class ItemFluidChainBuild {
+    shared_fluid
+    size_of
+  }
+  class ItemFluidChain {
+    entities
+    inlets
+    places
+  }
+
+  ItemFluidPlantsRequest *-- Recipe : recipe
+  ItemFluidPlantsRequest ..> ItemFluidPlantsPlan : planner.plan_item_fluid_plants
+  ItemFluidPlantsBuild ..> ItemFluidPlantsBlock : item_fluid_plants.build
+  ItemFluidChainBuild *-- FluidPlantBuild : plants_part
+  ItemFluidChainBuild *-- BeltsBlock : belts_part
+  ItemFluidChainBuild *-- ItemFluidPlantsBuild : final_plants
+  ItemFluidChainBuild ..> ItemFluidChain : item_fluid_chain.build
   FluidRowRequest *-- Recipe : recipe
   FluidPlantRequest *-- Recipe : recipe and maker_recipe
   FluidPlantRequest ..> FluidPlantPlan : planner.plan_fluid_plant
@@ -583,12 +651,13 @@ classDiagram
 
 | Where | Types |
 |---|---|
-| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, FluidPlantRequest, FluidPlantPlan, FluidPlantBuild, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
+| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, FluidPlantRequest, FluidPlantPlan, FluidPlantBuild, ItemFluidPlantsRequest, ItemFluidPlantsPlan, ItemFluidPlantsBuild, ItemFluidPlantsBlock, BeltsBlock, ItemFluidChainBuild, ItemFluidChainPlaces, ItemFluidChain, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
-| `scripts/generator.lua` | EnergySource, Candidate, StageData, InserterData, Job, PlannedStage, Demand, DemandTotals |
+| `scripts/generator.lua` | EnergySource, Candidate, StageData, InserterData, Job, Arrangement, PlannedStage, Demand, DemandTotals, ItemFluidChainPlans |
 | `scripts/planner.lua` | InputInserters, MachineRates, StageContext, Sizes |
 | `scripts/chain.lua` | MadeIngredient |
 | `scripts/layout.lua` | Geometry, Place, Poles, SharedBelt, Builder |
 | `scripts/rows.lua` | Arc, Column, RawRun |
 | `scripts/inputs.lua` | Band |
 | `scripts/poles.lua` | PolePair |
+| `scripts/corner_entries.lua` | EntryStart, Entry |

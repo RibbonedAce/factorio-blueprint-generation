@@ -2699,4 +2699,166 @@ describe("planner", function()
       end)
     end)
   end)
+  describe("inserter_ticks_for", function()
+    -- an inserter of 0.014 turns a tick takes 71.43 ticks for a turn there and back; the basic belt's items are 8 ticks apart
+    it("takes a turn for each item when the hand holds one", function()
+      assert.near(6 / 0.014, planner.inserter_ticks_for(0.014, 1, 0.03125, {5, 1}), 1e-6)
+    end)
+
+    it("takes a turn and a wait for each item after the first in a hand of two, and a turn for the item that is left", function()
+      -- 5 items: two swings of two (71.43 + 8 each) and one of one (71.43); 1 item: one swing of one (71.43)
+      local expected = 2 * (1 / 0.014 + 8) + 1 / 0.014 + 1 / 0.014
+
+      assert.near(expected, planner.inserter_ticks_for(0.014, 2, 0.03125, {5, 1}), 1e-6)
+    end)
+
+    it("takes the swings of one item with a hand that holds more of it than there is as one swing of what there is", function()
+      assert.near(1 / 0.014 + 2 * 8, planner.inserter_ticks_for(0.014, 5, 0.03125, {3}), 1e-6)
+    end)
+
+    it("takes full swings only for an amount that the hand divides exactly: 4 items in hands of two", function()
+      assert.near(2 * (1 / 0.014 + 8), planner.inserter_ticks_for(0.014, 2, 0.03125, {4}), 1e-6)
+    end)
+
+    it("takes nothing for nothing", function()
+      assert.are.equal(0, planner.inserter_ticks_for(0.014, 2, 0.03125, {}))
+    end)
+  end)
+
+  describe("plants that make a fluid from two items and a fluid", function()
+    -- 5 sulfur and 1 iron plate and 100 water make 50 sulfuric acid in 1 s: a machine of speed 1 makes 3,000 a minute, but its one inserter,
+    -- that moves 50.4 items a minute when its hand holds one, brings the 6 items of a craft in 8.4 crafts a minute: 420 a minute.
+    local acid = {
+      energy = 1, ingredients = {builders.amount_of(5, "sulfur"), builders.amount_of(1, "iron-plate")}, fluids = {{name = "water", amount = 100}},
+      products = {builders.fluid_of(50, "sulfuric-acid")},
+    }
+
+    local function request(changes)
+      return builders.merged({
+        product = "sulfuric-acid", recipe = acid, machine_speed = 1, rate_per_minute = 1000, inserter_rotation_speed = 0.014, inserter_stack_size = 1,
+        belt_speed = 0.03125, plants_that_fit = 106,
+      }, changes)
+    end
+
+    describe("is_item_fluid_recipe", function()
+      it("takes a recipe of two items and one fluid that makes the fluid", function()
+        assert.is_true(planner.is_item_fluid_recipe(acid, "sulfuric-acid"))
+      end)
+
+      it("refuses a recipe of one item, three items, two fluids or no fluid", function()
+        local one_item = builders.merged(acid, {ingredients = {builders.amount_of(5, "sulfur")}})
+        local three_items = builders.merged(acid, {ingredients = {builders.amount_of(5, "sulfur"), builders.amount_of(1, "iron-plate"), builders.amount_of(1, "coal")}})
+        local two_fluids = builders.merged(acid, {fluids = {{name = "water", amount = 100}, {name = "steam", amount = 1}}})
+        local no_fluid = builders.merged(acid, {fluids = {}})
+
+        assert.are.same({false, false, false, false}, {
+          planner.is_item_fluid_recipe(one_item, "sulfuric-acid"), planner.is_item_fluid_recipe(three_items, "sulfuric-acid"),
+          planner.is_item_fluid_recipe(two_fluids, "sulfuric-acid"), planner.is_item_fluid_recipe(no_fluid, "sulfuric-acid"),
+        })
+      end)
+
+      it("refuses a recipe that makes something else too, or takes no time", function()
+        local two_products = builders.merged(acid, {products = {builders.fluid_of(50, "sulfuric-acid"), builders.amount_of(1, "stone")}})
+        local instant = builders.merged(acid, {energy = 0})
+
+        assert.are.same({false, false}, {planner.is_item_fluid_recipe(two_products, "sulfuric-acid"), planner.is_item_fluid_recipe(instant, "sulfuric-acid")})
+      end)
+    end)
+
+    describe("plan_item_fluid_plants", function()
+      it("holds a plant down to what its inserter brings of the six items of a craft: 8.4 crafts, 420 a minute", function()
+        local plan = planner.plan_item_fluid_plants(request{rate_per_minute = 420})
+
+        assert.near(8.4, plan.crafts_each, 1e-9)
+        assert.are.equal(1, plan.plants)
+        assert.near(420, plan.output_per_minute, 1e-9)
+      end)
+
+      it("takes as many plants as the rate needs, a whole number making a little more than asked", function()
+        local plan = planner.plan_item_fluid_plants(request{rate_per_minute = 1000})
+
+        assert.are.equal(3, plan.plants)
+        assert.near(1260, plan.output_per_minute, 1e-9)
+        assert.near(420, plan.per_plant, 1e-9)
+      end)
+
+      it("says what the plants take a minute: the sulfur and the iron plates in the order of the recipe, and the water", function()
+        local plan = planner.plan_item_fluid_plants(request{rate_per_minute = 1000})
+
+        -- 3 plants of 8.4 crafts: 25.2 crafts a minute
+        assert.are.same({"sulfur", "iron-plate", "water"}, {plan.items[1].name, plan.items[2].name, plan.fluids[1].name})
+        assert.near(126, plan.items[1].amount, 1e-9)
+        assert.near(25.2, plan.items[2].amount, 1e-9)
+        assert.near(2520, plan.fluids[1].amount, 1e-9)
+      end)
+
+      it("makes more from an inserter that moves more, a hand of two items: 11.9 crafts", function()
+        local plan = planner.plan_item_fluid_plants(request{inserter_stack_size = 2})
+
+        assert.near(3600 / (2 * (1 / 0.014 + 8) + 2 / 0.014), plan.crafts_each, 1e-9)
+      end)
+
+      it("is held down by the machine when the inserter brings more than it crafts: a machine of speed 0.1 makes 6 crafts", function()
+        local plan = planner.plan_item_fluid_plants(request{machine_speed = 0.1})
+
+        assert.near(6, plan.crafts_each, 1e-9)
+      end)
+
+      it("counts the time of a craft: a recipe of 10 seconds is 6 crafts a minute at speed 1", function()
+        local slow = builders.merged(acid, {energy = 10})
+
+        local plan = planner.plan_item_fluid_plants(request{recipe = slow})
+
+        assert.near(6, plan.crafts_each, 1e-9)
+      end)
+
+      it("refuses a rate that needs more plants than stand in the length of a run of pipes, naming the most", function()
+        local plan, reason, max_rate = planner.plan_item_fluid_plants(request{plants_that_fit = 2, rate_per_minute = 841})
+
+        assert.are.same({nil, "rate-too-high"}, {plan, reason})
+        assert.near(840, max_rate, 1e-9)
+      end)
+
+      it("refuses a second plant when only one stands in the length", function()
+        local plan, reason, max_rate = planner.plan_item_fluid_plants(request{plants_that_fit = 1, rate_per_minute = 421})
+
+        assert.are.same({nil, "rate-too-high"}, {plan, reason})
+        assert.near(420, max_rate, 1e-9)
+      end)
+
+      it("allows the most that stand in the length", function()
+        local plan = planner.plan_item_fluid_plants(request{plants_that_fit = 2, rate_per_minute = 840})
+
+        assert.are.equal(2, plan.plants)
+      end)
+
+      it("has one plant at least, however little stands in the length", function()
+        local plan = planner.plan_item_fluid_plants(request{plants_that_fit = 0, rate_per_minute = 10})
+
+        assert.are.equal(1, plan.plants)
+      end)
+
+      it("refuses a recipe it cannot handle", function()
+        local plan, reason = planner.plan_item_fluid_plants(request{recipe = builders.merged(acid, {energy = 0})})
+
+        assert.are.same({nil, "unsupported-recipe"}, {plan, reason})
+      end)
+    end)
+
+    describe("max_item_fluid_plants_rate", function()
+      it("gives what as many plants as stand in the length make", function()
+        assert.near(106 * 420, planner.max_item_fluid_plants_rate(request{}), 1e-6)
+      end)
+
+      it("gives one plant's worth at least", function()
+        assert.near(420, planner.max_item_fluid_plants_rate(request{plants_that_fit = 0}), 1e-9)
+      end)
+
+      it("gives no rate, and the reason, for a recipe it cannot handle", function()
+        local max_rate, reason = planner.max_item_fluid_plants_rate(request{recipe = builders.merged(acid, {fluids = {}})})
+
+        assert.are.same({nil, "unsupported-recipe"}, {max_rate, reason})
+      end)
+    end)
+  end)
 end)

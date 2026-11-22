@@ -394,6 +394,26 @@
 ---@field supplied bpgen.RawAmount[]  the other fluids the plants take, which come in by a pipe: what all of them take a minute
 ---@field items bpgen.RawAmount[]  the item the plants take, which comes in by a belt, if they take one: what all of them take a minute
 
+-- What `planner.plan_item_fluid_plants` is asked: plants that make a fluid from two items and a fluid, each fed by one inserter from a belt that
+-- carries both items.
+---@class bpgen.ItemFluidPlantsRequest
+---@field product string  the fluid
+---@field recipe bpgen.Recipe  two items, one fluid and one product, which is the fluid
+---@field machine_speed number
+---@field rate_per_minute number  of the fluid
+---@field inserter_rotation_speed number  of the inserter that brings the items, in turns a tick
+---@field inserter_stack_size integer  the items it moves in a swing
+---@field belt_speed number  of the belt it takes from
+---@field plants_that_fit integer  how many machines stand one under the other in the length a run of pipes may have
+
+---@class bpgen.ItemFluidPlantsPlan
+---@field plants integer
+---@field crafts_each number  what one plant crafts a minute, held down to what its inserter brings
+---@field per_plant number  what one plant makes a minute
+---@field output_per_minute number  what all the plants make
+---@field items bpgen.RawAmount[]  what all the plants take of the items of the recipe, in its order
+---@field fluids bpgen.RawAmount[]  what all the plants take of the fluids of the recipe
+
 ---@class bpgen.FluidRowPlan
 ---@field machines integer
 ---@field output_per_minute number  what all the machines make
@@ -421,6 +441,62 @@
 ---@field underground_reach? integer  the most tiles an underground pipe spans, from one end to the other, for plants that take two fluids
 ---@field inserter string  prototype name of the inserter beside each plant
 ---@field belt string  prototype name of the belt the inserters drop on
+
+-- What `item_fluid_plants.build` is asked for: plants that make a fluid from two items and a fluid, with the belt, the pipes and the poles
+-- beside them (see scripts/item_fluid_plants.lua).
+---@class bpgen.ItemFluidPlantsBuild
+---@field plants {machine: string, recipe: string, size: integer, count: integer, boxes: bpgen.FluidBox[], rows: bpgen.FluidRows}  the plants, with the pipe connections they have as they face north
+---@field inserter string  prototype name of the inserter that takes the items from the belt into each plant
+---@field belt string  prototype name of the belt of the two items
+---@field pipe string
+---@field pipe_to_ground string
+---@field pole string
+---@field pole_supply_distance number
+---@field pole_wire_distance number
+---@field underground_reach integer  the most tiles an underground pipe spans, from one end to the other
+
+-- What `item_fluid_plants.build` gives: the entities and where the parts are, in a frame whose row 0 is the first row of the first plant and
+-- whose column 0 is the column of the trunk of the fluid the plants take.
+---@class bpgen.ItemFluidPlantsBlock
+---@field entities bpgen.Entity[]
+---@field columns {trunk: integer, tunnel: integer, belt: integer, inserter: integer, plant: integer, output: integer, pole: integer, width: integer}
+---@field groups bpgen.Entity[][]  the poles of the plants and the poles of the inserters, each group wired inside
+---@field last_row integer  the last row of the last plant, where the belt b ends in this block (the belts of the two items reach its south end further down)
+---@field output_exit_row integer  the last row of the pipe that takes the made fluid away, whose end opens south
+
+-- The block of the belts part of `item_fluid_chain.build`: the steps that make an item on belts from raw items (furnaces, assemblers, whatever
+-- the belts layout builds), made apart from it by the generator from the game's recipes, in a frame whose (0, 0) is its top-left tile.
+---@class bpgen.BeltsBlock
+---@field entities bpgen.Entity[]  numbered from 1, with the wires of its poles
+---@field poles bpgen.Entity[]  its poles (of `entities`), wired together
+---@field product {column: integer, last_row: integer}  the tile column of its belt of product, which runs south, and the row of its last tile
+---@field raw {key: string, x: integer, y: integer, direction: defines.direction}[]  where the belts of raw items start: the tile, and the way the belt runs there (south at the top of the block, or east at its west edge)
+
+-- What `item_fluid_chain.build` is asked for: the three blocks.
+---@class bpgen.ItemFluidChainBuild
+---@field plants_part bpgen.FluidPlantBuild  the plants that make one of the items from fluids, with the machines that make the fluid they take
+---@field belts_part bpgen.BeltsBlock  the block that makes the other item on belts
+---@field final_plants bpgen.ItemFluidPlantsBuild  the plants that take both items and a fluid
+---@field shared_fluid boolean  whether the fluid that comes in beside the plants part is the one the final plants take: one entry brings it to both
+---@field size_of fun(entity: bpgen.Entity): integer, integer  how many tiles across and along the map an entity covers
+
+-- Where the blocks of `item_fluid_chain.build` are, from the west.
+---@class bpgen.ItemFluidChainPlaces
+---@field belts_x integer  the tile column of the left edge of the belts part
+---@field belts_product integer  the tile column of the belt of the belts part (the head of the join)
+---@field plants_x integer  the tile column of the left edge of the plants part (the machines that make its fluid and its plants)
+---@field plants_product integer  the tile column of the belt of the plants part
+---@field final_x integer  the tile column of the first column of the final plants (their trunk)
+---@field trunk integer  the tile column of the trunk of the fluid the final plants take
+---@field belt_b integer  the tile column of the belt that takes both items to the final plants
+---@field arc_row integer  the row of the belt that takes the product of the belts part east to the belt b, under all the blocks
+
+-- What `item_fluid_chain.build` gives.
+---@class bpgen.ItemFluidChain
+---@field entities bpgen.Entity[]
+---@field inlets {key: string, x: integer, y: integer}[]  the entries of what comes in, at the west edge
+---@field places bpgen.ItemFluidChainPlaces
+---@field final bpgen.ItemFluidPlantsBlock  the block of the final plants
 
 -- What the message and the description of a blueprint are made from --------------
 

@@ -15,6 +15,25 @@
 --   o=. . v           row -1: the entry of the pipe that starts at the column 1
 --   . = . . v         row 0 and below: the blueprint, with its pipe and belt starting here
 --
+-- A belt that does not go on south but turns east, to a block that takes its belts from the west (the first tile of the block is east of
+-- the column the belt comes down), says where it turns east to (`until_x`): it comes down its column to the row of the block, which is
+-- `start.y`, and runs east along that row up to that column.
+--
+--   o>>>v             row -4
+--   . . . v
+--   . . . >>>[block]  the row of the block, `start.y`; `until_x` is the last tile before the block
+--
+-- Two pipes of one fluid that start at different columns are one entry (`joins`): the pipe of the one that starts furthest east goes up to
+-- the row and west along it to the edge, as above, and the other goes up to the same row and joins it there, so that the player brings the
+-- fluid once and it divides itself, as pipes do (there is no splitter to build). The entry is on the row that its furthest start has,
+-- so another entry may not start between two of its starts: it would have to cross it, which a pipe cannot do on the surface.
+--
+--   o=======          row -4: the entry that joins the pipes that start at the columns 3 and 7
+--   ...=...=
+--   ...=...=
+--   o=.=...=          row -1: the entry of the pipe that starts at the column 1, west of both
+--   .=.=...=          row 0 and below: the blueprint, with the three pipes starting here
+--
 -- The panels that tell what each entry is are put beside them (scripts/labels.lua).
 
 local entity_list = require("scripts.entity_list")
@@ -34,38 +53,108 @@ local ROWS_APART = 3
 ---@field y integer
 ---@field name string  prototype name of the pipe or the belt
 ---@field belt? boolean  a belt: the tiles run east along the row and south down the column, where a pipe has no direction
+---@field until_x? integer  of a belt: the column of the last tile of the run east along the row `y`, when it does not go on south
+---@field joins? string  of a pipe: the key of the start of another pipe, of the same fluid, whose entry this one joins (see the head of this file)
 
--- The tiles of one entry: up from the tile where it starts to the row, and west along it to the edge.
+-- The tiles of a run of an entry, from `first` to `last` along the column or the row `across`, going the way given (nothing for a pipe).
+---@param entities bpgen.Entity[]
+---@param start bpgen.EntryStart
+---@param run {along: "column"|"row", across: integer, first: integer, last: integer, direction?: defines.direction}
+local function add_run(entities, start, run)
+  for at = run.first, run.last do
+    local tile = run.along == "column" and {x = run.across, y = at} or {x = at, y = run.across}
+    entity_list.append(entities, {name = start.name, position = grid.position(tile.x, tile.y), direction = run.direction})
+  end
+end
+
+-- The tiles of one entry: up from the tile where it starts to the row, and west along it to the edge (and, for a belt that turns east, the
+-- run east to the block).
 ---@param entities bpgen.Entity[]
 ---@param start bpgen.EntryStart
 ---@param row integer
 local function add_line(entities, start, row)
   local up, along = start.belt and south or nil, start.belt and east or nil
-  for y = row, start.y - 1 do
-    entity_list.append(entities, {name = start.name, position = grid.position(start.x, y), direction = up})
+  add_run(entities, start, {along = "column", across = start.x, first = row, last = start.y - 1, direction = up})
+  add_run(entities, start, {along = "row", across = row, first = 0, last = start.x - 1, direction = along})
+  add_run(entities, start, {along = "row", across = start.y, first = start.x, last = start.until_x or start.x - 1, direction = along})
+end
+
+-- One entry: the starts that come in as one, the one the others join first.
+---@class bpgen.Entry
+---@field starts bpgen.EntryStart[]  the first is the one the others join, the others follow in the order they were given
+---@field far bpgen.EntryStart  the start furthest east: the row of the entry is by its column
+
+-- The starts as entries: each start that joins none is an entry, with the starts that join it.
+---@param starts bpgen.EntryStart[]
+---@return bpgen.Entry[]
+local function entries_of(starts)
+  local by_key, entries = {}, {}
+  for _, start in ipairs(starts) do
+    if not start.joins then
+      by_key[start.key] = {starts = {start}, far = start}
+      entries[#entries + 1] = by_key[start.key]
+    end
   end
-  for x = 0, start.x - 1 do
-    entity_list.append(entities, {name = start.name, position = grid.position(x, row), direction = along})
+  for _, start in ipairs(starts) do
+    if start.joins then
+      local entry = assert(by_key[start.joins], "corner_entries: a start joins the entry of a start that is not there")
+      assert(not (start.belt or entry.starts[1].belt), "corner_entries: only pipes join each other")
+      entry.starts[#entry.starts + 1] = start
+      entry.far = start.x > entry.far.x and start or entry.far
+    end
+  end
+  return entries
+end
+
+-- Whether the leg of `entry` that goes down from the row of the entry at the column of `start` crosses `other`: the rows of the entries
+-- that start further west are under the row of this one, and they run east up to the column of their furthest start, so the leg of a start
+-- west of the furthest one crosses those that reach its column.
+---@param entry bpgen.Entry
+---@param start bpgen.EntryStart  one of the starts of `entry`
+---@param other bpgen.Entry
+---@return boolean
+local function crosses(entry, start, other)
+  return other ~= entry and start ~= entry.far and start.x <= other.far.x and other.far.x <= entry.far.x
+end
+
+-- Stops when the entries cross each other, or two starts of an entry are in the same column.
+---@param entries bpgen.Entry[]
+local function assert_planar(entries)
+  for _, entry in ipairs(entries) do
+    local columns = {}
+    for _, start in ipairs(entry.starts) do
+      assert(not columns[start.x], "corner_entries: two starts of an entry are in the same column")
+      columns[start.x] = true
+      for _, other in ipairs(entries) do
+        assert(not crosses(entry, start, other), "corner_entries: an entry has the start of another entry between two of its own starts, which it would cross")
+      end
+    end
   end
 end
 
--- The pipes and belts of the entries of `starts`, appended to `entities`. Gives the entry of each, at the west edge, in the order of
--- the starts from the west.
+-- The pipes and belts of the entries of `starts`, appended to `entities`. Gives the entry of each, at the west edge, in the order of the
+-- entries from the west: the key is that of the start the others join, when there are several.
 ---@param entities bpgen.Entity[]
 ---@param starts bpgen.EntryStart[]
 ---@return {key: string, x: integer, y: integer}[] entries  `x` is 0 and `y` the row of the entry
 function corner_entries.add(entities, starts)
-  local ordered = {table.unpack(starts)}
-  table.sort(ordered, function(first, second) return first.x < second.x end)
+  local ordered = entries_of(starts)
+  assert_planar(ordered)
+  table.sort(ordered, function(first, second) return first.far.x < second.far.x end)
   local top = math.huge
   for _, start in ipairs(starts) do
     top = math.min(top, start.y)
   end
   local entries = {}
-  for index, start in ipairs(ordered) do
+  for index, entry in ipairs(ordered) do
     local row = top - 1 - ROWS_APART * (index - 1)
-    add_line(entities, start, row)
-    entries[index] = {key = start.key, x = 0, y = row}
+    add_line(entities, entry.far, row)
+    for _, start in ipairs(entry.starts) do
+      if start ~= entry.far then
+        add_run(entities, start, {along = "column", across = start.x, first = row + 1, last = start.y - 1})
+      end
+    end
+    entries[index] = {key = entry.starts[1].key, x = 0, y = row}
   end
   return entries
 end
