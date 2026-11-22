@@ -170,3 +170,9 @@ What the specs cannot show: each section lists what a feature assumes about the 
 - That the raw coal belt, whose lanes both carry coal, goes through the lane gadget of `rows.lua` and side-loads one lane of the belt b (so a blueprint takes at most the 450 a minute of one lane), the sulfur riding the other, as the belt tracer's rules have it. The gadget has not been seen running in game.
 - That a chemical plant that makes an item has its two output fluid boxes unused, with no pipe at them (the specs' validator catalog lists none), and that one plain inserter at the middle row of its east side takes the explosives out onto the belt beside it, as for solid fuel and plastic bar.
 - That the plant is held down by the output inserter as `planner.inserter_ticks_for` counts it (2 swings for the 2 explosives of a craft), and that the blueprint's limit is the 450 a minute of the output lane.
+
+## Unverified in the winding output belt of plants (5az)
+
+- That the output side of the assembling machines works for the chemical plants that make an item: the inserters of the first plant of a pair in its top rows and of the second in its bottom rows, the poles beside them (a pole reaching the inserters two tiles away), and the belt winding in the two columns east of them, starting in a tile above the first plant's first row. It is drawn by `scripts/output_side.lua`, the code the assembling machines use, and is only checked by the specs, the validator and the belt tracer.
+- That the plants with one inserter each, in twos (an even plant's inserter in its first row, an odd plant's in its last, the pole at the other end), fill the lanes in turn on the winding belt, as the paired machines of the copper cable column do (only the specs and the belt tracer say so).
+- That a chemical plant of crafting speed 1 gets two inserters of its own for the 120 sulfur or plastic bars a minute it makes, which is more than two plain inserters move (100.8).

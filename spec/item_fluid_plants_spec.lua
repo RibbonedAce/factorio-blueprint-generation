@@ -266,10 +266,10 @@ describe("item_fluid_plants", function()
         return asked
       end
 
-      it("puts an inserter in the middle row of each plant, taking from it, in the column where the pipe of a fluid would be", function()
+      it("puts an inserter beside each plant, taking from it, in the column where the pipe of a fluid would be: in the top row of the first plant of a pair, the bottom row of the second, as the assembling machines have them", function()
         local block = item_fluid_plants.build(item_request(3))
 
-        assert.are.same({{1, west}, {4, west}, {7, west}}, in_column(block.entities, NAMES.inserter, 7))
+        assert.are.same({{0, west}, {5, west}, {6, west}}, in_column(block.entities, NAMES.inserter, 7))
       end)
 
       it("runs the belt it drops on south beside the inserters, from the first row to the last row of the last plant", function()
@@ -278,18 +278,65 @@ describe("item_fluid_plants", function()
         assert.are.same(with_direction(range(0, 8), south), in_column(block.entities, NAMES.belt, 8))
       end)
 
-      it("puts a pipe nowhere on the east side, and a pole at the top row of each plant in the column of the inserters", function()
+      it("puts a pipe nowhere on the east side, and the poles in the column of the inserters: under the first inserter, above the second, which reaches the third", function()
         local block = item_fluid_plants.build(item_request(3))
 
-        assert.are.same({{}, {0, 3, 6}}, {builders.rows_in_column(block.entities, NAMES.pipe, 7), rows_in(block.entities, NAMES.pole, 7)})
+        assert.are.same({{}, {1, 4}}, {builders.rows_in_column(block.entities, NAMES.pipe, 7), rows_in(block.entities, NAMES.pole, 7)})
       end)
 
       it("gives no last row of a pipe of the fluid, and the poles of the plants wired to each other", function()
         local block = item_fluid_plants.build(item_request(3))
 
         assert.is_nil(block.output_exit_row)
-        assert.are.equal(3, #block.groups[1])
+        assert.are.equal(2, #block.groups[1])
         assert.are.same({block.groups[1][1].entity_number, defines.wire_connector_id.pole_copper, block.groups[1][2].entity_number, defines.wire_connector_id.pole_copper}, block.groups[1][1].wires[1])
+      end)
+
+      describe("with two output inserters for each plant, which wind the belt", function()
+        local function winding_request(count)
+          local asked = item_request(count)
+          asked.plants.output_inserters, asked.plants.output_winds = 2, true
+          return asked
+        end
+
+        it("puts the inserters in the top rows of the first plant of a pair and the bottom rows of the second, with a pole beside each pair", function()
+          local block = item_fluid_plants.build(winding_request(3))
+
+          assert.are.same({0, 1, 4, 5, 6, 7}, rows_in(block.entities, NAMES.inserter, 7))
+          assert.are.same({2, 3, 8}, rows_in(block.entities, NAMES.pole, 7))
+        end)
+
+        it("puts one inserter for each plant in twos, in the first row of an even plant and the last row of an odd one, with the poles beside them", function()
+          local asked = item_request(4)
+          asked.plants.output_inserters, asked.plants.output_winds = 1, true
+
+          local block = item_fluid_plants.build(asked)
+
+          assert.are.same({0, 5, 6, 11}, rows_in(block.entities, NAMES.inserter, 7))
+          assert.are.same({1, 4, 10}, rows_in(block.entities, NAMES.pole, 7)) -- the pole at the row 4 reaches the inserter in the row 6
+        end)
+
+        it("winds the belt in the two columns east of the inserters, and takes one column more", function()
+          local block = item_fluid_plants.build(winding_request(3))
+
+          local first = in_column(block.entities, NAMES.belt, 8)
+          assert.are.same({{-1, south}, {0, east}, {1, east}}, {first[1], first[2], first[3]})
+          assert.are.same({{0, south}, {1, south}}, {in_column(block.entities, NAMES.belt, 9)[1], in_column(block.entities, NAMES.belt, 9)[2]})
+          assert.are.equal(10, block.columns.width)
+        end)
+
+        it("passes the validator for 1, 2 and 5 plants", function()
+          for _, count in ipairs({1, 2, 5}) do
+            local block = item_fluid_plants.build(winding_request(count))
+            poles.join({{block.groups[1][1]}, {block.groups[2][1]}})
+            local entries = builders.a_catalog{}
+            entries["chemical-plant"] = {
+              kind = "machine", width = 3, height = 3, needs_power = true, fluid_connections = {water = {{x = 0, y = -1}, {x = 2, y = -1}}},
+            }
+
+            assert.are.same({}, validator.validate(block.entities, entries))
+          end
+        end)
       end)
 
       it("takes plants with no connection of what they give", function()

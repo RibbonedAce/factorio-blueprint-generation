@@ -11,6 +11,7 @@ local layout = require("scripts.layout")
 local inputs = require("scripts.inputs")
 local rows = require("scripts.rows")
 local entity_list = require("scripts.entity_list")
+local output_side = require("scripts.output_side")
 local fluid_row = require("scripts.fluid_row")
 local fluid_plant = require("scripts.fluid_plant")
 local item_fluid_chain = require("scripts.item_fluid_chain")
@@ -1062,12 +1063,15 @@ local function fluid_row_problem(job, stage)
   return nil
 end
 
--- Whether the pole of the blueprint can power the inserter beside the middle of a plant and reach the pole of the next plant.
+-- Whether a wire of the blueprint reaches from one pole beside the output inserters of the plants to the next, which stand where they do
+-- beside the assembling machines (scripts/output_side.lua). That the pole reaches the inserters it stands beside is `poles_fit_row`'s
+-- (two tiles: the plants come with a row of refineries, which needs the same), so it is not asked again. The final plants of a chain are
+-- the same machine as the plants of its first part, which are asked, so they are not asked again either.
 ---@param names bpgen.SharedNames
 ---@param size integer  the machine's size
 ---@return boolean
 local function poles_fit_plant(names, size)
-  return layout.pole_reach(names.pole_supply_distance) >= math.floor(size / 2) and size <= names.pole_wire_distance
+  return names.pole_wire_distance >= output_side.longest_wire(size, layout.pole_reach(names.pole_supply_distance))
 end
 
 -- Whether the index is one of the two input fluid boxes of a plant that takes two fluids.
@@ -1150,17 +1154,25 @@ local function fluid_plant_problem(job)
   return fluid_row_problem(job, job.maker) or fluid_row_machine_problem(job, job.root) or plant_problem(job, job.root)
 end
 
+-- How many output inserters the plants of a step may have: the two that the winding output belt serves for machines of 3 x 3, as for the
+-- assembling machines (see scripts/output_side.lua); otherwise one.
+---@param stage bpgen.StageData
+---@return integer
+local function output_inserters_max(stage)
+  return stage.machine_size == constants.WINDING_MACHINE_SIZE and constants.WINDING_OUTPUT_INSERTERS or 1
+end
+
 -- The plants of a step as `fluid_plant` and `item_fluid_plants` take them: the machine, the recipe, the size, how many, and the pipe
 -- connections as the game gives them. `rows` is nil for a machine whose connections are not in rows.
 ---@param stage bpgen.StageData
 ---@param count integer
 ---@return table
-local function plants_of(stage, count)
+local function plants_of(stage, count, output_inserters, output_winds)
   local size = stage.machine_size --[[@as integer]]
   local boxes = read_fluid_boxes(prototypes.entity[stage.machine], size)
   return {
     machine = stage.machine, recipe = stage.recipe.name, size = size, count = count, boxes = boxes, rows = fluid_row.rows_of(boxes, size),
-    item_output = stage.recipe.products[1].type ~= "fluid",
+    item_output = stage.recipe.products[1].type ~= "fluid", output_inserters = output_inserters, output_winds = output_winds,
   }
 end
 
@@ -1813,14 +1825,14 @@ end
 ---@return bpgen.FluidPlantRequest
 local function fluid_plant_request(job)
   local stage, maker = job.root, job.maker
-  local with_item = #stage.recipe.ingredients == 1
   local plain = job.inserter
+  local with_item = #stage.recipe.ingredients == 1
   local lane = planner.lane_items_per_minute(job.belt_speed)
   return {
     product = stage.item, recipe = stage.recipe, machine_speed = stage.machine_speed,
     maker_recipe = maker.recipe, maker_speed = maker.machine_speed, rate_per_minute = job.rate_per_minute,
     makers_that_fit = machines_that_fit(maker), plants_that_fit = machines_that_fit(stage),
-    lane_items_per_minute = lane,
+    lane_items_per_minute = lane, output_inserters_max = output_inserters_max(stage),
     inserter_items_per_minute = planner.inserter_items_per_minute(plain.rotation_speed, plain.stack_size, job.belt_speed),
     input_inserter_items_per_minute = with_item and planner.inserter_items_per_minute(plain.rotation_speed, plain.stack_size, job.belt_speed) or nil,
     item_belt_items_per_minute = with_item and 2 * lane or nil,
@@ -1842,7 +1854,7 @@ local function fluid_plant_build(job, plan)
       rows = assert(fluid_row.rows_of(boxes, size), "generator: the pipe connections of the machine are not in rows"),
       fluid_boxes = #stage.recipe.fluids == 2 and plant_fluid_boxes(stage.recipe, job.made_fluid --[[@as string]]) or nil,
     },
-    inserter = job.names.inserter, belt = job.names.belt,
+    inserter = job.names.inserter, belt = job.names.belt, output_inserters = plan.output_inserters, output_winds = plan.output_winds,
     item_input = #stage.recipe.ingredients == 1 or nil,
     pipe_to_ground = job.names.pipe_to_ground, underground_reach = config.pipe_to_ground_reach,
   }
@@ -1899,7 +1911,7 @@ local function item_fluid_request(job, fit)
   return {
     product = stage.item, recipe = stage.recipe, machine_speed = stage.machine_speed, rate_per_minute = job.rate_per_minute,
     inserter_rotation_speed = inserter.rotation_speed, inserter_stack_size = inserter.stack_size, belt_speed = job.belt_speed,
-    plants_that_fit = fit, lane_items_per_minute = planner.lane_items_per_minute(job.belt_speed),
+    plants_that_fit = fit, lane_items_per_minute = planner.lane_items_per_minute(job.belt_speed), output_inserters_max = output_inserters_max(stage),
   }
 end
 
@@ -1969,6 +1981,9 @@ local function most_item_fluid_plants(job)
   if not (made_in_plants and made_on_belts) then
     return nil, "unsupported-recipe"
   end
+  -- both items side-load one lane of the belt b, whatever the lanes of their own belts carry
+  local lane = planner.lane_items_per_minute(job.belt_speed)
+  made_in_plants, made_on_belts = math.min(made_in_plants, lane), math.min(made_on_belts, lane)
   local parts = job.parts --[[@as bpgen.ChainParts]]
   local by_plants = math.floor(made_in_plants / item_amount(one, parts.plants.item) + constants.EPSILON)
   local by_belts = math.floor(made_on_belts / item_amount(one, belts_item_of(parts)) + constants.EPSILON)
@@ -2022,7 +2037,7 @@ end
 local function item_fluid_plants_request(job, plan)
   local names = job.names
   return {
-    plants = plants_of(job.root, plan.plants), inserter = names.inserter, belt = names.belt, pipe = names.pipe, pipe_to_ground = names.pipe_to_ground,
+    plants = plants_of(job.root, plan.plants, plan.output_inserters, plan.output_winds), inserter = names.inserter, belt = names.belt, pipe = names.pipe, pipe_to_ground = names.pipe_to_ground,
     pole = names.pole, pole_supply_distance = names.pole_supply_distance, pole_wire_distance = names.pole_wire_distance,
     underground_reach = config.pipe_to_ground_reach,
   }

@@ -15,6 +15,16 @@ function entity_list.append(list, entity)
   return numbered
 end
 
+-- Records a copper wire between two poles. Each wire is stored once, on the pole it starts from, as {from number, connector, to number,
+-- connector}.
+---@param from bpgen.Entity
+---@param to bpgen.Entity
+function entity_list.connect_poles(from, to)
+  local connector = defines.wire_connector_id.pole_copper
+  from.wires = from.wires or {}
+  from.wires[#from.wires + 1] = {from.entity_number, connector, to.entity_number, connector}
+end
+
 -- Adds the entities of `source` to `target`, each moved `dx` tiles east and `dy` tiles south and numbered after the ones in `target`,
 -- and the wires of the poles of `source` with them (a wire says the numbers of the two poles it joins, which are not the same any
 -- more). The entities of `source` are left as they are. For putting blueprints made apart into one (see scripts/item_fluid_chain.lua).

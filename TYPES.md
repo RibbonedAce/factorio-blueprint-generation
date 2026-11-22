@@ -50,6 +50,8 @@ flowchart LR
   generator -->|"EntryStart list"| corner_entries["corner_entries.lua"]
   corner_entries -->|"pipes added to the Entity list, the entries"| generator
   generator -->|"FluidPlantBuild: two FluidRowBuild's worth of machines, inserter, belt"| fluid_plant["fluid_plant.lua"]
+  fluid_plant -->|"OutputSideRequest"| output_side["output_side.lua"]
+  output_side -->|"inserters, poles, belt added to the Entity list; the column the belt ends in"| fluid_plant
   fluid_plant -->|"Entity list"| generator
   generator -->|"ItemFluidPlantsRequest"| planner
   planner -->|"ItemFluidPlantsPlan"| generator
@@ -84,6 +86,7 @@ flowchart TD
   generator --> corner_entries
   generator --> item_fluid_chain
   generator --> item_fluid_plants
+  generator --> output_side
   item_fluid_chain --> item_fluid_plants
   item_fluid_chain --> fluid_plant
   item_fluid_chain --> corner_entries
@@ -91,11 +94,13 @@ flowchart TD
   item_fluid_chain --> grid
   item_fluid_plants --> fluid_plant
   item_fluid_plants --> layout
+  item_fluid_plants --> output_side
   item_fluid_plants --> grid
   fluid_plant --> corner_entries
   fluid_plant --> fluid_row
   fluid_plant --> poles
   fluid_plant --> layout
+  fluid_plant --> output_side
   fluid_plant --> grid
   generator --> recipes
   gui --> recipes
@@ -119,6 +124,9 @@ flowchart TD
   layout --> constants
   layout --> grid
   layout --> weave
+  layout --> output_side
+  output_side --> constants
+  output_side --> grid
   planner --> constants
   feeds --> constants
   inputs --> grid
@@ -651,7 +659,7 @@ classDiagram
 
 | Where | Types |
 |---|---|
-| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, FluidPlantRequest, FluidPlantPlan, FluidPlantBuild, ItemFluidPlantsRequest, ItemFluidPlantsPlan, ItemFluidPlantsBuild, ItemFluidPlantsBlock, BeltsBlock, ItemFluidChainBuild, ItemFluidChainPlaces, ItemFluidChain, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
+| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, MachineColumn, BeltTile, WindingRequest, OutputSideRequest, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, FluidPlantRequest, FluidPlantPlan, FluidPlantBuild, ItemFluidPlantsRequest, ItemFluidPlantsPlan, ItemFluidPlantsBuild, ItemFluidPlantsBlock, BeltsBlock, ItemFluidChainBuild, ItemFluidChainPlaces, ItemFluidChain, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
 | `scripts/generator.lua` | EnergySource, Candidate, StageData, InserterData, Job, Arrangement, ChainParts, PlannedStage, Demand, DemandTotals, ItemFluidChainPlans |
 | `scripts/planner.lua` | InputInserters, MachineRates, StageContext, Sizes |
@@ -660,4 +668,5 @@ classDiagram
 | `scripts/rows.lua` | Arc, Column, RawRun |
 | `scripts/inputs.lua` | Band |
 | `scripts/poles.lua` | PolePair |
+| `scripts/output_side.lua` | WindingTiles |
 | `scripts/corner_entries.lua` | EntryStart, Entry |

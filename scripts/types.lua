@@ -349,6 +349,41 @@
 ---@field first_row integer  the first row of any tile, which is -1 when belt a or a tap has to start before row 0
 ---@field starts table<"a"|"b"|"c", integer>  the row of the first tile of each belt, where the belt that brings it ends
 
+-- The output side of a column of machines (scripts/output_side.lua) -------------------
+
+-- Where the machines of a column stand, from the top.
+---@class bpgen.MachineColumn
+---@field first_row integer  the tile row of the top of the first machine
+---@field spacing integer  the rows from the top of one machine to the top of the next
+---@field size integer  tiles a side of a machine
+---@field count integer  how many machines
+
+-- A tile of the winding belt.
+---@class bpgen.BeltTile
+---@field column integer
+---@field row integer
+---@field direction defines.direction
+
+-- What the winding belt is drawn from.
+---@class bpgen.WindingRequest
+---@field inserter_rows integer[]  the tile rows of the output inserters, top to bottom
+---@field inner integer  the tile column beside the inserters
+---@field outer integer  the tile column beside that
+---@field start_row integer  the row of the first tile, above the first curve
+---@field end_row integer  one past the last row the belt takes
+
+-- What `output_side.add` is asked for: a column of machines and what stands beside it.
+---@class bpgen.OutputSideRequest
+---@field column bpgen.MachineColumn
+---@field inserters integer  each machine has, 1 or 2
+---@field winds boolean  whether the belt winds (see `output_side.winds`)
+---@field inserter string  prototype name
+---@field belt string  prototype name
+---@field pole string  prototype name
+---@field pole_reach integer  how many tiles each way a pole powers (see `layout.pole_reach`)
+---@field pole_wire_distance number  how far a wire between two poles reaches
+---@field inserter_column integer  the tile column of the inserters; the belt is in the next one, or in the next two when it winds
+
 -- A row of machines that make a fluid from a fluid (scripts/fluid_row.lua) --------------
 
 -- One fluid box of a machine, as plain data: where its pipes connect, for the machine facing north.
@@ -383,6 +418,7 @@
 ---@field inserter_items_per_minute number  what the output inserter of a machine moves
 ---@field input_inserter_items_per_minute? number  what the input inserter of a machine moves, for a recipe that takes an item
 ---@field item_belt_items_per_minute? number  what the belt that brings the item in carries (both lanes), for a recipe that takes an item
+---@field output_inserters_max? integer  how many output inserters a machine may get: 2 for the machines of 3 x 3 that the winding output belt serves (see scripts/output_side.lua), 1 (or nil) for the others
 
 ---@class bpgen.FluidPlantPlan
 ---@field plants integer  machines that make the item
@@ -392,6 +428,8 @@
 ---@field fluid_per_minute number  what all the plants take
 ---@field source_per_minute number  what the machines that make the fluid take, of the fluid they take
 ---@field supplied bpgen.RawAmount[]  the other fluids the plants take, which come in by a pipe: what all of them take a minute
+---@field output_inserters integer  how many output inserters each plant has
+---@field output_winds boolean  the output belt winds, so that both lanes carry the item
 ---@field items bpgen.RawAmount[]  the item the plants take, which comes in by a belt, if they take one: what all of them take a minute
 
 -- What `planner.plan_item_fluid_plants` is asked: plants that make a fluid from two items and a fluid, each fed by one inserter from a belt that
@@ -405,7 +443,8 @@
 ---@field inserter_stack_size integer  the items it moves in a swing
 ---@field belt_speed number  of the belt it takes from
 ---@field plants_that_fit integer  how many machines stand one under the other in the length a run of pipes may have
----@field lane_items_per_minute? number  of a recipe that makes an item: what a lane of the belt it leaves on carries, which limits the plants
+---@field lane_items_per_minute? number  of a recipe that makes an item: what a lane of the belt it leaves on carries, which limits the plants (two lanes with two output inserters)
+---@field output_inserters_max? integer  how many output inserters a plant that makes an item may get: 2 for plants of 3 x 3, which the winding output belt serves
 
 ---@class bpgen.ItemFluidPlantsPlan
 ---@field plants integer
@@ -414,6 +453,8 @@
 ---@field output_per_minute number  what all the plants make
 ---@field items bpgen.RawAmount[]  what all the plants take of the items of the recipe, in its order
 ---@field fluids bpgen.RawAmount[]  what all the plants take of the fluids of the recipe
+---@field output_inserters integer  how many output inserters each plant has (1 for a recipe that makes a fluid)
+---@field output_winds boolean  the output belt winds, so that both lanes carry the item (never for a fluid)
 
 ---@class bpgen.FluidRowPlan
 ---@field machines integer
@@ -437,6 +478,8 @@
 ---@class bpgen.FluidPlantBuild
 ---@field makers bpgen.FluidRowBuild  the machines that make the fluid, which stand turned (see `fluid_row.turn`)
 ---@field plants {machine: string, recipe: string, size: integer, count: integer, boxes: bpgen.FluidBox[], rows: bpgen.FluidRows, fluid_boxes?: {source: integer, supplied: integer}}  the machines that make the item from it, with the pipe connections they have as they face north; `fluid_boxes` for a recipe that takes a second fluid too: the input boxes (1-based among the input ones) that take the fluid the machines make and the one that comes in
+---@field output_inserters? integer  how many output inserters each plant has, 1 or 2
+---@field output_winds? boolean  the belt the inserters drop on winds (scripts/output_side.lua): two inserters for each plant, or one for each, the plants in twos; else a plain belt
 ---@field item_input? boolean  the plants take an item too, which comes in by a belt on their west side, with the pipes going under it (needs `pipe_to_ground`)
 ---@field pipe_to_ground? string  prototype name of the underground pipe, for plants that take two fluids or an item
 ---@field underground_reach? integer  the most tiles an underground pipe spans, from one end to the other, for plants that take two fluids
@@ -446,7 +489,7 @@
 -- What `item_fluid_plants.build` is asked for: plants that make a fluid from two items and a fluid, with the belt, the pipes and the poles
 -- beside them (see scripts/item_fluid_plants.lua).
 ---@class bpgen.ItemFluidPlantsBuild
----@field plants {machine: string, recipe: string, size: integer, count: integer, boxes: bpgen.FluidBox[], rows: bpgen.FluidRows, item_output?: boolean}  the plants, with the pipe connections they have as they face north; `item_output` when they make an item, which leaves each by an inserter onto a belt on their east side instead of by a pipe
+---@field plants {machine: string, recipe: string, size: integer, count: integer, boxes: bpgen.FluidBox[], rows: bpgen.FluidRows, item_output?: boolean, output_inserters?: integer, output_winds?: boolean}  the plants, with the pipe connections they have as they face north; `item_output` when they make an item, which leaves each by an inserter onto a belt on their east side instead of by a pipe, and `output_winds` when that belt winds (scripts/output_side.lua), with `output_inserters` for each plant
 ---@field inserter string  prototype name of the inserter that takes the items from the belt into each plant (and the made item out)
 ---@field belt string  prototype name of the belt of the two items
 ---@field pipe string

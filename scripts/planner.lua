@@ -173,6 +173,45 @@ local function inserters_needed(items_per_machine, inserter_items_per_minute)
   return math.max(1, math.ceil(items_per_machine / inserter_items_per_minute - EPSILON))
 end
 
+-- How the output belt of machines winds for `inserters` output inserters each (see scripts/output_side.lua): "double" for two, which fill a
+-- lane each, "paired" for one when `one_inserter_pairs` (the machines go in twos and fill the lanes in turn), and nil for a plain belt with
+-- the product on one lane. The assembling machines pair with a fast inserter, the plants that make an item with a plain one.
+---@param inserters integer
+---@param one_inserter_pairs boolean|nil
+---@return "double"|"paired"|nil
+local function winding_kind(inserters, one_inserter_pairs)
+  if inserters == WINDING_OUTPUT_INSERTERS then
+    return "double"
+  end
+  if inserters == 1 and one_inserter_pairs then
+    return "paired"
+  end
+  return nil
+end
+
+-- How many machines' worth of product an output belt takes, when one lane takes `one_lane` of them (a fraction). With one output inserter
+-- per machine and a plain belt the product is on one lane, which carries all of it. With two, the winding belt gives each inserter a lane,
+-- and the two lanes together carry all of it: an inserter that finds its lane full waits, and the machine's other inserter, on the other
+-- lane, takes the rest (owner, 2026-11-13; the game has not shown it), so the belt takes two lanes' worth, whichever of the lanes fills
+-- first. (A machine whose outer lane is full is then held to what its one other inserter moves, so near the most the belt carries the
+-- machines may make a little less than their full speed: not counted.) With the paired winding belt every machine has one inserter, which
+-- fills one lane, and machines alternate lanes (outer, inner, inner, outer, ...): a lane gets half the machines, and the lane that gets one
+-- more for an odd number is the one the last machine is on, which is the only one that may run for part of the time. A lane that carries L
+-- machines' worth (a fraction) takes floor(L) whole machines and, when it has the last one, the rest of L. So an even number of machines is
+-- at most twice floor(L) and an odd number floor(L) + L, which is the most the belt carries, in machines' worth: 48 for L = 24 (24
+-- machines on each lane), and never less than a plain belt does.
+---@param one_lane number
+---@param winding "double"|"paired"|nil
+---@return number
+local function belt_machines_worth(one_lane, winding)
+  if winding == "double" then
+    return 2 * one_lane
+  elseif winding == "paired" then
+    return math.floor(one_lane + EPSILON) + one_lane
+  end
+  return one_lane
+end
+
 -- The letters of the belts that carry something, belt a first.
 ---@param belts bpgen.Belts
 ---@return string[]
@@ -669,13 +708,42 @@ function planner.plan_fluid_row(request)
   return {machines = machines, output_per_minute = machines * per_machine, per_machine = per_machine}
 end
 
+-- How many output inserters a machine of a plant gets: as many as it takes to move what it makes at full speed, at most the
+-- `output_inserters_max` the request allows (the two that a winding output belt serves, for a 3 x 3 machine; one when the request says
+-- nothing). Two of them fill a lane each, so the belt carries two lanes of the product.
+---@param machine_items_per_minute number  what the machine makes at full speed
+---@param inserter_items_per_minute number
+---@param most integer|nil
+---@return integer
+local function output_inserter_count(machine_items_per_minute, inserter_items_per_minute, most)
+  return math.min(most or 1, inserters_needed(machine_items_per_minute, inserter_items_per_minute))
+end
+
+-- Whether the output belt of plants winds: with two inserters for each, or with one when the request allows winding and the plants go in
+-- twos, which needs two of them (see `winding_kind`).
+---@param inserters integer  for each plant
+---@param most integer|nil  `output_inserters_max` of the request
+---@param plants integer
+---@return boolean
+local function output_winds(inserters, most, plants)
+  local kind = winding_kind(inserters, most == 2)
+  return kind == "double" or (kind == "paired" and plants >= 2)
+end
+
+---@param request bpgen.FluidPlantRequest
+---@return integer
+local function plant_output_inserters(request)
+  local made = planner.amount_made(request.recipe, request.product)
+  return output_inserter_count(60 * request.machine_speed / request.recipe.energy * made, request.inserter_items_per_minute, request.output_inserters_max)
+end
+
 -- What one machine of a plant makes a minute: what it makes at full speed, held down to what its output inserter moves and, when it
 -- takes an item, to what its input inserter brings (`request.input_inserter_items_per_minute`, of that item).
 ---@param request bpgen.FluidPlantRequest
 ---@return number
 local function plant_output_each(request)
   local made = planner.amount_made(request.recipe, request.product)
-  local output = math.min(60 * request.machine_speed / request.recipe.energy * made, request.inserter_items_per_minute)
+  local output = math.min(60 * request.machine_speed / request.recipe.energy * made, plant_output_inserters(request) * request.inserter_items_per_minute)
   local item = request.recipe.ingredients[1]
   if not item then
     return output
@@ -737,7 +805,8 @@ end
 ---@return integer
 local function most_plants(request)
   local source = fluid_source_request(request)
-  local by_lane = request.lane_items_per_minute / plant_output_each(request)
+  local winding = winding_kind(plant_output_inserters(request), request.output_inserters_max == 2)
+  local by_lane = belt_machines_worth(request.lane_items_per_minute / plant_output_each(request), winding)
   local by_fluid = most_fluid_machines(source) * fluid_output_per_machine(source) / plant_fluid_each(request)
   local item = request.recipe.ingredients[1]
   local by_item = item and request.item_belt_items_per_minute / (plant_crafts_each(request) * item.amount) or math.huge
@@ -801,7 +870,8 @@ function planner.plan_fluid_plant(request)
   local maker = request.maker_recipe
   return {
     plants = plants, makers = whole_machines(fluid / fluid_output_per_machine(source)), output_per_minute = plants * each,
-    per_plant = each, fluid_per_minute = fluid,
+    per_plant = each, fluid_per_minute = fluid, output_inserters = plant_output_inserters(request),
+    output_winds = output_winds(plant_output_inserters(request), request.output_inserters_max, plants),
     source_per_minute = fluid / planner.amount_made(maker, source.product) * maker.fluids[1].amount,
     supplied = supplied_amounts(request, plants), items = item_amounts(request, plants),
   }
@@ -846,8 +916,21 @@ local function makes_item(recipe)
   return recipe.products[1].type ~= "fluid"
 end
 
+-- How many output inserters a plant of `request` gets: one for a fluid, which leaves by a pipe (and the field says it takes none), else as
+-- many as it takes to move what the machine makes, up to what the request allows (see `output_inserter_count`).
+---@param request bpgen.ItemFluidPlantsRequest
+---@return integer
+local function item_fluid_output_inserters(request)
+  if not makes_item(request.recipe) then
+    return 1
+  end
+  local made = 60 * request.machine_speed / request.recipe.energy * planner.amount_made(request.recipe, request.product)
+  local one = planner.inserter_items_per_minute(request.inserter_rotation_speed, request.inserter_stack_size, request.belt_speed)
+  return output_inserter_count(made, one, request.output_inserters_max)
+end
+
 -- How many crafts one plant of `request` makes a minute: what its machine does at full speed, held down to what its one inserter brings
--- of the two items of a craft and, when it makes an item, to what its output inserter takes away.
+-- of the two items of a craft and, when it makes an item, to what its output inserters take away.
 ---@param request bpgen.ItemFluidPlantsRequest
 ---@return number
 local function item_fluid_crafts_each(request)
@@ -860,7 +943,7 @@ local function item_fluid_crafts_each(request)
   local crafts = math.min(machine, TICKS_PER_SECOND * SECONDS_PER_MINUTE / planner.inserter_ticks_for(rotation, stack, belt, amounts))
   if makes_item(request.recipe) then
     local out_ticks = planner.inserter_ticks_for(rotation, stack, belt, {planner.amount_made(request.recipe, request.product)})
-    crafts = math.min(crafts, TICKS_PER_SECOND * SECONDS_PER_MINUTE / out_ticks)
+    crafts = math.min(crafts, item_fluid_output_inserters(request) * TICKS_PER_SECOND * SECONDS_PER_MINUTE / out_ticks)
   end
   return crafts
 end
@@ -873,7 +956,9 @@ local function item_fluid_most_plants(request)
   local most = math.max(1, request.plants_that_fit)
   if makes_item(request.recipe) and request.lane_items_per_minute then
     local each = item_fluid_crafts_each(request) * planner.amount_made(request.recipe, request.product)
-    most = math.max(1, math.min(most, math.floor(request.lane_items_per_minute / each + EPSILON)))
+    local winding = winding_kind(item_fluid_output_inserters(request), request.output_inserters_max == 2)
+    local worth = belt_machines_worth(request.lane_items_per_minute / each, winding)
+    most = math.max(1, math.min(most, math.floor(worth + EPSILON)))
   end
   return most
 end
@@ -927,7 +1012,11 @@ function planner.plan_item_fluid_plants(request)
     return nil, "rate-too-high", max_rate
   end
   local items, fluids = item_fluid_amounts(request, plants)
-  return {plants = plants, crafts_each = crafts, per_plant = each, output_per_minute = plants * each, items = items, fluids = fluids}
+  return {
+    plants = plants, crafts_each = crafts, per_plant = each, output_per_minute = plants * each, items = items, fluids = fluids,
+    output_inserters = item_fluid_output_inserters(request),
+    output_winds = makes_item(request.recipe) and output_winds(item_fluid_output_inserters(request), request.output_inserters_max, plants),
+  }
 end
 
 -- Whether the sides of the machines leave room for a winding belt: they are 3x3 and neither side is full (the plain and the
@@ -953,13 +1042,7 @@ end
 ---@param rates bpgen.MachineRates
 ---@return "double"|"paired"|nil
 local function winding_asked_for(limits, rates)
-  if rates.output_inserters == WINDING_OUTPUT_INSERTERS then
-    return "double"
-  end
-  if limits.machine_size ~= nil and rates.output_inserters == 1 and rates.output_fast then
-    return "paired"
-  end
-  return nil
+  return winding_kind(rates.output_inserters, limits.machine_size ~= nil and rates.output_fast)
 end
 
 -- How the output belt of the stage takes the product of its machines (see layout.lua), as "double" when it winds so
@@ -983,35 +1066,12 @@ local function output_winding(stage)
   return nil
 end
 
--- How many machines' worth of product the output belt can take. With one output
--- inserter per machine the product is on one lane, which carries all of it. With
--- two, the winding belt (only the last stage's output belt winds) gives each
--- inserter a lane, and the two lanes together carry all of it: an inserter that finds
--- its lane full waits, and the machine's other inserter, on the other lane, takes the rest
--- (owner, 2026-11-13; the game has not shown it), so the belt takes two lanes' worth, whichever of the lanes
--- fills first. (A machine whose outer lane is full is then held to what its one other
--- inserter moves, so near the most the belt carries the machines may make a little less than their full speed:
--- not counted.)
--- An output belt that does not wind carries everything on its one lane, whatever
--- the inserters. With the paired winding belt every machine has one inserter, which
--- fills one lane, and machines alternate lanes (outer, inner, inner, outer, ...): a lane
--- gets half the machines, and the lane that gets one more for an odd number is the one the last
--- machine is on, which is the only one that may run for part of the time. A lane that carries L
--- machines' worth (a fraction) takes floor(L) whole machines and, when it has the last one, the rest of L.
--- So an even number of machines is at most twice floor(L) and an odd number floor(L) + L, which is
--- the most the belt carries, in machines' worth: 48 for L = 24 (24 machines on each lane), and never
--- less than a plain belt does.
+-- How many machines' worth of product the output belt can take (see `belt_machines_worth`): only the last stage's belt winds, and a
+-- stage built wide has the paired winding belt.
 ---@param stage bpgen.StageContext
 ---@return number
 local function output_machines_worth(stage)
-  local one_lane = stage.lane_items_per_minute / stage.per_machine.output
-  local winding = output_winding(stage)
-  if winding == "double" then
-    return 2 * one_lane
-  elseif winding == "paired" then
-    return math.floor(one_lane + EPSILON) + one_lane
-  end
-  return one_lane
+  return belt_machines_worth(stage.lane_items_per_minute / stage.per_machine.output, output_winding(stage))
 end
 
 -- How many machines' worth of work the belts of one column can carry before a lane

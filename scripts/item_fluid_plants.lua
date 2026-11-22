@@ -28,11 +28,18 @@
 -- The belt b starts under the last plant, where the belts of the two items reach it (see scripts/item_fluid_chain.lua), and ends at the top of
 -- the first plant. The pipe that takes the made fluid away ends at the last connection of the last plant, open to the south, where the player
 -- takes it. The trunk has its top at the first row, where the pipe that brings the fluid joins it from above.
+--
+-- Plants that make an item (explosives: sulfur, coal and water) have no pipe and no column of poles east of them: their east side is
+-- the output side of a column of 3 x 3 machines, the one the assembling machines have (scripts/output_side.lua): from the column `output`
+-- east, the inserters that take the item out of the plants (in the top row of the first plant of a pair and the bottom row of the second),
+-- the poles beside them, and the belt they drop on, which runs south and winds, in a column more, when each plant has two inserters or the
+-- plants go in twos. What they take in is as for the plants of the acid.
 
 local entity_list = require("scripts.entity_list")
 local fluid_plant = require("scripts.fluid_plant")
 local grid = require("scripts.grid")
 local layout = require("scripts.layout")
+local output_side = require("scripts.output_side")
 
 local item_fluid_plants = {}
 
@@ -187,34 +194,24 @@ local function add_plants(entities, plants, columns, facing)
   end
 end
 
--- The east side of plants that make an item: an inserter at the middle row of each plant that takes the item away (an inserter faces the side
--- it picks up from: west), the belt it drops on, which runs south beside the inserters as far as the plants go, and a pole at the top row of
--- each plant, in the column of the inserters, wired to the one before it. Gives the poles.
----@param entities bpgen.Entity[]
+-- What `output_side.add` is asked for plants that make an item: the inserters beside each plant (one or two) that take the item out, their
+-- poles and the belt they drop on, which winds when the plan says so. The same code as for the assembling machines (scripts/output_side.lua).
 ---@param request bpgen.ItemFluidPlantsBuild
 ---@param columns table
----@return bpgen.Entity[]
-local function add_item_output(entities, request, columns)
-  local plants, added = request.plants, {}
-  for index = 0, plants.count - 1 do
-    local top = index * plants.size
-    entity_list.append(entities, {
-      name = request.inserter, position = grid.position(columns.output, top + math.floor(plants.size / 2)), direction = west,
-    })
-    added[#added + 1] = entity_list.append(entities, {name = request.pole, position = grid.position(columns.output, top)})
-  end
-  for row = 0, plants.count * plants.size - 1 do
-    entity_list.append(entities, {name = request.belt, position = grid.position(columns.pole, row), direction = south})
-  end
-  for index = 2, #added do
-    layout.connect_poles(added[index - 1], added[index])
-  end
-  return added
+---@return bpgen.OutputSideRequest
+local function output_request(request, columns)
+  local plants = request.plants
+  return {
+    column = {first_row = 0, spacing = plants.size, size = plants.size, count = plants.count},
+    inserters = plants.output_inserters or 1, winds = plants.output_winds == true,
+    inserter = request.inserter, belt = request.belt, pole = request.pole, pole_reach = layout.pole_reach(request.pole_supply_distance),
+    pole_wire_distance = request.pole_wire_distance, inserter_column = columns.output,
+  }
 end
 
 -- The east side of the plants: for plants that make a fluid, the pipe that takes it away along every connection of what they give and a pole
--- beside it for each plant; for plants that make an item, an inserter and a belt for it (`add_item_output`). Gives the poles of the plants
--- and the last row of the pipe, nil for an item.
+-- beside it for each plant; for plants that make an item, the output side of a column of 3 x 3 machines (`output_side.add`: the inserters,
+-- their poles and the belt, which winds when the plan says so). Gives the poles of the plants and the last row of the pipe, nil for an item.
 ---@param entities bpgen.Entity[]
 ---@param request bpgen.ItemFluidPlantsBuild
 ---@param columns table
@@ -224,7 +221,7 @@ end
 local function add_output_side(entities, request, columns, facing)
   local plants = request.plants
   if plants.item_output then
-    return add_item_output(entities, request, columns), nil
+    return output_side.add(entities, output_request(request, columns)), nil
   end
   local outputs = connection_rows(plants, "output", facing, plants.size)
   local last = (plants.count - 1) * plants.size + outputs[#outputs]
@@ -249,6 +246,7 @@ function item_fluid_plants.build(request)
   check_reaches(request)
   local plants = request.plants
   local columns, facing = item_fluid_plants.columns(plants.size), facing_of(plants.rows, plants.size)
+  columns.width = columns.width + (plants.item_output and plants.output_winds and 1 or 0) -- the winding belt has a column more
   local inputs = connection_rows(plants, "input", facing, -1)
   local last_plant = (plants.count - 1) * plants.size
   local entities = {}

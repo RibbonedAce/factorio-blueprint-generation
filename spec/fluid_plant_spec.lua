@@ -116,12 +116,45 @@ describe("fluid_plant", function()
       assert.are.same({-1}, {builders.rows_in_column(entities, NAMES.pipe, 1)[1]})
     end)
 
-    it("puts an inserter beside the middle of each plant, picking up from the plant", function()
+    it("puts an inserter beside each plant, picking up from the plant, where the assembling machines have theirs: in the top row of the first plant of a pair, the bottom row of the second", function()
       local entities = fluid_plant.build(request(2, 3))
 
       local inserters = builders.entities_named(entities, NAMES.inserter)
-      assert.are.same({{11, 1}, {11, 4}, {11, 7}}, tiles_of(entities, NAMES.inserter, 1))
+      assert.are.same({{11, 0}, {11, 5}, {11, 6}}, tiles_of(entities, NAMES.inserter, 1))
       assert.are.same({west, west, west}, {inserters[1].direction, inserters[2].direction, inserters[3].direction})
+    end)
+
+    describe("for plants with two output inserters each, which wind the belt they drop on", function()
+      it("puts the two inserters in the top rows of the first plant of a pair and the bottom rows of the second, a pole in the free tile beside each pair", function()
+        local entities = fluid_plant.build(request(2, 3, {output_inserters = 2, output_winds = true}))
+
+        assert.are.same({{11, 0}, {11, 1}, {11, 4}, {11, 5}, {11, 6}, {11, 7}}, tiles_of(entities, NAMES.inserter, 1))
+        local poles = {}
+        for _, tile in ipairs(tiles_of(entities, NAMES.pole, 1)) do
+          poles[#poles + 1] = tile[1] == 11 and tile[2] or nil
+        end
+        assert.are.same({2, 3, 8}, poles)
+      end)
+
+      it("winds the belt in the two columns beside them: it starts a row above the first inserter and leaves in the outer column", function()
+        local block = fluid_plant.build_block(request(2, 3, {output_inserters = 2, output_winds = true}))
+
+        local belts = {}
+        for _, belt in ipairs(builders.entities_named(block.entities, NAMES.belt)) do
+          local tile = grid.top_left_tile(belt.position)
+          belts[string.format("%d,%d", tile.x, tile.y)] = belt.direction
+        end
+        assert.are.same({13, 8}, {block.product_belt.column, block.product_belt.last_row})
+        assert.are.same({south, east, south}, {belts["12,-1"], belts["12,0"], belts["13,0"]})
+      end)
+
+      it("passes the validator for 1, 2 and 5 plants: powered, wired, the inserters on a belt", function()
+        for _, count in ipairs({1, 2, 5}) do
+          local entities = fluid_plant.build(request(2, count, {output_inserters = 2, output_winds = true}))
+
+          assert.are.same({}, validator.validate(entities, catalog()))
+        end
+      end)
     end)
 
     it("runs a belt south beside the inserters, as far as the plants go", function()
@@ -132,7 +165,7 @@ describe("fluid_plant", function()
       assert.are.same({south, south}, {belts[1].direction, belts[#belts].direction})
     end)
 
-    it("powers each plant and its inserter from a pole beside the plant, wired to the next", function()
+    it("powers the plants and their inserters from poles beside them, in the free tile by each inserter, one for two plants where a pole reaches both, wired to the next", function()
       local entities = fluid_plant.build(request(2, 3))
 
       local poles = {}
@@ -143,7 +176,8 @@ describe("fluid_plant", function()
         end
       end
       local copper = defines.wire_connector_id.pole_copper
-      assert.are.same({{11, 0}, {11, 3}, {11, 6}}, tiles_of(poles, NAMES.pole, 1))
+      -- the inserters are in the rows 0, 5 and 6: the pole under the first, the pole above the second, which reaches the third two rows away
+      assert.are.same({{11, 1}, {11, 4}}, tiles_of(poles, NAMES.pole, 1))
       assert.are.same({{poles[1].entity_number, copper, poles[2].entity_number, copper}}, poles[1].wires)
     end)
 
@@ -152,7 +186,11 @@ describe("fluid_plant", function()
 
       -- the poles of the refineries are in the column 0 and those of the plants in the column 11: too far for a wire of 7.5
       assert.are.same({}, validator.validate(entities, catalog()))
-      assert.is_true(#builders.entities_named(entities, NAMES.pole) > 5)
+      local between = 0
+      for _, tile in ipairs(tiles_of(entities, NAMES.pole, 1)) do
+        between = between + ((tile[1] > 0 and tile[1] < 11) and 1 or 0)
+      end
+      assert.is_true(between >= 1)
     end)
 
     it("gives the tile where the pipe that brings the fluid in starts", function()
@@ -213,12 +251,12 @@ describe("fluid_plant", function()
       assert.has_error(build, "fluid_plant: the machines that make the fluid have to take it in on the side that turns to the west")
     end)
 
-    describe("for plants of 7 x 7, whose middle row is the third and which the poles have to reach further for", function()
-      -- Plants of 7 x 7 take their fluid at the columns 1 and 5 above them. The poles are the medium pole's (3 tiles each way, a wire of 9)
-      -- unless the test says otherwise.
+    describe("for plants of 7 x 7, whose inserters are in the top row of the first plant and the bottom row of the second", function()
+      -- Plants of 7 x 7 take their fluid at the columns 1 and 5 above them. The poles are the medium pole's (3 tiles each way, a wire of 12,
+      -- which the poles of the first and the second plant, 11 rows apart, need) unless the test says otherwise.
       local function big(changes)
         local big_request = request(2, 2)
-        big_request.makers.pole_supply_distance, big_request.makers.pole_wire_distance = 3.5, 9
+        big_request.makers.pole_supply_distance, big_request.makers.pole_wire_distance = 3.5, 12
         big_request.plants = {
           machine = "big-plant", recipe = "r", size = 7, count = 2, rows = {inputs = -1, outputs = 7},
           boxes = {{production_type = "input", tiles = {{x = 1, y = -1}}}, {production_type = "input", tiles = {{x = 5, y = -1}}}},
@@ -226,30 +264,24 @@ describe("fluid_plant", function()
         return builders.merged(big_request, changes)
       end
 
-      it("puts each inserter beside the middle row of its plant, which is the third", function()
+      it("puts the inserter of the first plant in its top row and that of the second in its bottom row", function()
         local entities = fluid_plant.build(big{})
 
-        assert.are.same({{15, 3}, {15, 10}}, tiles_of(entities, NAMES.inserter, 1)) -- the plants are in the columns 8 to 14
+        assert.are.same({{15, 0}, {15, 13}}, tiles_of(entities, NAMES.inserter, 1)) -- the plants are in the columns 8 to 14
       end)
 
-      it("takes a pole that reaches the inserter beside the middle row, three tiles from the pole", function()
-        local build = function() fluid_plant.build(big{}) end
-
-        assert.has_no.errors(build)
-      end)
-
-      it("refuses a pole that reaches only two tiles, which does not reach the inserter beside the middle row", function()
+      it("takes a pole that reaches two tiles only, which stand beside the inserters", function()
         local changes = big{}
         changes.makers.pole_supply_distance = 2.5
 
         local build = function() fluid_plant.build(changes) end
 
-        assert.has_error(build, "fluid_plant: a pole has to reach the inserter beside a plant")
+        assert.has_no.errors(build)
       end)
 
-      it("takes a wire exactly as long as a plant is wide", function()
+      it("takes a wire exactly as long as the poles of two plants are apart: the pole under the first inserter, the one above the second", function()
         local changes = big{}
-        changes.makers.pole_wire_distance = 7
+        changes.makers.pole_wire_distance = 11
 
         local build = function() fluid_plant.build(changes) end
 
@@ -258,11 +290,20 @@ describe("fluid_plant", function()
 
       it("refuses a wire that does not reach from the pole of one plant to the next", function()
         local changes = big{}
+        changes.makers.pole_wire_distance = 10
+
+        local build = function() fluid_plant.build(changes) end
+
+        assert.has_error(build, "output_side: a wire has to reach from the pole of one machine to the next")
+      end)
+
+      it("leaves a wire shorter than a plant is wide to the poles beside the inserters, which are all the poles of plants that take no item", function()
+        local changes = big{}
         changes.makers.pole_wire_distance = 6
 
         local build = function() fluid_plant.build(changes) end
 
-        assert.has_error(build, "fluid_plant: a wire has to reach from the pole of one plant to the next")
+        assert.has_error(build, "output_side: a wire has to reach from the pole of one machine to the next")
       end)
     end)
 
@@ -327,7 +368,7 @@ describe("fluid_plant", function()
       it("puts the inserters that take the product away east of the plants, as for plants that take no item", function()
         local entities = fluid_plant.build(with_item(2, 3))
 
-        assert.are.same({{1, west}, {4, west}, {7, west}}, in_column(entities, NAMES.inserter, 14))
+        assert.are.same({{0, west}, {5, west}, {6, west}}, in_column(entities, NAMES.inserter, 14))
       end)
 
       it("powers the inserters beside the belt from poles in the column of the underground pipes, wired to each other, and the others as before", function()
@@ -335,7 +376,7 @@ describe("fluid_plant", function()
 
         local west_poles, east_poles = in_column(entities, NAMES.pole, 8), in_column(entities, NAMES.pole, 14)
         assert.are.same({{1}, {4}, {7}}, {{west_poles[1][1]}, {west_poles[2][1]}, {west_poles[3][1]}})
-        assert.are.same({0, 3, 6}, {east_poles[1][1], east_poles[2][1], east_poles[3][1]})
+        assert.are.same({1, 4}, {east_poles[1][1], east_poles[2][1]})
       end)
 
       it("takes the start of the belt that brings the item in to the west edge, the row above the one of the pipe three up", function()
@@ -408,6 +449,32 @@ describe("fluid_plant", function()
           local entities = fluid_plant.build(five({2, 2}))
 
           assert.are.same({{2, east}}, in_column(entities, NAMES.pipe_to_ground, 10))
+        end)
+      end)
+
+      describe("for plants wider than the machines that make the fluid, which set the least the wire has to reach", function()
+        -- plants of 7 x 7 with a connection at their top and bottom rows (the middle row, the fourth, is free for the inserter), beside machines of
+        -- 5 x 5, which need a wire of 5: so the wire of 6.5 or 7 that a test sets is the one the poles of the inserters that bring the item need
+        local function wide(count, wire)
+          local asked = with_item(2, count)
+          asked.plants = {
+            machine = "plant-7", recipe = "r", size = 7, count = count, rows = {inputs = -1, outputs = 7},
+            boxes = {{production_type = "input", tiles = {{x = 6, y = -1}}}, {production_type = "input", tiles = {{x = 0, y = -1}}}},
+          }
+          asked.makers.pole_wire_distance = wire
+          return asked
+        end
+
+        it("refuses a wire shorter than a plant is wide, which does not reach from the pole of one inserter of the item to the next", function()
+          local build = function() fluid_plant.build(wide(2, 6.5)) end
+
+          assert.has_error(build, "fluid_plant: a wire has to reach from the pole of one plant to the next")
+        end)
+
+        it("takes a wire exactly as long as a plant is wide", function()
+          local build = function() fluid_plant.build(wide(1, 7)) end
+
+          assert.has_no.errors(build)
         end)
       end)
 
@@ -545,7 +612,7 @@ describe("fluid_plant", function()
       it("puts the inserters and the belt east of the plants all the same", function()
         local entities = fluid_plant.build(two_fluids(2, 3))
 
-        assert.are.same({{13, 1}, {13, 4}, {13, 7}}, tiles_of(entities, NAMES.inserter, 1))
+        assert.are.same({{13, 0}, {13, 5}, {13, 6}}, tiles_of(entities, NAMES.inserter, 1))
         assert.are.same(range(0, 8), builders.rows_in_column(entities, NAMES.belt, 14))
       end)
 

@@ -4160,16 +4160,16 @@ describe("generator", function()
       assert.are.same({1, "fluid", "crude-oil"}, {#panels, panels[1].icon.type, panels[1].icon.name})
     end)
 
-    it("names the most one blueprint makes: what the lane of the belt carries", function()
+    it("names the most one blueprint makes: what the two lanes of the belt carry, which the plants fill in turn", function()
       _G.prototypes = fuel_game()
 
-      assert.are.same({"blueprint-generation.max-rate", "450"}, generator.max_rate_message("solid-fuel-from-petroleum-gas")) -- 15 plants
+      assert.are.same({"blueprint-generation.max-rate", "900"}, generator.max_rate_message("solid-fuel-from-petroleum-gas")) -- 30 plants of 30
     end)
 
-    it("names the most with fast belts: 30 plants, a lane of 900", function()
+    it("names the most with fast belts: two lanes of 900, which the refineries of the test game make gas for 57 plants of", function()
       _G.prototypes = fuel_game{fast_belts = true}
 
-      assert.are.same({"blueprint-generation.max-rate", "900"}, generator.max_rate_message("solid-fuel-from-petroleum-gas", fake_force{}))
+      assert.are.same({"blueprint-generation.max-rate", "1710"}, generator.max_rate_message("solid-fuel-from-petroleum-gas", fake_force{}))
     end)
 
     it("names fewer when the refineries are so large that the gas of those that fit feeds fewer plants than a lane carries", function()
@@ -4188,12 +4188,12 @@ describe("generator", function()
     end)
 
     it("names fewer when the plants are so large that fewer of them stand in 320 tiles than a lane carries", function()
-      -- plants of 23 tiles: 13 in 320, where a lane would carry 15
+      -- plants of 23 tiles: 13 in 320, where a lane would carry 15 (a pole reaches 11 tiles and a wire the 46 rows between two poles)
       local wide = {
         {production_type = "input", position = {x = -1, y = -11}, direction = north}, {production_type = "input", position = {x = 1, y = -11}, direction = north},
         {production_type = "output", position = {x = -1, y = 11}, direction = south}, {production_type = "output", position = {x = 1, y = 11}, direction = south},
       }
-      _G.prototypes = fuel_game{small_pole_wire_distance = 23, small_pole_supply_distance = 11.5, machines = {
+      _G.prototypes = fuel_game{small_pole_wire_distance = 47, small_pole_supply_distance = 11.5, machines = {
         ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
         ["chemical-plant"] = a_machine{crafting_speed = 1, size = 23, pipe_boxes = wide},
       }}
@@ -4220,11 +4220,12 @@ describe("generator", function()
 
         local result = generator.generate("plastic-bar", 100)
 
-        -- 50.4 a minute from each plant (what the inserter moves): 2 plants, 100.8 a minute, from 1,008 gas, which takes 2 refineries
+        -- 100.8 a minute from each plant (the machine makes 120, which one inserter moves 50.4 of: two output inserters wind the belt): 1 plant,
+        -- from 1,008 gas, which takes 2 refineries
         local plants = builders.entities_named(result.entities, "chemical-plant")
-        assert.are.same({"plastic-bar", 2, 2}, {plants[1].recipe, #plants, count_named(result.entities, "oil-refinery")})
-        assert.are.same({4, 0}, {count_named(result.entities, "inserter"), count_named(result.entities, "long-handed-inserter")}) -- the coal in and the plastic out
-        assert.are.equal(8, count_named(result.entities, "pipe-to-ground")) -- two ends at each of two connections of each plant
+        assert.are.same({"plastic-bar", 1, 2}, {plants[1].recipe, #plants, count_named(result.entities, "oil-refinery")})
+        assert.are.same({3, 0}, {count_named(result.entities, "inserter"), count_named(result.entities, "long-handed-inserter")}) -- the coal in and the plastic out, two of them
+        assert.are.equal(4, count_named(result.entities, "pipe-to-ground")) -- two ends at each of two connections of the plant
       end)
 
       it("builds a blueprint that passes the validator: the inserters between the belts and the plants, powered", function()
@@ -4307,18 +4308,28 @@ describe("generator", function()
           assert.are.equal("blueprint-generation.error-fluid-row-poles", outcome(3, 2.5, 2.5))
         end)
 
-        it("builds plants of 7 x 7 whose pole reaches 3 tiles and whose wire is as long as a plant is wide", function()
-          assert.are.equal("built", outcome(7, 3.5, 7))
+        it("builds plants of 7 x 7 whose pole reaches 3 tiles and whose wire reaches the 14 rows between the poles beside the inserters (the poles of the second and of the fourth plant)", function()
+          assert.are.equal("built", outcome(7, 3.5, 14))
         end)
 
-        it("refuses plants of 7 x 7 whose pole reaches only 2 tiles", function()
-          assert.are.equal("blueprint-generation.error-fluid-row-poles", outcome(7, 2.5, 9))
+        it("refuses plants of 7 x 7 whose wire is a row short of that", function()
+          assert.are.equal("blueprint-generation.error-fluid-row-poles", outcome(7, 3.5, 13))
         end)
 
-        it("builds plants of 7 x 7 that take no item with a pole that reaches 3 tiles, and refuses one that reaches 2", function()
-          local function fuel_outcome(supply)
+        it("gives plants of 7 x 7 one output inserter each and a plain belt, which the winding belt is not drawn for", function()
+          _G.prototypes = with_poles(7, 3.5, 14)
+
+          local result = generator.generate("plastic-bar", 100)
+
+          -- a plant makes 50.4 a minute from its one inserter (two would make 100.8): 2 plants for 100, each with an inserter that brings the coal
+          -- and one that takes the plastic away
+          assert.are.same({2, 4}, {count_named(result.entities, "chemical-plant"), count_named(result.entities, "inserter")})
+        end)
+
+        it("builds plants of 7 x 7 that take no item with a wire of 14 and a pole that reaches 3 tiles or 2, which stand beside the inserters, and refuses a shorter wire", function()
+          local function fuel_outcome(supply, wire)
             _G.prototypes = fuel_game{
-              small_pole_supply_distance = supply, small_pole_wire_distance = 7,
+              small_pole_supply_distance = supply, small_pole_wire_distance = wire,
               machines = {
                 ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
                 ["chemical-plant"] = a_machine{crafting_speed = 1, size = 7, pipe_boxes = seven},
@@ -4328,7 +4339,7 @@ describe("generator", function()
             return result and "built" or error_message[1]
           end
 
-          assert.are.same({"built", "blueprint-generation.error-fluid-row-poles"}, {fuel_outcome(3.5), fuel_outcome(2.5)})
+          assert.are.same({"built", "built", "blueprint-generation.error-fluid-row-poles"}, {fuel_outcome(3.5, 14), fuel_outcome(2.5, 14), fuel_outcome(2.5, 13)})
         end)
       end)
 
@@ -4355,8 +4366,8 @@ describe("generator", function()
 
         local max = generator.max_rate_message("plastic-bar")
 
-        -- the inserter of the test game moves 50.4 a minute: 8 plants, whose coal the belt carries easily
-        assert.are.same({"blueprint-generation.max-rate", "403.2"}, max)
+        -- two inserters of the test game move 100.8 a minute and wind the belt, whose two lanes carry 900: 8 plants, whose coal the belt carries easily
+        assert.are.same({"blueprint-generation.max-rate", "806.4"}, max)
       end)
 
       it("stops with a message when the game has no pipe to ground, which takes the gas under the belt of coal", function()
@@ -4415,17 +4426,17 @@ describe("generator", function()
       it("builds the refineries and the plants with the recipe set, and the pipes of both fluids", function()
         _G.prototypes = sulfur_game()
 
-        local result = generator.generate("sulfur", 100)
+        local result = generator.generate("sulfur", 200)
 
-        -- 50.4 a minute from each plant (the inserter's limit, which it takes 756 gas for): 2 plants, from 1,512 gas, which takes 3 refineries
-        assert.are.same({2, 3, "sulfur"}, {#chemical_plants(result), count_named(result.entities, "oil-refinery"), chemical_plants(result)[1].recipe})
+        -- 100.8 a minute from each plant (two output inserters, which wind the belt): 2 plants for 200, from 3,024 gas, which takes 6 refineries
+        assert.are.same({2, 6, "sulfur"}, {#chemical_plants(result), count_named(result.entities, "oil-refinery"), chemical_plants(result)[1].recipe})
         assert.are.equal(2, count_named(result.entities, "pipe-to-ground")) -- under the pipes of the gas between the first plant and the second
       end)
 
       it("mirrors the first plant, whose box that takes the gas is the second, which is at the top row of a plant facing west", function()
         _G.prototypes = sulfur_game()
 
-        local plants = chemical_plants(generator.generate("sulfur", 100))
+        local plants = chemical_plants(generator.generate("sulfur", 200))
 
         assert.are.same({true, nil}, {plants[1].mirror, plants[2].mirror})
       end)
@@ -4435,7 +4446,7 @@ describe("generator", function()
         swapped.ingredients[1].fluidbox_index, swapped.ingredients[2].fluidbox_index = 2, 1
         _G.prototypes = sulfur_game(swapped)
 
-        local plants = chemical_plants(generator.generate("sulfur", 100))
+        local plants = chemical_plants(generator.generate("sulfur", 200))
 
         assert.are.same({nil, true}, {plants[1].mirror, plants[2].mirror})
       end)
@@ -4503,10 +4514,10 @@ describe("generator", function()
         assert.are.same({"fluid crude-oil", "fluid water"}, icons)
       end)
 
-      it("names the most one blueprint makes: as many plants as a lane of the belt carries, 8 of 50.4", function()
+      it("names the most one blueprint makes: as many plants as the two lanes of the belt carry, 8 of 100.8", function()
         _G.prototypes = sulfur_game()
 
-        assert.are.same({"blueprint-generation.max-rate", "403.2"}, generator.max_rate_message("sulfur"))
+        assert.are.same({"blueprint-generation.max-rate", "806.4"}, generator.max_rate_message("sulfur"))
       end)
 
       it("refuses a plant whose connections that take a fluid are not at its top and bottom rows", function()

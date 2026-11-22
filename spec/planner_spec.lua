@@ -2469,6 +2469,21 @@ describe("planner", function()
         assert.are.same({5, 4, 100, 20, 2000}, {plan.plants, plan.makers, plan.output_per_minute, plan.per_plant, plan.fluid_per_minute})
       end)
 
+      it("keeps one output inserter for a machine that makes what one moves, 90 a minute, and gives two for a little more, when the request allows two", function()
+        -- a machine makes 30 a minute at speed 1: speed 3 makes 90 and speed 3.02 makes 90.6
+        local exact = planner.plan_fluid_plant(request{machine_speed = 3, output_inserters_max = 2})
+        local more = planner.plan_fluid_plant(request{machine_speed = 3.02, output_inserters_max = 2})
+
+        assert.are.same({1, 2}, {exact.output_inserters, more.output_inserters})
+      end)
+
+      it("winds the belt for two plants with one inserter each when the request allows it, and keeps a plain belt for one plant alone", function()
+        local two = planner.plan_fluid_plant(request{output_inserters_max = 2, rate_per_minute = 60})
+        local alone = planner.plan_fluid_plant(request{output_inserters_max = 2, rate_per_minute = 30})
+
+        assert.are.same({{2, true}, {1, false}}, {{two.plants, two.output_winds}, {alone.plants, alone.output_winds}})
+      end)
+
       it("refuses a rate that needs more machines than a lane of the belt carries, naming the most", function()
         local plan, reason, max_rate = planner.plan_fluid_plant(request{rate_per_minute = 451})
 
@@ -2688,6 +2703,12 @@ describe("planner", function()
         assert.are.equal(450, planner.max_fluid_plant_rate(request{}))
       end)
 
+      it("gives what two lanes carry when the request allows winding and the plants go in twos with one inserter each: 30 of 30", function()
+        local max = planner.max_fluid_plant_rate(request{output_inserters_max = 2, makers_that_fit = 1000, plants_that_fit = 1000})
+
+        assert.near(900, max, 1e-6)
+      end)
+
       it("gives one machine's worth at least, however little fits", function()
         assert.are.equal(30, planner.max_fluid_plant_rate(request{makers_that_fit = 0, plants_that_fit = 0}))
       end)
@@ -2903,6 +2924,74 @@ describe("planner", function()
         local plan = planner.plan_item_fluid_plants(item_request{lane_items_per_minute = 10, rate_per_minute = 20})
 
         assert.are.equal(1, plan.plants)
+      end)
+
+      it("gives a plant two output inserters when one cannot move what the machine makes and the request allows two", function()
+        -- a machine of speed 4 makes 60 crafts, 120 explosives, where one inserter moves 50.4: two move 100.8
+        local plan = planner.plan_item_fluid_plants(item_request{machine_speed = 4, output_inserters_max = 2, rate_per_minute = 100})
+
+        assert.are.equal(2, plan.output_inserters)
+      end)
+
+      it("gives one when the request allows no more, or when one is enough", function()
+        local held = planner.plan_item_fluid_plants(item_request{machine_speed = 4, rate_per_minute = 100})
+        local enough = planner.plan_item_fluid_plants(item_request{output_inserters_max = 2})
+
+        assert.are.same({1, 1}, {held.output_inserters, enough.output_inserters})
+      end)
+
+      it("carries what two lanes carry when it has two inserters: 900 a minute, not 450", function()
+        local one = planner.plan_item_fluid_plants(item_request{machine_speed = 4, rate_per_minute = 100})
+        local two = planner.max_item_fluid_plants_rate(item_request{machine_speed = 4, output_inserters_max = 2, plants_that_fit = 1000})
+
+        -- a plant of 2 inserters makes what the input inserter lets it: 25.2 crafts, 50.4 a minute; 900 / 50.4 is 17 plants
+        assert.are.equal(1, one.output_inserters)
+        assert.near(17 * 50.4, two, 1e-6)
+      end)
+
+      it("winds the belt for plants that go in twos with one inserter each when the request allows it, which a lane of 450 would not carry", function()
+        local plan = planner.plan_item_fluid_plants(item_request{output_inserters_max = 2, rate_per_minute = 100})
+
+        assert.are.same({1, true}, {plan.output_inserters, plan.output_winds})
+      end)
+
+      it("keeps a plain belt for one plant alone, and when the request allows no winding", function()
+        local alone = planner.plan_item_fluid_plants(item_request{output_inserters_max = 2, rate_per_minute = 30})
+        local plain = planner.plan_item_fluid_plants(item_request{rate_per_minute = 100})
+
+        assert.are.same({false, false}, {alone.output_winds, plain.output_winds})
+      end)
+
+      it("winds the belt for exactly two plants with one inserter each, the fewest that go in twos", function()
+        local plan = planner.plan_item_fluid_plants(item_request{output_inserters_max = 2, rate_per_minute = 60})
+
+        assert.are.same({2, true}, {plan.plants, plan.output_winds})
+      end)
+
+      it("keeps one output inserter for a machine that makes what one moves, 50.4 a minute, and gives two for a little more", function()
+        -- a machine makes 30 a minute at speed 1: speed 1.68 makes 50.4 and speed 1.7 makes 51
+        local exact = planner.plan_item_fluid_plants(item_request{machine_speed = 1.68, output_inserters_max = 2})
+        local more = planner.plan_item_fluid_plants(item_request{machine_speed = 1.7, output_inserters_max = 2})
+
+        assert.are.same({1, 2}, {exact.output_inserters, more.output_inserters})
+      end)
+
+      it("makes one plant's worth at the most when a lane carries less than that", function()
+        local max = planner.max_item_fluid_plants_rate(item_request{lane_items_per_minute = 10})
+
+        assert.near(30, max, 1e-9)
+      end)
+
+      it("carries two lanes then: 900 a minute at the most, 30 plants of 30", function()
+        local max = planner.max_item_fluid_plants_rate(item_request{output_inserters_max = 2, plants_that_fit = 1000})
+
+        assert.near(900, max, 1e-6)
+      end)
+
+      it("gives a plant that makes a fluid one output inserter", function()
+        local plan = planner.plan_item_fluid_plants(request{output_inserters_max = 2})
+
+        assert.are.equal(1, plan.output_inserters)
       end)
 
       it("is not limited by a lane when the request names none", function()

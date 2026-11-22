@@ -135,11 +135,11 @@ describe("the generator for a fluid made from two items and a fluid", function()
     local result = generator.generate("sulfuric-acid", 1000)
 
     -- 3 plants make 420 a minute each, held down to what the one inserter of each brings of the 6 items of a craft: 8.4 crafts; they take 126
-    -- sulfur and 25.2 plates a minute: 3 plants of the sulfur, which makes 50.4 a minute each, and 2 furnaces of 18.75; the sulfur plants take
-    -- 2,268 gas, which takes 5 refineries
-    assert.are.equal("sulfuric-acid: 1260 per minute from 5 x oil-refinery, 6 x chemical-plant, 2 x stone-furnace", result.description)
-    assert.are.same({sulfur = 3, ["sulfuric-acid"] = 3}, plants_by_recipe(result.entities))
-    assert.are.same({5, 2}, {count_named(result.entities, "oil-refinery"), count_named(result.entities, "stone-furnace")})
+    -- sulfur and 25.2 plates a minute: 2 plants of the sulfur, which make 100.8 a minute each (two output inserters wind their belt), and 2
+    -- furnaces of 18.75; the sulfur plants take 3,024 gas, which takes 6 refineries
+    assert.are.equal("sulfuric-acid: 1260 per minute from 6 x oil-refinery, 5 x chemical-plant, 2 x stone-furnace", result.description)
+    assert.are.same({sulfur = 2, ["sulfuric-acid"] = 3}, plants_by_recipe(result.entities))
+    assert.are.same({6, 2}, {count_named(result.entities, "oil-refinery"), count_named(result.entities, "stone-furnace")})
   end)
 
   it("says what it makes and what it takes in a minute: the ore, the fuel, the water of both plants together and the crude oil", function()
@@ -151,8 +151,8 @@ describe("the generator for a fluid made from two items and a fluid", function()
     assert.are.same({"blueprint-generation.generated", "1260", {"fluid-name.sulfuric-acid"}}, {result.message[1], result.message[2], result.message[3]})
     assert.are.same({"blueprint-generation.raw-amount", "37.5", {"item-name.iron-ore"}}, amounts[2])
     assert.are.same({"blueprint-generation.raw-amount", "2.7", {"item-name.coal"}}, amounts[4])
-    assert.are.same({"blueprint-generation.raw-amount", "4788", {"fluid-name.water"}}, amounts[6]) -- 2,520 for the acid and 2,268 for the sulfur
-    assert.are.same({"blueprint-generation.raw-amount", "5040", {"fluid-name.crude-oil"}}, amounts[8])
+    assert.are.same({"blueprint-generation.raw-amount", "5544", {"fluid-name.water"}}, amounts[6]) -- 2,520 for the acid and 3,024 for the sulfur
+    assert.are.same({"blueprint-generation.raw-amount", "6720", {"fluid-name.crude-oil"}}, amounts[8])
   end)
 
   it("names the belts that come in, from the top down, once the force has what the design with one belt of each material needs", function()
@@ -190,8 +190,8 @@ describe("the generator for a fluid made from two items and a fluid", function()
 
     local result = generator.generate("sulfuric-acid", 3000)
 
-    -- 8 plants of the acid take 336 sulfur a minute: 7 plants of the sulfur of 50.4
-    assert.are.same({sulfur = 7, ["sulfuric-acid"] = 8}, plants_by_recipe(result.entities))
+    -- 8 plants of the acid take 336 sulfur a minute: 4 plants of the sulfur of 100.8
+    assert.are.same({sulfur = 4, ["sulfuric-acid"] = 8}, plants_by_recipe(result.entities))
     assert.are.same({}, validator.validate(renamed(result.entities), catalog()))
   end)
 
@@ -264,7 +264,9 @@ describe("the generator for a fluid made from two items and a fluid", function()
         columns[#columns + 1] = tile.x
       end
     end
-    assert.are.equal(1, #columns)
+    table.sort(columns) -- the others are the first tiles of the winding belts of the plants, which stand east of the block of furnaces
+    assert.are.equal(2, #columns)
+    columns = {columns[1]}
     local below, beside = nil, nil
     for _, entity in ipairs(result.entities) do
       local tile = grid.top_left_tile(entity.position)
@@ -352,9 +354,9 @@ describe("the generator for a fluid made from two items and a fluid", function()
 
       local result = generator.generate("explosives", 100)
 
-      -- 4 plants make 30 a minute each, for 100; they take 60 sulfur a minute: 2 plants of the sulfur (50.4 each), which take 1,800 gas: 3 refineries
-      assert.are.equal("explosives: 120 per minute from 3 x oil-refinery, 6 x chemical-plant", result.description)
-      assert.are.same({sulfur = 2, explosives = 4}, plants_by_recipe(result.entities))
+      -- 4 plants make 30 a minute each, for 100; they take 60 sulfur a minute: 1 plant of the sulfur (100.8), which takes 1,512 gas: 3 refineries
+      assert.are.equal("explosives: 120 per minute from 3 x oil-refinery, 5 x chemical-plant", result.description)
+      assert.are.same({sulfur = 1, explosives = 4}, plants_by_recipe(result.entities))
     end)
 
     it("says the coal comes in by a belt, with the amounts a minute: 60 crafts take 60 sulfur and coal and 600 water", function()
@@ -371,7 +373,7 @@ describe("the generator for a fluid made from two items and a fluid", function()
         _G.prototypes = explosives_game()
         local force = design:find("one belt") and fake_force{} or nil
 
-        for _, rate in ipairs({100, 450}) do
+        for _, rate in ipairs({100, 900}) do
           local result = generator.generate("explosives", rate, force)
 
           assert.are.same({}, validator.validate(renamed(result.entities), catalog()))
@@ -398,6 +400,45 @@ describe("the generator for a fluid made from two items and a fluid", function()
       assert.are.equal(10, inserters) -- two for each of the 4 plants (the items in, the explosives out) and one for each of the 2 sulfur plants
     end)
 
+    describe("with chemical plants of crafting speed 4, which make more than one inserter moves", function()
+      local function fast_game()
+        return explosives_game{machines = {
+          ["oil-refinery"] = a_machine{crafting_speed = 1, size = 5, pipe_boxes = REFINERY_BOXES},
+          ["chemical-plant"] = a_machine{crafting_speed = 4, size = 3, pipe_boxes = PLANT_BOXES},
+        }}
+      end
+
+      it("gives each plant two output inserters, which wind the belt, so that both lanes carry explosives", function()
+        _G.prototypes = fast_game()
+
+        local result = generator.generate("explosives", 100)
+
+        -- the final plants have an input inserter and two output inserters each, and each sulfur plant two output inserters
+        local plants = plants_by_recipe(result.entities)
+        assert.are.equal(plants.explosives * 3 + plants.sulfur * 2, count_named(result.entities, "inserter"))
+      end)
+
+      it("builds a blueprint that passes the validator and the belt tracer, in both designs of the belts", function()
+        _G.prototypes = fast_game()
+
+        for _, force in ipairs({false, fake_force{}}) do
+          local result = generator.generate("explosives", 600, force or nil)
+
+          assert.are.same({}, validator.validate(renamed(result.entities), catalog()))
+          assert.are.same({}, coal_lane_problems(result.entities))
+        end
+      end)
+
+      it("makes the most that two lanes carry, where one inserter would be limited to a lane's 450", function()
+        _G.prototypes = fast_game()
+
+        local max = generator.max_rate_message("explosives")
+
+        -- the input inserter lets a plant craft 25.2 a minute, 50.4 explosives: 17 plants fit in 900
+        assert.are.same({"blueprint-generation.max-rate", "856.8"}, max)
+      end)
+    end)
+
     it("puts a panel beside the coal, the crude oil and the water, which is one entry", function()
       _G.prototypes = explosives_game()
 
@@ -411,7 +452,13 @@ describe("the generator for a fluid made from two items and a fluid", function()
       assert.are.same({"fluid crude-oil", "fluid water", "item coal"}, icons)
     end)
 
-    it("is limited by a lane of the belt the explosives leave on, and names the most", function()
+    it("makes the most the two lanes of the belt carry, which the plants fill in turn, one inserter each: 900 a minute", function()
+      _G.prototypes = explosives_game()
+
+      assert.are.same({"blueprint-generation.max-rate", "900"}, generator.max_rate_message("explosives"))
+    end)
+
+    it("is limited by the lanes of the belt the explosives leave on, and names the most", function()
       _G.prototypes = explosives_game()
 
       local max = generator.max_rate_message("explosives")
@@ -434,28 +481,29 @@ describe("the generator for a fluid made from two items and a fluid", function()
   end)
 
   describe("the most one blueprint makes", function()
-    it("is what as many acid plants as the plants of the sulfur can feed make: 8 plants of 50.4 sulfur, 9 plants of the acid of 42", function()
+    it("is what as many acid plants as the lane of sulfur can feed make: 450 sulfur, 10 plants of the acid of 42", function()
       _G.prototypes = acid_game()
 
-      -- the sulfur plants make 403.2 a minute at most (8 of 50.4: a lane of the belt carries 450); an acid plant takes 42: 9 plants, 3,780 acid
-      assert.are.same({"blueprint-generation.max-rate", "3780"}, generator.max_rate_message("sulfuric-acid"))
+      -- the sulfur plants could make 806.4 a minute (8 of 100.8) but the belt of the sulfur side-loads one lane of the belt b, which carries 450;
+      -- an acid plant takes 42: 10 plants, 4,200 acid
+      assert.are.same({"blueprint-generation.max-rate", "4200"}, generator.max_rate_message("sulfuric-acid"))
     end)
 
     it("is refused above, naming the most", function()
       _G.prototypes = acid_game()
 
-      local result, error_message = generator.generate("sulfuric-acid", 3781)
+      local result, error_message = generator.generate("sulfuric-acid", 4201)
 
-      assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "3780"}}, {result, error_message})
+      assert.are.same({nil, {"blueprint-generation.error-rate-too-high", "4200"}}, {result, error_message})
     end)
 
     it("is allowed", function()
       _G.prototypes = acid_game()
 
-      local result = generator.generate("sulfuric-acid", 3780)
+      local result = generator.generate("sulfuric-acid", 4200)
 
-      -- 9 plants of the acid take 378 sulfur a minute: 8 plants of the sulfur
-      assert.are.same({sulfur = 8, ["sulfuric-acid"] = 9}, plants_by_recipe(result.entities))
+      -- 10 plants of the acid take 420 sulfur a minute: 5 plants of the sulfur
+      assert.are.same({sulfur = 5, ["sulfuric-acid"] = 10}, plants_by_recipe(result.entities))
     end)
   end)
 
@@ -586,7 +634,7 @@ describe("the generator for a fluid made from two items and a fluid", function()
 
         local result = generator.generate("sulfuric-acid", 1000)
 
-        assert.are.equal("sulfuric-acid: 1260 per minute from 5 x oil-refinery, 6 x chemical-plant", result.description)
+        assert.are.equal("sulfuric-acid: 1260 per minute from 6 x oil-refinery, 5 x chemical-plant", result.description)
       end)
 
       it("takes the two items in the other order, the item made on belts first", function()
@@ -598,7 +646,7 @@ describe("the generator for a fluid made from two items and a fluid", function()
 
         local result = generator.generate("sulfuric-acid", 1000)
 
-        assert.are.equal("sulfuric-acid: 1260 per minute from 5 x oil-refinery, 6 x chemical-plant, 2 x stone-furnace", result.description)
+        assert.are.equal("sulfuric-acid: 1260 per minute from 6 x oil-refinery, 5 x chemical-plant, 2 x stone-furnace", result.description)
       end)
     end)
 

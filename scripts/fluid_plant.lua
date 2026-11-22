@@ -4,22 +4,27 @@
 -- machines that make the fluid (turned, so that they stand one under the other facing east).
 --
 -- The pipe that takes the fluid out of the machines that make it is the pipe that brings it in to the plants, which stand east of
--- it, facing west (the side that takes the fluid is the one that faces the pipe). Each plant has an inserter beside the middle of
--- its east side, which drops the item on a belt that runs south beside the inserters; a pole stands in the column of the
--- inserters, beside the top row of each plant. A pole of the machines that make the fluid is wired to the poles of the plants
--- (with a pole between them where a wire does not reach). Drawn for two refineries (R) and three plants (C), with a pipe =, a pole
--- + and an inserter }, from the north (the crude oil pipe at the column 1 goes up to the west edge above the blueprint, where it
--- comes in, as `scripts/corner_entries.lua` has it):
+-- it, facing west (the side that takes the fluid is the one that faces the pipe). Their east side is the output side of a column of
+-- 3 x 3 machines, which `scripts/output_side.lua` draws for these plants and for the assembling machines alike: the inserters that
+-- drop the item on a belt that runs south beside them (the first plant of a pair has its inserter in its top row, the second in its
+-- bottom row), the poles in the column of the inserters, and a belt that winds when each plant has two inserters or they go in twos.
+-- A pole of the machines that make the fluid is wired to the poles of the plants (with a pole between them where a wire does not
+-- reach). Drawn for two refineries (R) and three plants (C) with one inserter each, with a pipe =, a pole + and an inserter }, from
+-- the north (the crude oil pipe at the column 1 goes up to the west edge above the blueprint, where it comes in, as
+-- `scripts/corner_entries.lua` has it):
 --
 --   x:   0 1  2 3 4 5 6   7  8 9 10  11 12
 --
---        + =  [R R R R R] =  [C C C]  +  v
 --        . =  [R R R R R] =  [C C C]  }  v
+--        . =  [R R R R R] =  [C C C]  +  v
+--        + =  [R R R R R] =  [C C C]  .  v
 --        . =  [R R R R R] =  [C C C]  .  v
 --        . =  [R R R R R] =  [C C C]  +  v
---        + =  [R R R R R] =  [C C C]  }  v
+--        . =  [R R R R R] =  [C C C]  }  v
+--        . =  [R R R R R] =  [C C C]  }  v
+--        + =  [R R R R R] =  [C C C]  .  v
 --        . =  [R R R R R] =  [C C C]  .  v
---        . =  [R R R R R] =  =           ..
+--        . .  [R R R R R] =  . . .    .  .
 --
 -- The machines that make the fluid have to take it in from the side that turns to the west when they are turned (see
 -- `fluid_row.turn`), which puts the pipe that takes the fluid out on the east.
@@ -63,6 +68,7 @@ local grid = require("scripts.grid")
 local layout = require("scripts.layout")
 local corner_entries = require("scripts.corner_entries")
 local poles = require("scripts.poles")
+local output_side = require("scripts.output_side")
 
 local fluid_plant = {}
 
@@ -252,37 +258,19 @@ local function add_two_fluid_pipes(entities, request, column)
   return {x = inner, y = 0}
 end
 
--- An inserter beside the middle of each plant, picking up from it (an inserter faces the side it picks up from), and the belt it
--- drops on, beside the inserters, running south as far as the plants go.
----@param entities bpgen.Entity[]
+-- What `output_side.add` is asked for the plants that make an item: the inserters beside each plant (one or two) that take the item out, their
+-- poles and the belt they drop on, which winds when the plan says so. The same code as for the assembling machines (scripts/output_side.lua).
 ---@param request bpgen.FluidPlantBuild
----@param column integer  of the inserters
-local function add_items_out(entities, request, column)
-  local plants = request.plants
-  for index = 0, plants.count - 1 do
-    entity_list.append(entities, {
-      name = request.inserter, position = grid.position(column, index * plants.size + math.floor(plants.size / 2)), direction = west,
-    })
-  end
-  for row = 0, plants.count * plants.size - 1 do
-    entity_list.append(entities, {name = request.belt, position = grid.position(column + 1, row), direction = south})
-  end
-end
-
--- A pole beside the top row of each plant, in the column of the inserters, wired to the one before it. Gives the poles.
----@param entities bpgen.Entity[]
----@param request bpgen.FluidPlantBuild
----@param column integer  of the inserters
----@return bpgen.Entity[]
-local function add_plant_poles(entities, request, column)
-  local plants, added = request.plants, {}
-  for index = 0, plants.count - 1 do
-    added[#added + 1] = entity_list.append(entities, {name = request.makers.pole, position = grid.position(column, index * plants.size)})
-  end
-  for index = 2, #added do
-    layout.connect_poles(added[index - 1], added[index])
-  end
-  return added
+---@param inserter_column integer
+---@return bpgen.OutputSideRequest
+local function output_request(request, inserter_column)
+  local plants, makers = request.plants, request.makers
+  return {
+    column = {first_row = 0, spacing = plants.size, size = plants.size, count = plants.count},
+    inserters = request.output_inserters or 1, winds = request.output_winds == true,
+    inserter = request.inserter, belt = request.belt, pole = makers.pole, pole_reach = layout.pole_reach(makers.pole_supply_distance),
+    pole_wire_distance = makers.pole_wire_distance, inserter_column = inserter_column,
+  }
 end
 
 -- The rows from the top of a plant of the pipe connections of what it takes, turned to face the way given, once each, from the top.
@@ -443,8 +431,7 @@ end
 function fluid_plant.build_block(request)
   local makers, plants = request.makers, request.plants
   assert(makers.rows.inputs == makers.size, "fluid_plant: the machines that make the fluid have to take it in on the side that turns to the west")
-  assert(layout.pole_reach(makers.pole_supply_distance) >= math.floor(plants.size / 2), "fluid_plant: a pole has to reach the inserter beside a plant")
-  assert(plants.size <= makers.pole_wire_distance, "fluid_plant: a wire has to reach from the pole of one plant to the next")
+  assert(not request.item_input or plants.size <= makers.pole_wire_distance, "fluid_plant: a wire has to reach from the pole of one plant to the next")
   local entities, entries = fluid_row.build(makers)
   fluid_row.turn(entities, entries, makers.machine, makers.size)
   local maker_poles = poles_of(entities, makers.pole)
@@ -453,14 +440,14 @@ function fluid_plant.build_block(request)
   local plant_column = add_plants_and_pipes(entities, entries, request, column, facing)
   local inserter_column = plant_column + plants.size
   entries.starts = inlet_starts(request, entries, request.item_input and column + 2 or nil)
-  add_items_out(entities, request, inserter_column)
-  local groups = {maker_poles, add_plant_poles(entities, request, inserter_column)}
+  local plant_poles, belt_column = output_side.add(entities, output_request(request, inserter_column))
+  local groups = {maker_poles, plant_poles}
   if request.item_input then
     groups[3] = add_item_side(entities, request, column, facing)
   end
   return {
     entities = entities, entries = entries, groups = groups,
-    product_belt = {column = inserter_column + 1, last_row = plants.count * plants.size - 1},
+    product_belt = {column = belt_column, last_row = plants.count * plants.size - 1},
   }
 end
 
