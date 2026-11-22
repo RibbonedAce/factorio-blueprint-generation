@@ -52,6 +52,8 @@ local function acid_game(changes)
   }, changes))
 end
 
+local PLANT_NAMES = {sulfur = "sulfur-plant", explosives = "explosives-plant"}
+
 -- The entities with each chemical plant named for what it makes, so that the validator, which knows machines by name, can tell the plants of
 -- the sulfur (that take gas and water at two boxes, mirrored in turn) from the plants of the acid (that take water at both).
 local function renamed(entities)
@@ -62,7 +64,7 @@ local function renamed(entities)
       copy[key] = value
     end
     if entity.name == "chemical-plant" then
-      copy.name = entity.recipe == "sulfur" and "sulfur-plant" or "acid-plant"
+      copy.name = PLANT_NAMES[entity.recipe] or "acid-plant"
     end
     copies[index] = copy
   end
@@ -83,6 +85,9 @@ local function catalog(final_fluid)
   entries["acid-plant"] = {
     kind = "machine", width = 3, height = 3, needs_power = true,
     fluid_connections = {[final_fluid or "water"] = {{x = 0, y = -1}, {x = 2, y = -1}}, acid = {{x = 0, y = 3}, {x = 2, y = 3}}},
+  }
+  entries["explosives-plant"] = {
+    kind = "machine", width = 3, height = 3, needs_power = true, fluid_connections = {water = {{x = 0, y = -1}, {x = 2, y = -1}}},
   }
   return entries
 end
@@ -310,6 +315,124 @@ describe("the generator for a fluid made from two items and a fluid", function()
     assert.are.same({{x = -1, y = -1}, {x = -1, y = -4}, {x = -1, y = -7}, {x = -1, y = -10}}, told.free_tiles)
   end)
 
+  describe("an item made from an item made in plants, a raw item and a fluid (explosives)", function()
+    -- 1 sulfur, 1 coal and 10 water make 2 explosives in 4 s: a plant of speed 1 makes 15 crafts, 30 a minute
+    local explosives = a_recipe{
+      energy = 4, ingredients = {amount_of(1, "sulfur"), amount_of(1, "coal"), fluid_of(10, "water")}, products = {amount_of(2, "explosives")},
+      category = "chemistry",
+    }
+
+    local function explosives_game(changes)
+      return acid_game(builders.merged({
+        items = {"sulfur", "coal", "explosives"},
+        recipes = {["basic-oil-processing"] = gas, ["sulfur"] = sulfur, ["explosives"] = explosives},
+      }, changes))
+    end
+
+    -- What the belt tracer finds wrong with the lanes: the coal comes in on the row above the blueprint and the plants eat the sulfur and the coal.
+    local function coal_lane_problems(entities)
+      local rows = {}
+      for _, belt in ipairs(builders.entities_named(entities, "transport-belt")) do
+        local tile = grid.top_left_tile(belt.position)
+        if tile.x == 0 and tile.y < 0 then
+          rows[#rows + 1] = tile.y
+        end
+      end
+      return tracer.problems(renamed(entities), {
+        machines = {
+          ["sulfur-plant"] = {size = 3, eats = {}, makes = "sulfur"}, ["explosives-plant"] = {size = 3, eats = {"sulfur", "coal"}, makes = "explosives"},
+          ["oil-refinery"] = {size = 5, eats = {}, makes = "petroleum-gas"},
+        },
+        raw = {}, product = "explosives", supplies = {{x = 0, y = rows[1], item = "coal"}},
+      })
+    end
+
+    it("makes the explosives in plants east of the sulfur plants, and no furnace: the coal is a belt that comes in", function()
+      _G.prototypes = explosives_game()
+
+      local result = generator.generate("explosives", 100)
+
+      -- 4 plants make 30 a minute each, for 100; they take 60 sulfur a minute: 2 plants of the sulfur (50.4 each), which take 1,800 gas: 3 refineries
+      assert.are.equal("explosives: 120 per minute from 3 x oil-refinery, 6 x chemical-plant", result.description)
+      assert.are.same({sulfur = 2, explosives = 4}, plants_by_recipe(result.entities))
+    end)
+
+    it("says the coal comes in by a belt, with the amounts a minute: 60 crafts take 60 sulfur and coal and 600 water", function()
+      _G.prototypes = explosives_game()
+
+      local result = generator.generate("explosives", 100)
+
+      assert.are.same({"blueprint-generation.generated-with-belts", {"", {"item-name.coal"}}}, {result.message[1], result.message[5]})
+      assert.are.same({"blueprint-generation.raw-amount", "60", {"item-name.coal"}}, result.message[4][2])
+    end)
+
+    for _, design in ipairs({"the original design of the belts", "the design with one belt of each material"}) do
+      it("builds a blueprint that passes the validator and the belt tracer in " .. design .. ", at 100 and at the most", function()
+        _G.prototypes = explosives_game()
+        local force = design:find("one belt") and fake_force{} or nil
+
+        for _, rate in ipairs({100, 450}) do
+          local result = generator.generate("explosives", rate, force)
+
+          assert.are.same({}, validator.validate(renamed(result.entities), catalog()))
+          assert.are.same({}, coal_lane_problems(result.entities))
+        end
+      end)
+    end
+
+    it("takes the explosives out by a belt on the east side of the plants, one inserter for each plant, and brings the coal in at the top left", function()
+      _G.prototypes = explosives_game()
+
+      local result = generator.generate("explosives", 100)
+
+      local inserters, ends = 0, {}
+      for _, entity in ipairs(result.entities) do
+        local tile = grid.top_left_tile(entity.position)
+        inserters = inserters + (entity.name == "inserter" and entity.direction == defines.direction.west and 1 or 0)
+        if tile.x == 0 and tile.y < 0 then
+          ends[#ends + 1] = tile.y .. " " .. entity.name
+        end
+      end
+      table.sort(ends)
+      assert.are.same({"-1 transport-belt", "-4 pipe", "-7 pipe"}, ends)
+      assert.are.equal(10, inserters) -- two for each of the 4 plants (the items in, the explosives out) and one for each of the 2 sulfur plants
+    end)
+
+    it("puts a panel beside the coal, the crude oil and the water, which is one entry", function()
+      _G.prototypes = explosives_game()
+
+      local result = generator.generate("explosives", 100, fake_force{})
+
+      local icons = {}
+      for _, panel in ipairs(builders.entities_named(result.entities, "display-panel")) do
+        icons[#icons + 1] = panel.icon.type .. " " .. panel.icon.name
+      end
+      table.sort(icons)
+      assert.are.same({"fluid crude-oil", "fluid water", "item coal"}, icons)
+    end)
+
+    it("is limited by a lane of the belt the explosives leave on, and names the most", function()
+      _G.prototypes = explosives_game()
+
+      local max = generator.max_rate_message("explosives")
+      local result, error_message = generator.generate("explosives", tonumber(max[2]) + 1)
+
+      assert.are.same({nil, {"blueprint-generation.error-rate-too-high", max[2]}}, {result, error_message})
+    end)
+
+    it("refuses an item made in plants that takes an item as well, as it refuses the chain of the acid", function()
+      local sulfur_from_coal = a_recipe{
+        energy = 1, ingredients = {amount_of(1, "coal"), fluid_of(30, "water"), fluid_of(30, "petroleum-gas")}, products = {amount_of(2, "sulfur")},
+        category = "chemistry",
+      }
+      _G.prototypes = explosives_game{recipes = {["sulfur"] = sulfur_from_coal}}
+
+      local result = generator.generate("explosives", 100)
+
+      assert.is_nil(result)
+    end)
+  end)
+
   describe("the most one blueprint makes", function()
     it("is what as many acid plants as the plants of the sulfur can feed make: 8 plants of 50.4 sulfur, 9 plants of the acid of 42", function()
       _G.prototypes = acid_game()
@@ -458,8 +581,12 @@ describe("the generator for a fluid made from two items and a fluid", function()
         refused_as_a_fluid_made_from_a_fluid(acid_game{recipes = {["basic-oil-processing"] = gas, ["sulfur"] = sulfur, ["sulfuric-acid"] = two_fluids, ["iron-plate"] = plate}})
       end)
 
-      it("refuses a recipe that takes one item that nothing makes, which is raw", function()
-        refused_as_a_fluid_made_from_a_fluid(acid_game{recipes = {["basic-oil-processing"] = gas, ["sulfur"] = sulfur, ["sulfuric-acid"] = acid}})
+      it("takes the item that nothing makes as a raw item that comes in by a belt, as the coal of explosives does", function()
+        _G.prototypes = acid_game{recipes = {["basic-oil-processing"] = gas, ["sulfur"] = sulfur, ["sulfuric-acid"] = acid}}
+
+        local result = generator.generate("sulfuric-acid", 1000)
+
+        assert.are.equal("sulfuric-acid: 1260 per minute from 5 x oil-refinery, 6 x chemical-plant", result.description)
       end)
 
       it("takes the two items in the other order, the item made on belts first", function()

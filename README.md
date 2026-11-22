@@ -212,6 +212,12 @@ The rate is in acid a minute. A plant of the acid is held down by its one insert
 
 It is refused when the recipe is not of two items and one fluid that makes a fluid, when the two items are not one made in plants from fluids alone and one made from raw items on belts, when the water has a recipe in the config, when the pipe connections of the chemical plant are not in rows beside it with a row free for the inserter, when the game has no underground pipe, or when a part is refused (see the recipes it is made of).
 
+### An item from a made item, a raw item and a fluid: explosives
+
+Explosives take 1 sulfur, 1 coal and 10 water for 2 explosives in 4 seconds. It is the chain of sulfuric acid (see above) with two differences. The coal is raw, so its part has no machines: its belt comes in at the top left corner, on a row of its own with a display panel, runs down the west edge to the row under all the blocks and joins the belt b as the belt of the iron plates does, side-loaded onto one lane (a lane carries 450 a minute), with the sulfur on the other. And the product is an item, so the plants have no pipe on their east side: an inserter at the middle row of each plant takes the explosives out onto a belt that runs south beside the inserters, with a pole at the top row of each plant in their column, as for solid fuel. The water of the sulfur plants and of the explosives plants is one entry, as for the acid.
+
+A plant is held down by its input inserter (which brings the 2 items of a craft) and by its output inserter (which takes away the 2 explosives of a craft), whichever is less: 15 crafts a minute, 30 explosives, at crafting speed 1, which the machine makes. The most is what a lane of the output belt carries, 450 explosives a minute; a higher rate is refused with a message that names it. The message names the coal belt that comes in, the water and the crude oil.
+
 ### Steel furnace
 
 If your force has unlocked the recipe of the **steel furnace** and the game has it, every furnace of the blueprint (the plates, the bricks and the steel) is a steel furnace instead of a stone furnace: the same 2 x 2 tiles and the same fuel, at twice the crafting speed, so a column needs half as many furnaces (75 iron plates a minute take 2 furnaces, not 4). The most a blueprint makes does not change, since a lane of a belt sets it; the blueprints get smaller.

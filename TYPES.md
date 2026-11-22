@@ -653,7 +653,7 @@ classDiagram
 |---|---|
 | `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, FluidPlantRequest, FluidPlantPlan, FluidPlantBuild, ItemFluidPlantsRequest, ItemFluidPlantsPlan, ItemFluidPlantsBuild, ItemFluidPlantsBlock, BeltsBlock, ItemFluidChainBuild, ItemFluidChainPlaces, ItemFluidChain, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
-| `scripts/generator.lua` | EnergySource, Candidate, StageData, InserterData, Job, Arrangement, PlannedStage, Demand, DemandTotals, ItemFluidChainPlans |
+| `scripts/generator.lua` | EnergySource, Candidate, StageData, InserterData, Job, Arrangement, ChainParts, PlannedStage, Demand, DemandTotals, ItemFluidChainPlans |
 | `scripts/planner.lua` | InputInserters, MachineRates, StageContext, Sizes |
 | `scripts/chain.lua` | MadeIngredient |
 | `scripts/layout.lua` | Geometry, Place, Poles, SharedBelt, Builder |

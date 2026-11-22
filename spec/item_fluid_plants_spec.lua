@@ -15,7 +15,7 @@ local validator = require("spec.support.blueprint_validator")
 
 local NAMES = builders.NAMES
 local range = builders.range
-local east, west = defines.direction.east, defines.direction.west
+local east, south, west = defines.direction.east, defines.direction.south, defines.direction.west
 local north = defines.direction.north
 
 -- The boxes of the plants as they face north: what they take above them, what they give under them.
@@ -257,6 +257,61 @@ describe("item_fluid_plants", function()
       local problems = validator.validate(block.entities, catalog({{x = 0, y = 3}, {x = 2, y = 3}}, {{x = 0, y = -1}, {x = 2, y = -1}}))
 
       assert.are.same({}, problems)
+    end)
+
+    describe("for plants that make an item, which leaves each by an inserter onto a belt on their east side", function()
+      local function item_request(count)
+        local asked = request(count)
+        asked.plants.item_output = true
+        return asked
+      end
+
+      it("puts an inserter in the middle row of each plant, taking from it, in the column where the pipe of a fluid would be", function()
+        local block = item_fluid_plants.build(item_request(3))
+
+        assert.are.same({{1, west}, {4, west}, {7, west}}, in_column(block.entities, NAMES.inserter, 7))
+      end)
+
+      it("runs the belt it drops on south beside the inserters, from the first row to the last row of the last plant", function()
+        local block = item_fluid_plants.build(item_request(3))
+
+        assert.are.same(with_direction(range(0, 8), south), in_column(block.entities, NAMES.belt, 8))
+      end)
+
+      it("puts a pipe nowhere on the east side, and a pole at the top row of each plant in the column of the inserters", function()
+        local block = item_fluid_plants.build(item_request(3))
+
+        assert.are.same({{}, {0, 3, 6}}, {builders.rows_in_column(block.entities, NAMES.pipe, 7), rows_in(block.entities, NAMES.pole, 7)})
+      end)
+
+      it("gives no last row of a pipe of the fluid, and the poles of the plants wired to each other", function()
+        local block = item_fluid_plants.build(item_request(3))
+
+        assert.is_nil(block.output_exit_row)
+        assert.are.equal(3, #block.groups[1])
+        assert.are.same({block.groups[1][1].entity_number, defines.wire_connector_id.pole_copper, block.groups[1][2].entity_number, defines.wire_connector_id.pole_copper}, block.groups[1][1].wires[1])
+      end)
+
+      it("takes plants with no connection of what they give", function()
+        local gives_nothing = {{production_type = "input", tiles = {{x = 0, y = -1}}}, {production_type = "input", tiles = {{x = 2, y = -1}}}}
+        local plants = plants_with(1, gives_nothing, {inputs = -1, outputs = 3})
+        plants.item_output = true
+
+        assert.is_true(item_fluid_plants.fits(plants))
+      end)
+
+      it("passes the validator for 1, 2 and 5 plants: powered, wired, the inserter on both sides of each", function()
+        for _, count in ipairs({1, 2, 5}) do
+          local block = item_fluid_plants.build(item_request(count))
+          poles.join({{block.groups[1][1]}, {block.groups[2][1]}})
+          local entries = builders.a_catalog{}
+          entries["chemical-plant"] = {
+            kind = "machine", width = 3, height = 3, needs_power = true, fluid_connections = {water = {{x = 0, y = -1}, {x = 2, y = -1}}},
+          }
+
+          assert.are.same({}, validator.validate(block.entities, entries))
+        end
+      end)
     end)
 
     it("takes a wire exactly as long as a plant is wide, and an underground pipe that spans exactly the two tiles under the belt", function()

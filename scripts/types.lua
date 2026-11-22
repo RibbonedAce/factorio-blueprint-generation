@@ -405,6 +405,7 @@
 ---@field inserter_stack_size integer  the items it moves in a swing
 ---@field belt_speed number  of the belt it takes from
 ---@field plants_that_fit integer  how many machines stand one under the other in the length a run of pipes may have
+---@field lane_items_per_minute? number  of a recipe that makes an item: what a lane of the belt it leaves on carries, which limits the plants
 
 ---@class bpgen.ItemFluidPlantsPlan
 ---@field plants integer
@@ -445,8 +446,8 @@
 -- What `item_fluid_plants.build` is asked for: plants that make a fluid from two items and a fluid, with the belt, the pipes and the poles
 -- beside them (see scripts/item_fluid_plants.lua).
 ---@class bpgen.ItemFluidPlantsBuild
----@field plants {machine: string, recipe: string, size: integer, count: integer, boxes: bpgen.FluidBox[], rows: bpgen.FluidRows}  the plants, with the pipe connections they have as they face north
----@field inserter string  prototype name of the inserter that takes the items from the belt into each plant
+---@field plants {machine: string, recipe: string, size: integer, count: integer, boxes: bpgen.FluidBox[], rows: bpgen.FluidRows, item_output?: boolean}  the plants, with the pipe connections they have as they face north; `item_output` when they make an item, which leaves each by an inserter onto a belt on their east side instead of by a pipe
+---@field inserter string  prototype name of the inserter that takes the items from the belt into each plant (and the made item out)
 ---@field belt string  prototype name of the belt of the two items
 ---@field pipe string
 ---@field pipe_to_ground string
@@ -462,7 +463,7 @@
 ---@field columns {trunk: integer, tunnel: integer, belt: integer, inserter: integer, plant: integer, output: integer, pole: integer, width: integer}
 ---@field groups bpgen.Entity[][]  the poles of the plants and the poles of the inserters, each group wired inside
 ---@field last_row integer  the last row of the last plant, where the belt b ends in this block (the belts of the two items reach its south end further down)
----@field output_exit_row integer  the last row of the pipe that takes the made fluid away, whose end opens south
+---@field output_exit_row integer|nil  the last row of the pipe that takes the made fluid away, whose end opens south; nil for plants that make an item, whose belt leaves in the column `columns.pole`
 
 -- The block of the belts part of `item_fluid_chain.build`: the steps that make an item on belts from raw items (furnaces, assemblers, whatever
 -- the belts layout builds), made apart from it by the generator from the game's recipes, in a frame whose (0, 0) is its top-left tile.

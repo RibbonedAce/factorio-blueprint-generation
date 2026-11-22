@@ -830,8 +830,8 @@ function planner.inserter_ticks_for(rotation_speed, stack_size, belt_speed, amou
   return ticks
 end
 
--- Whether the recipe of plants that make a fluid from two items and a fluid is one the planner handles: two items, one fluid, one
--- product, which is the fluid.
+-- Whether the recipe of plants that make a fluid or an item from two items and a fluid is one the planner handles: two items, one fluid,
+-- one product (the fluid of sulfuric acid, or the item of explosives).
 ---@param recipe bpgen.Recipe
 ---@param product_name string
 ---@return boolean
@@ -839,8 +839,15 @@ function planner.is_item_fluid_recipe(recipe, product_name)
   return #recipe.ingredients == 2 and #recipe.fluids == 1 and is_supported(recipe, product_name)
 end
 
+-- Whether the product of the recipe of such plants is an item, which leaves each plant by an inserter onto a belt.
+---@param recipe bpgen.Recipe
+---@return boolean
+local function makes_item(recipe)
+  return recipe.products[1].type ~= "fluid"
+end
+
 -- How many crafts one plant of `request` makes a minute: what its machine does at full speed, held down to what its one inserter brings
--- of the two items of a craft.
+-- of the two items of a craft and, when it makes an item, to what its output inserter takes away.
 ---@param request bpgen.ItemFluidPlantsRequest
 ---@return number
 local function item_fluid_crafts_each(request)
@@ -849,8 +856,26 @@ local function item_fluid_crafts_each(request)
   for _, item in ipairs(request.recipe.ingredients) do
     amounts[#amounts + 1] = item.amount
   end
-  local ticks = planner.inserter_ticks_for(request.inserter_rotation_speed, request.inserter_stack_size, request.belt_speed, amounts)
-  return math.min(machine, TICKS_PER_SECOND * SECONDS_PER_MINUTE / ticks)
+  local rotation, stack, belt = request.inserter_rotation_speed, request.inserter_stack_size, request.belt_speed
+  local crafts = math.min(machine, TICKS_PER_SECOND * SECONDS_PER_MINUTE / planner.inserter_ticks_for(rotation, stack, belt, amounts))
+  if makes_item(request.recipe) then
+    local out_ticks = planner.inserter_ticks_for(rotation, stack, belt, {planner.amount_made(request.recipe, request.product)})
+    crafts = math.min(crafts, TICKS_PER_SECOND * SECONDS_PER_MINUTE / out_ticks)
+  end
+  return crafts
+end
+
+-- How many plants of `request` there can be at most: as many as stand in the length a run of pipes may have and, when they make an item,
+-- as a lane of the belt it leaves on carries. At least one.
+---@param request bpgen.ItemFluidPlantsRequest
+---@return integer
+local function item_fluid_most_plants(request)
+  local most = math.max(1, request.plants_that_fit)
+  if makes_item(request.recipe) and request.lane_items_per_minute then
+    local each = item_fluid_crafts_each(request) * planner.amount_made(request.recipe, request.product)
+    most = math.max(1, math.min(most, math.floor(request.lane_items_per_minute / each + EPSILON)))
+  end
+  return most
 end
 
 -- What `plants` plants take a minute of what their recipe takes, as a list of the amounts, from the item that comes first.
@@ -880,7 +905,7 @@ function planner.max_item_fluid_plants_rate(request)
   if not planner.is_item_fluid_recipe(request.recipe, request.product) then
     return nil, "unsupported-recipe"
   end
-  return math.max(1, request.plants_that_fit) * item_fluid_crafts_each(request) * planner.amount_made(request.recipe, request.product), nil
+  return item_fluid_most_plants(request) * item_fluid_crafts_each(request) * planner.amount_made(request.recipe, request.product), nil
 end
 
 -- How many machines make `request.rate_per_minute` of the fluid (a whole number makes a little more than asked), what each makes, and what
@@ -898,7 +923,7 @@ function planner.plan_item_fluid_plants(request)
   local crafts = item_fluid_crafts_each(request)
   local each = crafts * planner.amount_made(request.recipe, request.product)
   local plants = whole_machines(request.rate_per_minute / each)
-  if plants > math.max(1, request.plants_that_fit) then
+  if plants > item_fluid_most_plants(request) then
     return nil, "rate-too-high", max_rate
   end
   local items, fluids = item_fluid_amounts(request, plants)

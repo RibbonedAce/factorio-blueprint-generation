@@ -2845,6 +2845,73 @@ describe("planner", function()
       end)
     end)
 
+    describe("plants that make an item", function()
+      -- 1 sulfur and 1 coal and 10 water make 2 explosives in 4 s: a machine of speed 1 makes 15 crafts a minute, 30 explosives. The one input
+      -- inserter brings the 2 items of a craft in 25.2 crafts and the output inserter takes the 2 explosives away in 25.2 crafts.
+      local explosives = {
+        energy = 4, ingredients = {builders.amount_of(1, "sulfur"), builders.amount_of(1, "coal")}, fluids = {{name = "water", amount = 10}},
+        products = {builders.amount_of(2, "explosives")},
+      }
+
+      local function item_request(changes)
+        return builders.merged({
+          product = "explosives", recipe = explosives, machine_speed = 1, rate_per_minute = 100, inserter_rotation_speed = 0.014, inserter_stack_size = 1,
+          belt_speed = 0.03125, plants_that_fit = 106, lane_items_per_minute = 450,
+        }, changes)
+      end
+
+      it("takes a recipe whose product is an item", function()
+        assert.is_true(planner.is_item_fluid_recipe(explosives, "explosives"))
+      end)
+
+      it("makes what the machine makes when both inserters keep up: 15 crafts, 30 a minute, and 4 plants for 100", function()
+        local plan = planner.plan_item_fluid_plants(item_request{})
+
+        assert.near(15, plan.crafts_each, 1e-9)
+        assert.are.same({4, 30}, {plan.plants, plan.per_plant})
+      end)
+
+      it("is held down by the output inserter when it brings more than it takes away: 3 items a craft take 16.8 crafts", function()
+        local heavy = builders.merged(explosives, {products = {builders.amount_of(3, "explosives")}})
+
+        local plan = planner.plan_item_fluid_plants(item_request{recipe = heavy, machine_speed = 4})
+
+        assert.near(3600 / (3 / 0.014), plan.crafts_each, 1e-9)
+      end)
+
+      it("is not held down by an output inserter when it makes a fluid", function()
+        local plan = planner.plan_item_fluid_plants(request{machine_speed = 1, lane_items_per_minute = 100, rate_per_minute = 1000})
+
+        assert.near(8.4, plan.crafts_each, 1e-9)
+        assert.are.equal(3, plan.plants)
+      end)
+
+      it("refuses a rate that needs more plants than a lane of the belt it leaves on carries, naming the most: 3 plants of 30 in 100", function()
+        local plan, reason, max_rate = planner.plan_item_fluid_plants(item_request{lane_items_per_minute = 100, rate_per_minute = 91})
+
+        assert.are.same({nil, "rate-too-high"}, {plan, reason})
+        assert.near(90, max_rate, 1e-9)
+      end)
+
+      it("allows what a lane carries", function()
+        local plan = planner.plan_item_fluid_plants(item_request{lane_items_per_minute = 100, rate_per_minute = 90})
+
+        assert.are.equal(3, plan.plants)
+      end)
+
+      it("has one plant at least, however little a lane carries", function()
+        local plan = planner.plan_item_fluid_plants(item_request{lane_items_per_minute = 10, rate_per_minute = 20})
+
+        assert.are.equal(1, plan.plants)
+      end)
+
+      it("is not limited by a lane when the request names none", function()
+        local plan = planner.plan_item_fluid_plants(item_request{lane_items_per_minute = false, rate_per_minute = 3000})
+
+        assert.are.equal(100, plan.plants)
+      end)
+    end)
+
     describe("max_item_fluid_plants_rate", function()
       it("gives what as many plants as stand in the length make", function()
         assert.near(106 * 420, planner.max_item_fluid_plants_rate(request{}), 1e-6)

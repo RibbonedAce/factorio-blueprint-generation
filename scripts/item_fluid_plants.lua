@@ -87,7 +87,9 @@ function item_fluid_plants.fits(plants)
   return (pcall(function()
     local facing = facing_of(plants.rows, plants.size)
     local inputs = connection_rows(plants, "input", facing, -1)
-    connection_rows(plants, "output", facing, plants.size)
+    if not plants.item_output then
+      connection_rows(plants, "output", facing, plants.size)
+    end
     fluid_plant.inserter_row(plants, inputs)
   end))
 end
@@ -185,6 +187,51 @@ local function add_plants(entities, plants, columns, facing)
   end
 end
 
+-- The east side of plants that make an item: an inserter at the middle row of each plant that takes the item away (an inserter faces the side
+-- it picks up from: west), the belt it drops on, which runs south beside the inserters as far as the plants go, and a pole at the top row of
+-- each plant, in the column of the inserters, wired to the one before it. Gives the poles.
+---@param entities bpgen.Entity[]
+---@param request bpgen.ItemFluidPlantsBuild
+---@param columns table
+---@return bpgen.Entity[]
+local function add_item_output(entities, request, columns)
+  local plants, added = request.plants, {}
+  for index = 0, plants.count - 1 do
+    local top = index * plants.size
+    entity_list.append(entities, {
+      name = request.inserter, position = grid.position(columns.output, top + math.floor(plants.size / 2)), direction = west,
+    })
+    added[#added + 1] = entity_list.append(entities, {name = request.pole, position = grid.position(columns.output, top)})
+  end
+  for row = 0, plants.count * plants.size - 1 do
+    entity_list.append(entities, {name = request.belt, position = grid.position(columns.pole, row), direction = south})
+  end
+  for index = 2, #added do
+    layout.connect_poles(added[index - 1], added[index])
+  end
+  return added
+end
+
+-- The east side of the plants: for plants that make a fluid, the pipe that takes it away along every connection of what they give and a pole
+-- beside it for each plant; for plants that make an item, an inserter and a belt for it (`add_item_output`). Gives the poles of the plants
+-- and the last row of the pipe, nil for an item.
+---@param entities bpgen.Entity[]
+---@param request bpgen.ItemFluidPlantsBuild
+---@param columns table
+---@param facing defines.direction
+---@return bpgen.Entity[] poles
+---@return integer|nil exit_row
+local function add_output_side(entities, request, columns, facing)
+  local plants = request.plants
+  if plants.item_output then
+    return add_item_output(entities, request, columns), nil
+  end
+  local outputs = connection_rows(plants, "output", facing, plants.size)
+  local last = (plants.count - 1) * plants.size + outputs[#outputs]
+  add_pipes(entities, request.pipe, columns.output, outputs[1], last)
+  return add_plant_poles(entities, request, columns), last
+end
+
 -- Stops when the poles, the wires or the underground pipes of the request cannot do what the layout needs of them.
 ---@param request bpgen.ItemFluidPlantsBuild
 local function check_reaches(request)
@@ -202,18 +249,17 @@ function item_fluid_plants.build(request)
   check_reaches(request)
   local plants = request.plants
   local columns, facing = item_fluid_plants.columns(plants.size), facing_of(plants.rows, plants.size)
-  local inputs, outputs = connection_rows(plants, "input", facing, -1), connection_rows(plants, "output", facing, plants.size)
+  local inputs = connection_rows(plants, "input", facing, -1)
   local last_plant = (plants.count - 1) * plants.size
   local entities = {}
   add_plants(entities, plants, columns, facing)
-  add_pipes(entities, request.pipe, columns.output, outputs[1], last_plant + outputs[#outputs])
   add_tunnels(entities, request, columns, inputs)
   add_pipes(entities, request.pipe, columns.trunk, 0, last_plant + inputs[#inputs])
   add_belt(entities, request, columns, last_plant + plants.size - 1)
   local inserter_poles = add_inserters(entities, request, columns, fluid_plant.inserter_row(plants, inputs))
+  local plant_poles, exit_row = add_output_side(entities, request, columns, facing)
   return {
-    entities = entities, columns = columns, groups = {add_plant_poles(entities, request, columns), inserter_poles},
-    last_row = last_plant + plants.size - 1, output_exit_row = last_plant + outputs[#outputs],
+    entities = entities, columns = columns, groups = {plant_poles, inserter_poles}, last_row = last_plant + plants.size - 1, output_exit_row = exit_row,
   }
 end
 

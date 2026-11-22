@@ -164,6 +164,8 @@ local config = {
     -- A fluid made from two items and a fluid, in plants, from an item made in plants (sulfur, with the machines that make its fluid) and an
     -- item made on belts (iron plate): the blueprint is the chain of everything, from the raw ores and fluids (see scripts/item_fluid_chain.lua).
     ["sulfuric-acid"] = true,
+    -- The same chain for an item: made from an item made in plants (sulfur) and a raw item (coal) that comes in by a belt, and a fluid.
+    ["explosives"] = true,
   },
 
   -- The recipe that makes a fluid that a recipe takes, for a recipe that takes one fluid and nothing else: a row of the machines of

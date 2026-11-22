@@ -10,6 +10,7 @@ local planner = require("scripts.planner")
 local layout = require("scripts.layout")
 local inputs = require("scripts.inputs")
 local rows = require("scripts.rows")
+local entity_list = require("scripts.entity_list")
 local fluid_row = require("scripts.fluid_row")
 local fluid_plant = require("scripts.fluid_plant")
 local item_fluid_chain = require("scripts.item_fluid_chain")
@@ -369,7 +370,7 @@ end
 ---@field kind "belts"|"fluid_row"|"fluid_plant"|"item_fluid_chain"  how it is laid out (an item fluid chain is the blueprint of scripts/item_fluid_chain.lua, a fluid made from two items and a fluid, one item made in plants and the other on belts); the others: columns of machines with belts, a row of machines that make a fluid from a fluid (see scripts/fluid_row.lua), or plants that make an item from a fluid with the machines that make the fluid (see scripts/fluid_plant.lua)
 ---@field maker? bpgen.StageData  of a fluid plant: the step that makes the fluid the recipe takes
 ---@field made_fluid? string  of a fluid plant: the fluid of its recipe that the step makes (the other one, if it takes two, comes in by a pipe)
----@field parts? {plants: bpgen.StageData, belts: bpgen.StageData}  of an item fluid chain: the step that makes the item made in plants (with `maker` and `made_fluid` for the machines that make its fluid) and the steps that make the other item on belts
+---@field parts? bpgen.ChainParts  of an item fluid chain: the step that makes the item made in plants (with `maker` and `made_fluid` for the machines that make its fluid) and the steps that make the other item on belts
 ---@field rate_per_minute number  how much of it
 ---@field root bpgen.StageData  the step of the recipe the player picked, with the steps below it that make what it takes
 ---@field names bpgen.SharedNames  the prototype names every column builds with
@@ -638,15 +639,22 @@ local function takes_no_fluid(stage)
   return true
 end
 
--- The steps that make the two items of a recipe that makes a fluid from two items and a fluid, when one is made in plants and the other on
--- belts (iron plate), or nil.
+-- The parts of a recipe with one made item, made in plants, and one raw item (explosives: sulfur made in plants, and coal): the raw one has
+-- no machines, only a belt that comes in. Nil for any other recipe with one made item.
 ---@param root bpgen.StageData
----@return {plants: bpgen.StageData, belts: bpgen.StageData}|nil
-local function chain_parts_of(root)
-  if #root.recipe.ingredients ~= 2 or #root.recipe.fluids ~= 1 or #root.suppliers ~= 2 then
-    return nil
+---@return bpgen.ChainParts|nil
+local function raw_item_parts_of(root)
+  if root.raw_item and is_plants_step(root.suppliers[1]) then
+    return {plants = root.suppliers[1], raw_item = root.raw_item}
   end
-  local first, second = root.suppliers[1], root.suppliers[2]
+  return nil
+end
+
+-- The parts of a recipe with two made items, when one is made in plants and the other on belts, in either order; nil for any other two.
+---@param first bpgen.StageData
+---@param second bpgen.StageData
+---@return bpgen.ChainParts|nil
+local function two_made_parts_of(first, second)
   if is_plants_step(first) and takes_no_fluid(second) then
     return {plants = first, belts = second}
   end
@@ -654,6 +662,20 @@ local function chain_parts_of(root)
     return {plants = second, belts = first}
   end
   return nil
+end
+
+-- The steps that make the two items of a recipe that takes two items and a fluid, when one is made in plants and the other on belts (iron
+-- plate), or is raw, or nil.
+---@param root bpgen.StageData
+---@return bpgen.ChainParts|nil
+local function chain_parts_of(root)
+  if #root.recipe.ingredients ~= 2 or #root.recipe.fluids ~= 1 then
+    return nil
+  end
+  if #root.suppliers == 1 then
+    return raw_item_parts_of(root)
+  end
+  return #root.suppliers == 2 and two_made_parts_of(root.suppliers[1], root.suppliers[2]) or nil
 end
 
 -- The step that makes the fluid a step that is made in plants takes from a row of machines, and the name of that fluid. Nil and the message
@@ -680,13 +702,20 @@ end
 ---@field kind "belts"|"fluid_row"|"fluid_plant"|"item_fluid_chain"
 ---@field maker? bpgen.StageData  the step that makes the fluid the plants take
 ---@field made_fluid? string
----@field parts? {plants: bpgen.StageData, belts: bpgen.StageData}
+---@field parts? bpgen.ChainParts
+
+-- The parts of an item fluid chain: the step made in plants and either the steps that make the other item on belts or the name of that item
+-- when it is raw (it comes in by a belt and has no machines).
+---@class bpgen.ChainParts
+---@field plants bpgen.StageData
+---@field belts? bpgen.StageData
+---@field raw_item? string
 
 -- The layout of a recipe with plants made of a step: the step that makes the fluid they take, and what the layout is called. Nil and the
 -- message for the player when the fluid has no recipe to make it.
 ---@param plants bpgen.StageData  the step made in plants
 ---@param kind "fluid_plant"|"item_fluid_chain"
----@param parts {plants: bpgen.StageData, belts: bpgen.StageData}|nil
+---@param parts bpgen.ChainParts|nil
 ---@param force LuaForce|nil
 ---@return bpgen.Arrangement|nil
 ---@return LocalisedString|nil error_message
@@ -708,7 +737,7 @@ end
 ---@return LocalisedString|nil error_message
 local function read_layout(root, force)
   local makes_fluid = root.recipe.products[1].type == "fluid"
-  local parts = makes_fluid and #root.recipe.ingredients > 0 and chain_parts_of(root) or nil
+  local parts = #root.recipe.ingredients > 0 and chain_parts_of(root) or nil
   if parts then
     return read_plants_layout(parts.plants, "item_fluid_chain", parts, force)
   end
@@ -1129,7 +1158,10 @@ end
 local function plants_of(stage, count)
   local size = stage.machine_size --[[@as integer]]
   local boxes = read_fluid_boxes(prototypes.entity[stage.machine], size)
-  return {machine = stage.machine, recipe = stage.recipe.name, size = size, count = count, boxes = boxes, rows = fluid_row.rows_of(boxes, size)}
+  return {
+    machine = stage.machine, recipe = stage.recipe.name, size = size, count = count, boxes = boxes, rows = fluid_row.rows_of(boxes, size),
+    item_output = stage.recipe.products[1].type ~= "fluid",
+  }
 end
 
 -- The reason plants that make a fluid from two items and a fluid cannot be built, as a message for the player, or nil: the recipe, the
@@ -1163,12 +1195,12 @@ end
 ---@param job bpgen.Job
 ---@return LocalisedString|nil
 local function item_fluid_chain_problem(job)
-  local parts = job.parts --[[@as {plants: bpgen.StageData, belts: bpgen.StageData}]]
+  local parts = job.parts --[[@as bpgen.ChainParts]]
   local problem = fluid_plant_problem(part_of(job, {root = parts.plants, kind = "fluid_plant"})) or item_fluid_plants_problem(job, job.root)
   if problem then
     return problem
   end
-  for _, stage in ipairs(in_order(parts.belts, {})) do
+  for _, stage in ipairs(parts.belts and in_order(parts.belts, {}) or {}) do
     problem = stage_problem(job, stage)
     if problem then
       return problem
@@ -1867,7 +1899,7 @@ local function item_fluid_request(job, fit)
   return {
     product = stage.item, recipe = stage.recipe, machine_speed = stage.machine_speed, rate_per_minute = job.rate_per_minute,
     inserter_rotation_speed = inserter.rotation_speed, inserter_stack_size = inserter.stack_size, belt_speed = job.belt_speed,
-    plants_that_fit = fit,
+    plants_that_fit = fit, lane_items_per_minute = planner.lane_items_per_minute(job.belt_speed),
   }
 end
 
@@ -1890,11 +1922,33 @@ end
 ---@param plants_rate number
 ---@param belts_rate number
 ---@return bpgen.Job plants_job
----@return bpgen.Job belts_job
+---@return bpgen.Job|nil belts_job  nil when the other item is raw
 local function parts_jobs(job, plants_rate, belts_rate)
-  local parts = job.parts --[[@as {plants: bpgen.StageData, belts: bpgen.StageData}]]
-  return part_of(job, {root = parts.plants, kind = "fluid_plant", item_name = parts.plants.item, rate_per_minute = plants_rate}),
-    part_of(job, {root = parts.belts, kind = "belts", item_name = parts.belts.item, rate_per_minute = belts_rate})
+  local parts = job.parts --[[@as bpgen.ChainParts]]
+  local plants_job = part_of(job, {root = parts.plants, kind = "fluid_plant", item_name = parts.plants.item, rate_per_minute = plants_rate})
+  if not parts.belts then
+    return plants_job, nil
+  end
+  return plants_job, part_of(job, {root = parts.belts, kind = "belts", item_name = parts.belts.item, rate_per_minute = belts_rate})
+end
+
+-- The item of the part that is not made in plants: what the steps on belts make, or the raw item that comes in.
+---@param parts bpgen.ChainParts
+---@return string
+local function belts_item_of(parts)
+  return parts.belts and parts.belts.item or assert(parts.raw_item, "generator: a chain has no second item")
+end
+
+-- What the part of the second item can make a minute at most: what the steps on belts make, or one lane of the belt the raw item comes in
+-- on (it is side-loaded onto one lane). Nil when the steps are ones the planner cannot handle.
+---@param job bpgen.Job
+---@param belts_job bpgen.Job|nil
+---@return number|nil
+local function most_second_item(job, belts_job)
+  if belts_job then
+    return planner.max_tree_rate(tree_request(belts_job))
+  end
+  return planner.lane_items_per_minute(job.belt_speed)
 end
 
 -- How many plants that make the fluid the parts of a chain can feed with their items, at most, and what one of them makes a minute: as many as
@@ -1911,13 +1965,13 @@ local function most_item_fluid_plants(job)
     return nil, reason
   end
   local plants_job, belts_job = parts_jobs(job, 1, 1)
-  local made_in_plants, made_on_belts = planner.max_fluid_plant_rate(fluid_plant_request(plants_job)), planner.max_tree_rate(tree_request(belts_job))
+  local made_in_plants, made_on_belts = planner.max_fluid_plant_rate(fluid_plant_request(plants_job)), most_second_item(job, belts_job)
   if not (made_in_plants and made_on_belts) then
     return nil, "unsupported-recipe"
   end
-  local parts = job.parts --[[@as {plants: bpgen.StageData, belts: bpgen.StageData}]]
+  local parts = job.parts --[[@as bpgen.ChainParts]]
   local by_plants = math.floor(made_in_plants / item_amount(one, parts.plants.item) + constants.EPSILON)
-  local by_belts = math.floor(made_on_belts / item_amount(one, parts.belts.item) + constants.EPSILON)
+  local by_belts = math.floor(made_on_belts / item_amount(one, belts_item_of(parts)) + constants.EPSILON)
   return {plants = math.max(1, math.min(machines_that_fit(job.root), by_plants, by_belts)), per_plant = one.per_plant}, nil
 end
 
@@ -1925,8 +1979,8 @@ end
 ---@field final bpgen.ItemFluidPlantsPlan  the final plants, which make the fluid
 ---@field plants bpgen.FluidPlantPlan  the plants that make the item made in plants, with the machines that make their fluid
 ---@field plants_job bpgen.Job
----@field belts bpgen.PlannedStage  the steps that make the item made on belts
----@field belts_job bpgen.Job
+---@field belts? bpgen.PlannedStage  the steps that make the item made on belts; nil when that item is raw
+---@field belts_job? bpgen.Job
 
 -- The plans of the parts of a chain for the rate asked for, or nil, the reason and the most a chain can make.
 ---@param job bpgen.Job
@@ -1942,10 +1996,10 @@ local function plan_item_fluid_chain(job)
   if not final then
     return nil, why, max_rate
   end
-  local parts = job.parts --[[@as {plants: bpgen.StageData, belts: bpgen.StageData}]]
-  local plants_job, belts_job = parts_jobs(job, item_amount(final, parts.plants.item), item_amount(final, parts.belts.item))
-  local plants, belts = planner.plan_fluid_plant(fluid_plant_request(plants_job)), make_plans(belts_job)
-  assert(plants and belts, "generator: the parts of a chain cannot make what the plants of the fluid take, though the most they make said they can")
+  local parts = job.parts --[[@as bpgen.ChainParts]]
+  local plants_job, belts_job = parts_jobs(job, item_amount(final, parts.plants.item), item_amount(final, belts_item_of(parts)))
+  local plants, belts = planner.plan_fluid_plant(fluid_plant_request(plants_job)), belts_job and make_plans(belts_job)
+  assert(plants and (belts or not belts_job), "generator: the parts of a chain cannot make what the plants of the fluid take, though the most they make said they can")
   return {final = final, plants = plants, plants_job = plants_job, belts = belts, belts_job = belts_job}
 end
 
@@ -1958,7 +2012,7 @@ local function item_fluid_chain_max_rate(job)
   if not limit then
     return nil, reason
   end
-  return limit.plants * limit.per_plant, nil
+  return planner.max_item_fluid_plants_rate(item_fluid_request(job, limit.plants)), nil
 end
 
 -- What `item_fluid_plants.build` is asked for the plans' plants of the fluid.
@@ -2064,13 +2118,42 @@ local function belts_block(job, planned)
   return {entities = entities, poles = poles, product = product_end(entities, job.names.belt), raw = raw}, root, belts
 end
 
+-- The block of the part of a chain whose second item is raw: no machines, only the belt that comes in at the top left, which is the belt of
+-- its product too (a single tile, from which the chain takes it on). Also the name of the item of the belt, for the entry.
+---@param item string
+---@param belt string  the prototype name of the belt
+---@return bpgen.BeltsBlock
+local function raw_item_block(item, belt)
+  local entities = {}
+  entity_list.append(entities, {name = belt, position = grid.position(0, 0), direction = south})
+  return {entities = entities, poles = {}, product = {column = 0, last_row = 0}, raw = {{key = item, x = 0, y = 0, direction = south}}}
+end
+
+-- The block of the part of a chain that makes the second item, with what it takes a minute (as `raw_amounts` gives it), the layout of its
+-- steps (nil when the item is raw) and the names of the belts that come in (nil for the original design).
+---@param job bpgen.Job
+---@param plans bpgen.ItemFluidChainPlans
+---@return bpgen.BeltsBlock block
+---@return bpgen.StageLayout|nil belts_root
+---@return string[]|nil belts
+---@return bpgen.RawAmount[] belts_raws
+local function second_item_block(job, plans)
+  if plans.belts then
+    local belts_raws = raw_amounts(plans.belts) -- also notes what each step takes, which the layout needs
+    local block, belts_root, belts = belts_block(plans.belts_job, plans.belts)
+    return block, belts_root, belts, belts_raws
+  end
+  local raw_item = belts_item_of(job.parts --[[@as bpgen.ChainParts]])
+  return raw_item_block(raw_item, job.names.belt), nil, {raw_item}, {{name = raw_item, amount = item_amount(plans.final, raw_item)}}
+end
+
 -- The tiles on a side of each machine of a chain, by name.
 ---@param job bpgen.Job
----@param belts_root bpgen.StageLayout  the layout of the steps on belts
+---@param belts_root bpgen.StageLayout|nil  the layout of the steps on belts, nil when the second item is raw
 ---@return table<string, integer>
 local function chain_sizes(job, belts_root)
-  local parts = job.parts --[[@as {plants: bpgen.StageData, belts: bpgen.StageData}]]
-  local sizes = machine_sizes_of(belts_root, {})
+  local parts = job.parts --[[@as bpgen.ChainParts]]
+  local sizes = belts_root and machine_sizes_of(belts_root, {}) or {}
   for _, stage in ipairs({job.root, parts.plants, job.maker}) do
     sizes[stage.machine] = machine_size_of(stage)
   end
@@ -2138,7 +2221,7 @@ end
 ---@return bpgen.StageSummary[]
 local function chain_summaries(job, plans)
   local list = {{machines = plans.plants.makers, machine = job.maker.machine}, {machines = plans.plants.plants, machine = job.parts.plants.machine}}
-  for _, summary in ipairs(stage_summaries(plans.belts)) do
+  for _, summary in ipairs(plans.belts and stage_summaries(plans.belts) or {}) do
     list[#list + 1] = summary
   end
   list[#list + 1] = {machines = plans.final.plants, machine = job.root.machine}
@@ -2166,8 +2249,7 @@ local function generate_item_fluid_chain(job)
     ---@cast reason bpgen.PlanReason -- the planner always gives a reason when it gives no plan
     return nil, messages.plan_problem(reason, max_rate)
   end
-  local belts_raws = raw_amounts(plans.belts) -- also notes what each step takes, which the layout needs
-  local block, belts_root, belts = belts_block(plans.belts_job, plans.belts)
+  local block, belts_root, belts, belts_raws = second_item_block(job, plans)
   local sizes = chain_sizes(job, belts_root)
   local built = item_fluid_chain.build({
     plants_part = fluid_plant_build(plans.plants_job, plans.plants), belts_part = block, final_plants = item_fluid_plants_request(job, plans.final),

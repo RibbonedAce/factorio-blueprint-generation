@@ -328,6 +328,32 @@ describe("item_fluid_chain", function()
       }, chain.inlets)
     end)
 
+    describe("with a belts part that is only the belt of a raw item, which has no machines and no poles", function()
+      local function raw_block()
+        return {
+          entities = {{entity_number = 1, name = NAMES.belt, position = grid.position(0, 0), direction = south}}, poles = {},
+          product = {column = 0, last_row = 0}, raw = {{key = "coal", x = 0, y = 0, direction = south}},
+        }
+      end
+
+      it("brings the belt in at the top left, down its column to the arc, through the gadget and along the arc to the belt b", function()
+        local chain = item_fluid_chain.build(request(raw_block()))
+
+        -- the block is one column wide, so the plants part starts in the column 2 and the final plants in the column 18
+        assert.are.equal(20, chain.places.belt_b)
+        assert.are.same({"transport-belt south", "transport-belt south", "transport-belt east", "transport-belt north", "transport-belt north"}, {
+          at(chain.entities, 0, -1), at(chain.entities, 0, 10), at(chain.entities, 1, 11), at(chain.entities, 2, 11), at(chain.entities, 20, 10),
+        })
+        assert.are.same({key = "coal", x = 0, y = -1}, chain.inlets[1])
+      end)
+
+      it("passes the validator: the poles of the other two blocks are one network", function()
+        local chain = item_fluid_chain.build(request(raw_block()))
+
+        assert.are.same({}, validator.validate(chain.entities, catalog()))
+      end)
+    end)
+
     it("numbers the entities from 1 with no gap", function()
       local chain = item_fluid_chain.build(request(iron_from_the_north()))
 
