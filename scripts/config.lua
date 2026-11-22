@@ -9,6 +9,7 @@
 ---@class bpgen.Config
 ---@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, panel: string, pipe: string, pipe_to_ground: string, pump: string, poles: string[], belts: bpgen.BeltTier[]}
 ---@field recipes table<string, true>  the recipes a player may ask for, by recipe name; the rate is of the product of the recipe
+---@field fluid_chains table<string, string>  the recipe of the chain that makes a fluid that another recipe takes besides items, by the name of the fluid, built as a block beside the plants of that recipe
 ---@field fluid_makers table<string, string>  the recipe that makes a fluid that another recipe takes, by the name of the fluid, built as a row of machines ahead of it
 ---@field pipe_to_ground_reach integer  the most tiles an underground pipe spans, from one end to the other
 ---@field fluid_pipeline_tiles integer  how many tiles a run of pipes may span along a side, the machines that are fed from it with it
@@ -166,6 +167,15 @@ local config = {
     ["sulfuric-acid"] = true,
     -- The same chain for an item: made from an item made in plants (sulfur) and a raw item (coal) that comes in by a belt, and a fluid.
     ["explosives"] = true,
+    -- An item made in plants from two items that are made on belts (iron plate, copper plate) and a fluid that a chain of its own makes (the
+    -- sulfuric acid, see `fluid_chains`): the blueprint is all of it, from the raw ores and fluids (see scripts/item_fluid_chain.lua).
+    ["battery"] = true,
+  },
+
+  -- The recipe of the chain that makes a fluid that a recipe takes besides items (battery takes sulfuric acid): the blueprint of that chain
+  -- stands beside the plants of the recipe, with its pipe running into their trunk. A fluid that a row of machines makes is in `fluid_makers`.
+  fluid_chains = {
+    ["sulfuric-acid"] = "sulfuric-acid",
   },
 
   -- The recipe that makes a fluid that a recipe takes, for a recipe that takes one fluid and nothing else: a row of the machines of

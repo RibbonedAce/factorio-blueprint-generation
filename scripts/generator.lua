@@ -368,10 +368,12 @@ end
 -- for, the tree of steps that makes it with their machines, and the game's numbers.
 ---@class bpgen.Job
 ---@field item_name string  the product of the recipe the player picked (the first, when it makes several, which the planner refuses)
----@field kind "belts"|"fluid_row"|"fluid_plant"|"item_fluid_chain"  how it is laid out (an item fluid chain is the blueprint of scripts/item_fluid_chain.lua, a fluid made from two items and a fluid, one item made in plants and the other on belts); the others: columns of machines with belts, a row of machines that make a fluid from a fluid (see scripts/fluid_row.lua), or plants that make an item from a fluid with the machines that make the fluid (see scripts/fluid_plant.lua)
+---@field kind "belts"|"fluid_row"|"fluid_plant"|"item_fluid_chain"|"nested_chain"  how it is laid out (a nested chain is the blueprint of `item_fluid_chain.build_nested`: an item made from two items on belts and a fluid that a chain of its own makes; an item fluid chain is the blueprint of scripts/item_fluid_chain.lua, a fluid made from two items and a fluid, one item made in plants and the other on belts); the others: columns of machines with belts, a row of machines that make a fluid from a fluid (see scripts/fluid_row.lua), or plants that make an item from a fluid with the machines that make the fluid (see scripts/fluid_plant.lua)
 ---@field maker? bpgen.StageData  of a fluid plant: the step that makes the fluid the recipe takes
 ---@field made_fluid? string  of a fluid plant: the fluid of its recipe that the step makes (the other one, if it takes two, comes in by a pipe)
 ---@field parts? bpgen.ChainParts  of an item fluid chain: the step that makes the item made in plants (with `maker` and `made_fluid` for the machines that make its fluid) and the steps that make the other item on belts
+---@field nested? bpgen.NestedParts  of a nested chain: the steps that make its two items and the recipe of the chain that makes its fluid
+---@field chain_job? bpgen.Job  of a nested chain: the job of the chain that makes its fluid (see `nested`)
 ---@field rate_per_minute number  how much of it
 ---@field root bpgen.StageData  the step of the recipe the player picked, with the steps below it that make what it takes
 ---@field names bpgen.SharedNames  the prototype names every column builds with
@@ -679,6 +681,21 @@ local function chain_parts_of(root)
   return #root.suppliers == 2 and two_made_parts_of(root.suppliers[1], root.suppliers[2]) or nil
 end
 
+-- The parts of a recipe that takes two items and a fluid when both items are made on belts and a chain of its own makes the fluid (battery:
+-- iron plate, copper plate and sulfuric acid), or nil.
+---@param root bpgen.StageData
+---@return bpgen.NestedParts|nil
+local function nested_parts_of(root)
+  if #root.recipe.ingredients ~= 2 or #root.recipe.fluids ~= 1 or #root.suppliers ~= 2 or root.recipe.products[1].type == "fluid" then
+    return nil
+  end
+  local chain_recipe = config.fluid_chains[root.recipe.fluids[1].name]
+  if chain_recipe and takes_no_fluid(root.suppliers[1]) and takes_no_fluid(root.suppliers[2]) then
+    return {first = root.suppliers[1], second = root.suppliers[2], chain_recipe = chain_recipe}
+  end
+  return nil
+end
+
 -- The step that makes the fluid a step that is made in plants takes from a row of machines, and the name of that fluid. Nil and the message
 -- for the player when the config names no recipe for it, or more than one of its fluids has one.
 ---@param stage bpgen.StageData  made in plants
@@ -700,8 +717,10 @@ end
 
 -- How a recipe is laid out, and what its layout needs of the game.
 ---@class bpgen.Arrangement
----@field kind "belts"|"fluid_row"|"fluid_plant"|"item_fluid_chain"
+---@field kind "belts"|"fluid_row"|"fluid_plant"|"item_fluid_chain"|"nested_chain"
+---@field root bpgen.StageData  the step of the recipe the player picked, with the steps below it
 ---@field maker? bpgen.StageData  the step that makes the fluid the plants take
+---@field nested? bpgen.NestedParts
 ---@field made_fluid? string
 ---@field parts? bpgen.ChainParts
 
@@ -711,6 +730,12 @@ end
 ---@field plants bpgen.StageData
 ---@field belts? bpgen.StageData
 ---@field raw_item? string
+
+-- The parts of a nested chain: the steps that make its two items on belts and the recipe of the chain that makes its fluid.
+---@class bpgen.NestedParts
+---@field first bpgen.StageData
+---@field second bpgen.StageData
+---@field chain_recipe string
 
 -- The layout of a recipe with plants made of a step: the step that makes the fluid they take, and what the layout is called. Nil and the
 -- message for the player when the fluid has no recipe to make it.
@@ -742,6 +767,10 @@ local function read_layout(root, force)
   if parts then
     return read_plants_layout(parts.plants, "item_fluid_chain", parts, force)
   end
+  local nested = nested_parts_of(root)
+  if nested then
+    return {kind = "nested_chain", nested = nested}
+  end
   if makes_fluid then
     return {kind = "fluid_row"}
   end
@@ -749,6 +778,46 @@ local function read_layout(root, force)
     return {kind = "belts"}
   end
   return read_plants_layout(root, "fluid_plant", nil, force)
+end
+
+---@type fun(recipe_name: string, rate_per_minute: number, force: LuaForce|nil): bpgen.Job|nil, LocalisedString|nil
+local read_job
+
+-- The step of the recipe the player picked, with the steps below it, and how the recipe is laid out (the arrangement has the step as its
+-- `root`), or nil and the message for the player.
+---@param prototype LuaRecipePrototype
+---@param force LuaForce|nil
+---@return bpgen.Arrangement|nil
+---@return LocalisedString|nil error_message
+local function read_arrangement(prototype, force)
+  local root, problem = read_root(prototype, force)
+  if not root then
+    return nil, problem
+  end
+  local arrangement, layout_problem = read_layout(root, force)
+  if arrangement then
+    arrangement.root = root
+  end
+  return arrangement, layout_problem
+end
+
+-- The job with the arrangement of its recipe set on it: its product, its rate, its root and kind, the machines that make a fluid and, for a
+-- nested chain, the job of the chain that makes its fluid. Nil and the message for the player when that chain cannot be read.
+---@param job bpgen.Job
+---@param rate_per_minute number
+---@param arrangement bpgen.Arrangement
+---@param force LuaForce|nil
+---@return bpgen.Job|nil
+---@return LocalisedString|nil error_message
+local function arranged(job, rate_per_minute, arrangement, force)
+  job.item_name, job.rate_per_minute, job.root, job.kind = arrangement.root.item, rate_per_minute, arrangement.root, arrangement.kind
+  job.maker, job.made_fluid, job.parts, job.nested = arrangement.maker, arrangement.made_fluid, arrangement.parts, arrangement.nested
+  if not arrangement.nested then
+    return job
+  end
+  local problem
+  job.chain_job, problem = read_job(arrangement.nested.chain_recipe, 1, force)
+  return job.chain_job and job or nil, problem
 end
 
 -- The job for this request, or nil and the message for the player when the recipe is
@@ -759,7 +828,7 @@ end
 ---@param force LuaForce|nil  whose research decides the design of the inputs; nil takes the original
 ---@return bpgen.Job|nil
 ---@return LocalisedString|nil error_message
-local function read_job(recipe_name, rate_per_minute, force)
+function read_job(recipe_name, rate_per_minute, force)
   local prototype, problem = picked_recipe(recipe_name)
   if not prototype then
     return nil, problem
@@ -769,18 +838,16 @@ local function read_job(recipe_name, rate_per_minute, force)
   if not job then
     return nil, problem
   end
-  local root
-  root, problem = read_root(prototype, force)
-  if not root then
+  local arrangement
+  arrangement, problem = read_arrangement(prototype, force)
+  if not arrangement then
     return nil, problem
   end
-  local arrangement, layout_problem = read_layout(root, force)
-  if not arrangement then
-    return nil, layout_problem
+  job, problem = arranged(job --[[@as bpgen.Job]], rate_per_minute, arrangement, force)
+  if not job then
+    return nil, problem
   end
-  job.item_name, job.rate_per_minute, job.root, job.kind = root.item, rate_per_minute, root, arrangement.kind
-  job.maker, job.made_fluid, job.parts = arrangement.maker, arrangement.made_fluid, arrangement.parts
-  return add_unlocked(job --[[@as bpgen.Job]], force) -- what the force has unlocked is added just below
+  return add_unlocked(job, force) -- what the force has unlocked is added just below
 end
 
 -- The item whose recipe the force has not unlocked yet, or nil when the force has it. Only
@@ -1221,6 +1288,23 @@ local function item_fluid_chain_problem(job)
   return nil
 end
 
+-- The reason a nested chain cannot be built, as a message for the player, or nil: the steps on belts that make its two items, the chain that
+-- makes its fluid, and the plants of the recipe.
+---@param job bpgen.Job
+---@return LocalisedString|nil
+local function nested_chain_problem(job)
+  local nested = job.nested --[[@as bpgen.NestedParts]]
+  for _, root in ipairs({nested.first, nested.second}) do
+    for _, stage in ipairs(in_order(root, {})) do
+      local problem = stage_problem(job, stage)
+      if problem then
+        return problem
+      end
+    end
+  end
+  return item_fluid_chain_problem(job.chain_job --[[@as bpgen.Job]]) or item_fluid_plants_problem(job, job.root)
+end
+
 -- The reason one of the machines cannot be built with, as a message for the player, or nil.
 ---@param job bpgen.Job
 ---@return LocalisedString|nil
@@ -1233,6 +1317,9 @@ local function machine_problem(job)
   end
   if job.kind == "item_fluid_chain" then
     return item_fluid_chain_problem(job)
+  end
+  if job.kind == "nested_chain" then
+    return nested_chain_problem(job)
   end
   for _, stage in ipairs(in_order(job.root, {})) do
     local problem = stage_problem(job, stage)
@@ -2030,6 +2117,112 @@ local function item_fluid_chain_max_rate(job)
   return planner.max_item_fluid_plants_rate(item_fluid_request(job, limit.plants)), nil
 end
 
+-- How much of a fluid the plants of a plan take a minute.
+---@param plan bpgen.ItemFluidPlantsPlan
+---@param name string
+---@return number
+local function fluid_amount(plan, name)
+  for _, fluid in ipairs(plan.fluids) do
+    if fluid.name == name then
+      return fluid.amount
+    end
+  end
+  error("generator: the plants take no " .. name)
+end
+
+-- The jobs of the parts of a nested chain for the rates they are given: the steps on belts that make each item, and the chain that makes the
+-- fluid (a job of its own, read with the recipe of the nested chain).
+---@param job bpgen.Job
+---@param rates {first: number, second: number, fluid: number}
+---@return bpgen.Job first_job
+---@return bpgen.Job second_job
+---@return bpgen.Job chain_job
+local function nested_jobs(job, rates)
+  local nested = job.nested --[[@as bpgen.NestedParts]]
+  local first = part_of(job, {root = nested.first, kind = "belts", item_name = nested.first.item, rate_per_minute = rates.first})
+  local second = part_of(job, {root = nested.second, kind = "belts", item_name = nested.second.item, rate_per_minute = rates.second})
+  return first, second, part_of(job.chain_job --[[@as bpgen.Job]], {rate_per_minute = rates.fluid})
+end
+
+-- What the parts of a nested chain can make a minute at most, as the plants would take it: the two items (each side-loads one lane of the belt
+-- b, whatever the lanes of its own belt carry) and the fluid, from the chain that makes it. Nil when a part has steps the planner cannot handle.
+---@param job bpgen.Job
+---@return {first: number, second: number, fluid: number}|nil
+local function nested_most(job)
+  local first_job, second_job, chain_job = nested_jobs(job, {first = 1, second = 1, fluid = 1})
+  local first, second = planner.max_tree_rate(tree_request(first_job)), planner.max_tree_rate(tree_request(second_job))
+  local fluid = item_fluid_chain_max_rate(chain_job)
+  if not (first and second and fluid) then
+    return nil
+  end
+  local lane = planner.lane_items_per_minute(job.belt_speed)
+  return {first = math.min(first, lane), second = math.min(second, lane), fluid = fluid}
+end
+
+-- How many plants a nested chain can feed with what its parts make, at most, and what one of them makes a minute: as many as each part can
+-- feed, and as stand in the length a run of pipes may have. Nil and the reason when a part has a recipe the planner cannot handle.
+---@param job bpgen.Job
+---@return {plants: integer, per_plant: number}|nil
+---@return bpgen.PlanReason|nil reason
+local function most_nested_plants(job)
+  local request = item_fluid_request(job, 1)
+  request.rate_per_minute = 0
+  local one, reason = planner.plan_item_fluid_plants(request)
+  local most = one and nested_most(job)
+  if not (one and most) then
+    return nil, reason or "unsupported-recipe"
+  end
+  local nested = job.nested --[[@as bpgen.NestedParts]]
+  local by_first = math.floor(most.first / item_amount(one, nested.first.item) + constants.EPSILON)
+  local by_second = math.floor(most.second / item_amount(one, nested.second.item) + constants.EPSILON)
+  local by_fluid = math.floor(most.fluid / fluid_amount(one, job.root.recipe.fluids[1].name) + constants.EPSILON)
+  return {plants = math.max(1, math.min(machines_that_fit(job.root), by_first, by_second, by_fluid)), per_plant = one.per_plant}, nil
+end
+
+---@class bpgen.NestedChainPlans
+---@field final bpgen.ItemFluidPlantsPlan  the plants of the recipe
+---@field first bpgen.PlannedStage  the steps that make the first item
+---@field second bpgen.PlannedStage
+---@field chain bpgen.ItemFluidChainPlans  the chain that makes the fluid
+---@field first_job bpgen.Job
+---@field second_job bpgen.Job
+---@field chain_job bpgen.Job
+
+-- The plans of the parts of a nested chain for the rate asked for, or nil, the reason and the most it can make.
+---@param job bpgen.Job
+---@return bpgen.NestedChainPlans|nil
+---@return bpgen.PlanReason|nil reason
+---@return number|nil max_rate  given with "rate-too-high"
+local function plan_nested_chain(job)
+  local limit, reason = most_nested_plants(job)
+  if not limit then
+    return nil, reason
+  end
+  local final, why, max_rate = planner.plan_item_fluid_plants(item_fluid_request(job, limit.plants))
+  if not final then
+    return nil, why, max_rate
+  end
+  local nested = job.nested --[[@as bpgen.NestedParts]]
+  local first_job, second_job, chain_job = nested_jobs(job, {
+    first = item_amount(final, nested.first.item), second = item_amount(final, nested.second.item), fluid = fluid_amount(final, job.root.recipe.fluids[1].name),
+  })
+  local first, second, chain = make_plans(first_job), make_plans(second_job), plan_item_fluid_chain(chain_job)
+  assert(first and second and chain, "generator: the parts of a nested chain cannot make what its plants take, though the most they make said they can")
+  return {final = final, first = first, second = second, chain = chain, first_job = first_job, second_job = second_job, chain_job = chain_job}
+end
+
+-- The most a nested chain makes a minute (see `most_nested_plants`), or nil and why not.
+---@param job bpgen.Job
+---@return number|nil max_rate
+---@return bpgen.PlanReason|nil reason
+local function nested_chain_max_rate(job)
+  local limit, reason = most_nested_plants(job)
+  if not limit then
+    return nil, reason
+  end
+  return planner.max_item_fluid_plants_rate(item_fluid_request(job, limit.plants)), nil
+end
+
 -- What `item_fluid_plants.build` is asked for the plans' plants of the fluid.
 ---@param job bpgen.Job
 ---@param plan bpgen.ItemFluidPlantsPlan
@@ -2207,26 +2400,48 @@ end
 
 -- What a chain takes in a minute, from the top of the blueprint down: what the steps on belts take (the raw items, then the fuel), the water
 -- (of both plants, together, with any other fluid they take that comes in by a pipe) and the crude oil of the machines that make the fluid.
+---@param lists bpgen.RawAmount[][]
+---@return bpgen.RawAmount[]
+local function merged_raws(lists)
+  local raws, place = {}, {}
+  for _, list in ipairs(lists) do
+    for _, raw in ipairs(list) do
+      if place[raw.name] then
+        raws[place[raw.name]].amount = raws[place[raw.name]].amount + raw.amount
+      else
+        raws[#raws + 1], place[raw.name] = {name = raw.name, amount = raw.amount}, #raws + 1
+      end
+    end
+  end
+  return raws
+end
+
 ---@param job bpgen.Job
 ---@param plans bpgen.ItemFluidChainPlans
 ---@param belts_raws bpgen.RawAmount[]
 ---@return bpgen.RawAmount[]
 local function chain_raws(job, plans, belts_raws)
-  local raws, place = {}, {}
-  local function add(name, amount)
-    if place[name] then
-      raws[place[name]].amount = raws[place[name]].amount + amount
-    else
-      raws[#raws + 1], place[name] = {name = name, amount = amount}, #raws + 1
+  return merged_raws({belts_raws, plans.final.fluids, plans.plants.supplied, {{name = job.maker.recipe.fluids[1].name, amount = plans.plants.source_per_minute}}})
+end
+
+-- The machines of several lists by name, in the order they first come, the sum for a machine that two of them share.
+---@param lists bpgen.StageSummary[][]
+---@return bpgen.StageSummary[]
+local function merged_summaries(lists)
+  local order, counts = {}, {}
+  for _, list in ipairs(lists) do
+    for _, summary in ipairs(list) do
+      if not counts[summary.machine] then
+        order[#order + 1], counts[summary.machine] = summary.machine, 0
+      end
+      counts[summary.machine] = counts[summary.machine] + summary.machines
     end
   end
-  for _, list in ipairs({belts_raws, plans.final.fluids, plans.plants.supplied}) do
-    for _, raw in ipairs(list) do
-      add(raw.name, raw.amount)
-    end
+  local merged = {}
+  for _, machine in ipairs(order) do
+    merged[#merged + 1] = {machines = counts[machine], machine = machine}
   end
-  add(job.maker.recipe.fluids[1].name, plans.plants.source_per_minute)
-  return raws
+  return merged
 end
 
 -- The machines of a chain by name, in the order of the steps: those that make the fluid of the first item, those of the first item, the
@@ -2235,21 +2450,23 @@ end
 ---@param plans bpgen.ItemFluidChainPlans
 ---@return bpgen.StageSummary[]
 local function chain_summaries(job, plans)
-  local list = {{machines = plans.plants.makers, machine = job.maker.machine}, {machines = plans.plants.plants, machine = job.parts.plants.machine}}
-  for _, summary in ipairs(plans.belts and stage_summaries(plans.belts) or {}) do
-    list[#list + 1] = summary
-  end
-  list[#list + 1] = {machines = plans.final.plants, machine = job.root.machine}
-  local order, counts = {}, {}
-  for _, summary in ipairs(list) do
-    counts[summary.machine] = counts[summary.machine] or (function() order[#order + 1] = summary.machine return 0 end)()
-    counts[summary.machine] = counts[summary.machine] + summary.machines
-  end
-  local merged = {}
-  for _, machine in ipairs(order) do
-    merged[#merged + 1] = {machines = counts[machine], machine = machine}
-  end
-  return merged
+  return merged_summaries({
+    {{machines = plans.plants.makers, machine = job.maker.machine}, {machines = plans.plants.plants, machine = job.parts.plants.machine}},
+    plans.belts and stage_summaries(plans.belts) or {}, {{machines = plans.final.plants, machine = job.root.machine}},
+  })
+end
+
+-- What `item_fluid_chain.build` and `item_fluid_chain.build_block` are asked for the plans of a chain, with the block of its second item.
+---@param job bpgen.Job
+---@param plans bpgen.ItemFluidChainPlans
+---@param block bpgen.BeltsBlock
+---@param sizes table<string, integer>
+---@return bpgen.ItemFluidChainBuild
+local function chain_request(job, plans, block, sizes)
+  return {
+    plants_part = fluid_plant_build(plans.plants_job, plans.plants), belts_part = block, final_plants = item_fluid_plants_request(job, plans.final),
+    shared_fluid = shares_fluid(job, plans), size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
+  }
 end
 
 -- The fluid asked for, made from two items and a fluid: the blueprint of the plants that make the first item (with the machines that make
@@ -2266,16 +2483,124 @@ local function generate_item_fluid_chain(job)
   end
   local block, belts_root, belts, belts_raws = second_item_block(job, plans)
   local sizes = chain_sizes(job, belts_root)
-  local built = item_fluid_chain.build({
-    plants_part = fluid_plant_build(plans.plants_job, plans.plants), belts_part = block, final_plants = item_fluid_plants_request(job, plans.final),
-    shared_fluid = shares_fluid(job, plans), size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
-  })
+  local built = item_fluid_chain.build(chain_request(job, plans, block, sizes))
   add_inlet_labels(job, built.entities, built.inlets, chain_things(job, plans, belts), sizes)
   add_row_lights(job, built.entities, built.inlets, sizes)
   return {
     entities = built.entities,
     description = messages.description(job.item_name, plans.final.output_per_minute, chain_summaries(job, plans)),
     message = messages.ready(plans.final.output_per_minute, job.root.item, chain_raws(job, plans, belts_raws), belts),
+  }
+end
+
+-- One part of a nested chain, made apart, with what it takes a minute, what its entries bring, the tiles on a side of its machines and what
+-- its machines are.
+---@class bpgen.NestedPart
+---@field block bpgen.BeltsBlock|bpgen.ItemFluidChainBlock
+---@field raws bpgen.RawAmount[]
+---@field things table<string, {name: string, type: "item"|"fluid"}>  by the key of the entry (see `item_fluid_chain.build_nested`)
+---@field sizes table<string, integer>
+---@field summaries bpgen.StageSummary[]
+
+-- The part of a nested chain that makes an item on belts.
+---@param job bpgen.Job  the job of its steps
+---@param planned bpgen.PlannedStage
+---@return bpgen.NestedPart
+local function belts_part(job, planned)
+  local raws = raw_amounts(planned) -- also notes what each step takes, which the layout needs
+  local block, root, belts = belts_block(job, planned)
+  local things = {}
+  for _, item in ipairs(belts or {}) do
+    things[item] = {name = item, type = "item"}
+  end
+  return {block = block, raws = raws, things = things, sizes = machine_sizes_of(root, {}), summaries = stage_summaries(planned)}
+end
+
+-- The part of a nested chain that makes the fluid: a chain, made apart (see `item_fluid_chain.build_block`).
+---@param job bpgen.Job  the job of the chain
+---@param plans bpgen.ItemFluidChainPlans
+---@return bpgen.NestedPart
+local function chain_part(job, plans)
+  local block, belts_root, belts, belts_raws = second_item_block(job, plans)
+  local sizes = chain_sizes(job, belts_root)
+  return {
+    block = item_fluid_chain.build_block(chain_request(job, plans, block, sizes)), raws = chain_raws(job, plans, belts_raws),
+    things = chain_things(job, plans, belts), sizes = sizes, summaries = chain_summaries(job, plans),
+  }
+end
+
+-- What the entries of a nested chain bring, by the key of the entry: the key of its part's entry with the name of the part before it.
+---@param parts table<string, bpgen.NestedPart>
+---@return table<string, {name: string, type: "item"|"fluid"}>
+local function nested_things(parts)
+  local things = {}
+  for name, part in pairs(parts) do
+    for key, thing in pairs(part.things) do
+      things[name .. ":" .. key] = thing
+    end
+  end
+  return things
+end
+
+-- The names of the belts that come in, from the top of the blueprint down, for the design that brings in one belt of each material; nil for
+-- the original design.
+---@param job bpgen.Job
+---@param inlets {key: string, x: integer, y: integer}[]
+---@param things table<string, {name: string, type: "item"|"fluid"}>
+---@return string[]|nil
+local function belts_from_the_top(job, inlets, things)
+  if not job.input_options then
+    return nil
+  end
+  local ordered, names = {table.unpack(inlets)}, {}
+  table.sort(ordered, function(first, second) return first.y < second.y end)
+  for _, inlet in ipairs(ordered) do
+    local thing = things[inlet.key]
+    names[#names + 1] = thing and thing.type == "item" and thing.name or nil
+  end
+  return names
+end
+
+-- The tiles on a side of each machine of a nested chain: those of its parts and of its plants.
+---@param job bpgen.Job
+---@param parts table<string, bpgen.NestedPart>
+---@return table<string, integer>
+local function nested_sizes(job, parts)
+  local sizes = {[job.root.machine] = machine_size_of(job.root)}
+  for _, part in pairs(parts) do
+    for machine, size in pairs(part.sizes) do
+      sizes[machine] = size
+    end
+  end
+  return sizes
+end
+
+-- The item asked for, made in plants from two items made on belts and a fluid that a chain makes (see `item_fluid_chain.build_nested`): the
+-- blueprint of the steps that make each item, of the chain that makes the fluid, and of the plants, and the words for the player.
+---@param job bpgen.Job
+---@return bpgen.Generated|nil
+---@return LocalisedString|nil error_message
+local function generate_nested_chain(job)
+  local plans, reason, max_rate = plan_nested_chain(job)
+  if not plans then
+    ---@cast reason bpgen.PlanReason -- the planner always gives a reason when it gives no plan
+    return nil, messages.plan_problem(reason, max_rate)
+  end
+  local parts = {first = belts_part(plans.first_job, plans.first), second = belts_part(plans.second_job, plans.second), chain = chain_part(plans.chain_job, plans.chain)}
+  local sizes = nested_sizes(job, parts)
+  local built = item_fluid_chain.build_nested({
+    first_part = parts.first.block --[[@as bpgen.BeltsBlock]], second_part = parts.second.block --[[@as bpgen.BeltsBlock]],
+    fluid_chain = parts.chain.block --[[@as bpgen.ItemFluidChainBlock]], final_plants = item_fluid_plants_request(job, plans.final),
+    size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
+  })
+  local things = nested_things(parts)
+  add_inlet_labels(job, built.entities, built.inlets, things, sizes)
+  add_row_lights(job, built.entities, built.inlets, sizes)
+  local made, raws = plans.final.output_per_minute, merged_raws({parts.first.raws, parts.second.raws, parts.chain.raws})
+  local summaries = merged_summaries({parts.first.summaries, parts.second.summaries, parts.chain.summaries, {{machines = plans.final.plants, machine = job.root.machine}}})
+  return {
+    entities = built.entities, description = messages.description(job.item_name, made, summaries),
+    message = messages.ready(made, job.root.item, raws, belts_from_the_top(job, built.inlets, things)),
   }
 end
 
@@ -2315,6 +2640,9 @@ local function max_rate_of(job)
   end
   if job.kind == "item_fluid_chain" then
     return item_fluid_chain_max_rate(job)
+  end
+  if job.kind == "nested_chain" then
+    return nested_chain_max_rate(job)
   end
   return planner.max_tree_rate(tree_request(job))
 end
@@ -2362,6 +2690,9 @@ function generator.generate(recipe_name, rate_per_minute, force)
   end
   if job.kind == "item_fluid_chain" then
     return generate_item_fluid_chain(job)
+  end
+  if job.kind == "nested_chain" then
+    return generate_nested_chain(job)
   end
 
   local planned, refusal = make_plans(job)

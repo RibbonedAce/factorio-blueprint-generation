@@ -182,3 +182,10 @@ What the specs cannot show: each section lists what a feature assumes about the 
 - That the west side of the chemical plants that take an item, drawn by `scripts/input_side.lua` since 5ba, works in game: with the small pole it is the blueprint of before (a differential run of the builders), which the game has not seen either; with the medium pole the poles beside the belt are fewer (one pole powers the inserters of two plants, as for the assembling machine that takes concrete's water), which the validator checks and the game has not shown.
 - That the fluid connection of the assembling machine 2 is in the middle of the side it faces, as the layout assumes. The row is data of `input_side`, so reading it from the machine's fluid boxes is the next step.
 - That poles that only bridge the wire (for a plant wider than 3 x 3, of which the game has none) stand in free tiles that the wire reaches, which only the validator has seen.
+
+## Unverified in the battery iteration (5bb)
+
+- The recipe `battery` (1 iron plate, 1 copper plate and 20 sulfuric acid for 1 battery in 4 s, category `chemistry`): recalled, not read from the game; the specs make it up.
+- That the two plate belts on the belt b of the plants of the battery (the iron plates on the lane of the arc, the copper plates side-loaded onto the other) do not starve a lane when the plates come at the rates the plan counts: the belt tracer follows the lanes in the specs, not in game.
+- That the pipe of the acid, which runs along the first row into the trunk of the plants of the battery between two poles, has the pressure it needs over its length (the planner caps the plants by the length a run of pipes may have, as for the other chains).
+- That the 6 belts of the design with one belt of each material (the ore and the fuel of three columns of furnaces) are the right number for the player: two columns of iron furnaces are drawn, the battery's and the acid's, by the owner's choice.

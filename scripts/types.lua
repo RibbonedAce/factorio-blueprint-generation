@@ -552,6 +552,39 @@
 ---@field arc_row integer  the row of the belt that takes the product of the belts part east to the belt b, under all the blocks
 
 -- What `item_fluid_chain.build` gives.
+---@class bpgen.ItemFluidChainBlock  a chain without its entries and the joining of its poles (see `item_fluid_chain.build_block`)
+---@field entities bpgen.Entity[]
+---@field starts bpgen.EntryStart[]  where what comes in starts, in the frame of the block
+---@field groups bpgen.Entity[][]  the poles of each part, each group wired inside
+---@field places bpgen.ItemFluidChainPlaces
+---@field final bpgen.ItemFluidPlantsBlock
+
+-- What `item_fluid_chain.build_nested` is asked for: the two parts that make the items on belts, the chain that makes the fluid, and the final plants.
+---@class bpgen.NestedChainBuild
+---@field first_part bpgen.BeltsBlock  the block that makes the first item, whose belt is the head of the belt b
+---@field second_part bpgen.BeltsBlock  the block that makes the second item
+---@field fluid_chain bpgen.ItemFluidChainBlock  the chain that makes the fluid the final plants take, made apart (`item_fluid_chain.build_block`)
+---@field final_plants bpgen.ItemFluidPlantsBuild
+---@field size_of fun(entity: bpgen.Entity): integer, integer  how many tiles across and along the entity covers
+
+-- Where the parts of a nested chain stand: the columns of each part, of the belts that go to the final plants, and the row of the arc.
+---@class bpgen.NestedChainPlaces
+---@field first_x integer
+---@field second_x integer
+---@field chain_x integer
+---@field final_x integer
+---@field belts_product integer  the column of the belt of the first part, the head
+---@field plants_product integer  the column of the belt of the second part
+---@field trunk integer  the column of the trunk of the fluid of the final plants
+---@field belt_b integer
+---@field arc_row integer
+
+---@class bpgen.NestedChain
+---@field entities bpgen.Entity[]
+---@field inlets {key: string, x: integer, y: integer}[]  the entries of what comes in, at the west edge; the keys have the part before them
+---@field places bpgen.NestedChainPlaces
+---@field final bpgen.ItemFluidPlantsBlock
+
 ---@class bpgen.ItemFluidChain
 ---@field entities bpgen.Entity[]
 ---@field inlets {key: string, x: integer, y: integer}[]  the entries of what comes in, at the west edge

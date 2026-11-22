@@ -40,6 +40,12 @@
 -- Everything that comes in starts at the top left, as `scripts/corner_entries.lua` has it: the pipes of the plants part (the crude oil of
 -- its refineries and the water beside its plants, with the water of the final plants joined to it when it is the same fluid), and the belts
 -- of the belts part. The poles of the blocks are joined into one network.
+--
+-- `build_nested` makes the blueprint of a recipe whose two items are both made on belts and whose fluid another chain makes (battery: iron
+-- plate and copper plate from furnaces, and the sulfuric acid of the chain above, which `build_block` gives as a block). From west to east:
+-- the part of the first item, the part of the second, the chain, and the final plants. The belts of the two items reach the belt b of the
+-- final plants as above (the first is the head, the second side-loads the arc from the north), and the pipe of the fluid the chain makes
+-- runs along the first row where it can into the trunk of the final plants. The start of each entry has the name of its part before its key.
 
 local item_fluid_plants = require("scripts.item_fluid_plants")
 local corner_entries = require("scripts.corner_entries")
@@ -209,7 +215,7 @@ local function join_poles(entities, request, groups)
   })
 end
 
--- A copy of an entry start moved `dx` columns east.
+-- A copy of an entry start moved `dx` columns east, with the column where its belt turns east into its block (`until_x`), if it has one.
 ---@param start bpgen.EntryStart
 ---@param dx integer
 ---@return bpgen.EntryStart
@@ -219,6 +225,7 @@ local function moved(start, dx)
     copy[key] = value
   end
   copy.x = start.x + dx
+  copy.until_x = start.until_x and start.until_x + dx or nil
   return copy
 end
 
@@ -241,13 +248,12 @@ local function starts_of(request, plants_block, places)
   return starts
 end
 
--- The blueprint, numbered from 1, starting at its top-left tile (0, 0): the blocks, the belts that join them, the entries of what comes in
--- and the poles. `inlets` are the entries, at the west edge, with the keys of the starts they come from: "input" and "supplied" of the
--- plants part (see `fluid_plant.build_block`), which is also the entry of the fluid of the final plants when `shared_fluid` is set and else
--- has the key "final_fluid", and the keys of the belts of raw items of the belts part.
+-- The blocks and the belts that join them, numbered from 1, starting at its top-left tile (0, 0), without the entries of what comes in and
+-- the joining of the poles: for a blueprint made of this one and more (see `item_fluid_chain.build_nested`), which does those. `starts` are
+-- where what comes in starts (see `starts_of`), and `groups` the poles of each block, each group wired inside, in the entities.
 ---@param request bpgen.ItemFluidChainBuild
----@return bpgen.ItemFluidChain
-function item_fluid_chain.build(request)
+---@return bpgen.ItemFluidChainBlock
+function item_fluid_chain.build_block(request)
   local plants_block = fluid_plant.build_block(request.plants_part)
   local final_block, belts_block = item_fluid_plants.build(request.final_plants), request.belts_part
   local places = places_of(request, plants_block, final_block)
@@ -258,11 +264,148 @@ function item_fluid_chain.build(request)
   add_head_belt(entities, request.final_plants.belt, places, belts_block.product.last_row + 1)
   add_second_belt(entities, request.final_plants.belt, places, plants_block.product_belt.last_row + 1)
   add_belt_b_tail(entities, request.final_plants.belt, places, final_block.last_row + 1)
-  local inlets = corner_entries.add(entities, starts_of(request, plants_block, places))
-  join_poles(entities, request, {
-    copies_of(belts_block.poles, belts_added), copies_of(plants_block.groups[1], plants_added), copies_of(plants_block.groups[2], plants_added),
-    copies_of(final_block.groups[1], final_added), copies_of(final_block.groups[2], final_added),
-  })
+  return {
+    entities = entities, starts = starts_of(request, plants_block, places), places = places, final = final_block,
+    groups = {
+      copies_of(belts_block.poles, belts_added), copies_of(plants_block.groups[1], plants_added), copies_of(plants_block.groups[2], plants_added),
+      copies_of(final_block.groups[1], final_added), copies_of(final_block.groups[2], final_added),
+    },
+  }
+end
+
+-- The blueprint, numbered from 1, starting at its top-left tile (0, 0): the blocks, the belts that join them, the entries of what comes in
+-- and the poles. `inlets` are the entries, at the west edge, with the keys of the starts they come from: "input" and "supplied" of the
+-- plants part (see `fluid_plant.build_block`), which is also the entry of the fluid of the final plants when `shared_fluid` is set and else
+-- has the key "final_fluid", and the keys of the belts of raw items of the belts part.
+---@param request bpgen.ItemFluidChainBuild
+---@return bpgen.ItemFluidChain
+function item_fluid_chain.build(request)
+  local block = item_fluid_chain.build_block(request)
+  local inlets = corner_entries.add(block.entities, block.starts)
+  join_poles(block.entities, request, block.groups)
+  return {entities = block.entities, inlets = inlets, places = block.places, final = block.final}
+end
+
+-- A copy of an entry start with the name of its part before its key (and before the key it joins), so that the starts of several parts, each
+-- with an "input" or a belt of coal of its own, are told apart.
+---@param start bpgen.EntryStart
+---@param part string
+---@return bpgen.EntryStart
+local function named(start, part)
+  local copy = moved(start, 0)
+  copy.key = part .. ":" .. start.key
+  copy.joins = start.joins and (part .. ":" .. start.joins) or nil
+  return copy
+end
+
+-- Where the parts of a nested chain stand, from their sizes, west to east: the two parts that make the items on belts, the chain that makes
+-- the fluid, and the final plants. The belts of raw items that run east into a part come down the columns before it, so the part has them
+-- before its own column (`lead_of`). The names of the columns of the head and of the second belt are those of `places_of`.
+---@param request bpgen.NestedChainBuild
+---@param final_block bpgen.ItemFluidPlantsBlock
+---@return bpgen.NestedChainPlaces
+local function nested_places_of(request, final_block)
+  local first, second, chain = request.first_part, request.second_part, request.fluid_chain
+  local first_x = lead_of(first)
+  local first_right, first_bottom = extent_of(first.entities, request.size_of)
+  local second_x = first_x + first_right + 1 + BLOCK_GAP + lead_of(second)
+  local second_right, second_bottom = extent_of(second.entities, request.size_of)
+  local chain_x = second_x + second_right + 1 + BLOCK_GAP
+  local chain_right, chain_bottom = extent_of(chain.entities, request.size_of)
+  local final_x = chain_x + chain_right + 1 + BLOCK_GAP
+  return {
+    first_x = first_x, second_x = second_x, chain_x = chain_x, final_x = final_x,
+    belts_product = first_x + first.product.column, plants_product = second_x + second.product.column,
+    trunk = final_x + final_block.columns.trunk, belt_b = final_x + final_block.columns.belt,
+    arc_row = math.max(first_bottom, second_bottom, chain_bottom, final_block.last_row) + 1,
+  }
+end
+
+-- The rows of the entities with the name in a column, as a set.
+---@param entities bpgen.Entity[]
+---@param name string
+---@param column integer
+---@return table<integer, true>
+local function rows_in_column(entities, name, column)
+  local rows = {}
+  for _, entity in ipairs(entities) do
+    local tile = grid.top_left_tile(entity.position)
+    if entity.name == name and tile.x == column then
+      rows[tile.y] = true
+    end
+  end
+  return rows
+end
+
+-- The pipe that takes the fluid the chain makes from its pipe, beside its plants, to the trunk of the final plants, which stands two columns
+-- east of the column of the poles of those plants: along the first row where both have a pipe and the column of the poles has none of them.
+---@param entities bpgen.Entity[]  all of the blueprint
+---@param request bpgen.NestedChainBuild
+---@param places bpgen.NestedChainPlaces
+local function add_fluid_link(entities, request, places)
+  local chain = request.fluid_chain
+  local pipe, pole = request.final_plants.pipe, request.final_plants.pole
+  local from = places.chain_x + chain.places.final_x + chain.final.columns.output
+  local made, poles_at, trunk = rows_in_column(entities, pipe, from), rows_in_column(entities, pole, from + 1), rows_in_column(entities, pipe, places.trunk)
+  local row
+  for candidate = 0, chain.final.output_exit_row do
+    if made[candidate] and trunk[candidate] and not poles_at[candidate] and not row then
+      row = candidate
+    end
+  end
+  assert(row, "item_fluid_chain: no row where the pipe of the fluid the chain makes reaches the trunk of the final plants")
+  for column = from + 1, places.trunk - 1 do
+    entity_list.append(entities, {name = pipe, position = grid.position(column, row)})
+  end
+end
+
+-- Where what comes in starts, for the parts of a nested chain: the belts of raw items of the two parts on belts and the starts of the chain
+-- (moved to where it stands), each with the name of its part before its key ("first", "second" and "chain").
+---@param request bpgen.NestedChainBuild
+---@param places bpgen.NestedChainPlaces
+---@return bpgen.EntryStart[]
+local function nested_starts_of(request, places)
+  local starts, belt = {}, request.final_plants.belt
+  for _, start in ipairs(belts_starts(request.first_part, places.first_x, belt)) do
+    starts[#starts + 1] = named(start, "first")
+  end
+  for _, start in ipairs(belts_starts(request.second_part, places.second_x, belt)) do
+    starts[#starts + 1] = named(start, "second")
+  end
+  for _, start in ipairs(request.fluid_chain.starts) do
+    starts[#starts + 1] = named(moved(start, places.chain_x), "chain")
+  end
+  return starts
+end
+
+-- The blueprint of a recipe whose items are both made on belts and whose fluid another chain makes (battery: iron plate and copper plate from
+-- furnaces, and the sulfuric acid of the chain of `item_fluid_chain.build_block`), numbered from 1, starting at its top-left tile (0, 0). The
+-- parts stand from west to east, all starting at the top row: the part of the first item (the head of the belt b), the part of the second, the
+-- chain that makes the fluid, and the final plants. The belts of the two items reach the belt b in the way of `item_fluid_chain.build`: the
+-- head goes through the lane gadget and along the arc, which the second side-loads from above. The pipe of the fluid that the chain makes
+-- runs straight into the trunk of the final plants. `inlets` are the entries, with the key of the start of each and the name of its part
+-- before it: "first:", "second:" and "chain:".
+---@param request bpgen.NestedChainBuild
+---@return bpgen.NestedChain
+function item_fluid_chain.build_nested(request)
+  local final_block = item_fluid_plants.build(request.final_plants)
+  local places = nested_places_of(request, final_block)
+  local entities = {}
+  local first_added = entity_list.merge(entities, request.first_part.entities, places.first_x, 0)
+  local second_added = entity_list.merge(entities, request.second_part.entities, places.second_x, 0)
+  local chain_added = entity_list.merge(entities, request.fluid_chain.entities, places.chain_x, 0)
+  local final_added = entity_list.merge(entities, final_block.entities, places.final_x, 0)
+  add_head_belt(entities, request.final_plants.belt, places, request.first_part.product.last_row + 1)
+  add_second_belt(entities, request.final_plants.belt, places, request.second_part.product.last_row + 1)
+  add_belt_b_tail(entities, request.final_plants.belt, places, final_block.last_row + 1)
+  add_fluid_link(entities, request, places)
+  local inlets = corner_entries.add(entities, nested_starts_of(request, places))
+  local groups = {copies_of(request.first_part.poles, first_added), copies_of(request.second_part.poles, second_added)}
+  for _, group in ipairs(request.fluid_chain.groups) do
+    groups[#groups + 1] = copies_of(group, chain_added)
+  end
+  groups[#groups + 1], groups[#groups + 2] = copies_of(final_block.groups[1], final_added), copies_of(final_block.groups[2], final_added)
+  join_poles(entities, request, groups)
   return {entities = entities, inlets = inlets, places = places, final = final_block}
 end
 
