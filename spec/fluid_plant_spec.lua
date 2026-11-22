@@ -413,68 +413,45 @@ describe("fluid_plant", function()
       end
 
       describe("for a plant of 5 x 5, whose connections are at the rows the test says", function()
-        -- one plant, with a box that takes a fluid at each of the rows (as it faces west): a connection above it at the column 4 - row
-        local function five(rows)
-          local asked = with_item(2, 1)
+        -- `count` plants (one, unless the test says), with a box that takes a fluid at each of the rows (as they face west): a connection above
+        -- them at the column 4 - row. The wire is long enough for the poles of two plants of 5 x 5 beside the inserters that take the item out.
+        local function five(rows, count)
+          local asked = with_item(2, count or 1)
           asked.plants = {
-            machine = "plant-5", recipe = "r", size = 5, count = 1, rows = {inputs = -1, outputs = 5}, boxes = {},
+            machine = "plant-5", recipe = "r", size = 5, count = count or 1, rows = {inputs = -1, outputs = 5}, boxes = {},
           }
           for _, row in ipairs(rows) do
             asked.plants.boxes[#asked.plants.boxes + 1] = {production_type = "input", tiles = {{x = 4 - row, y = -1}}}
           end
+          asked.makers.pole_wire_distance = 10
           return asked
         end
 
-        local function inserter_rows(rows)
-          return in_column(fluid_plant.build(five(rows)), NAMES.inserter, 10)
+        local function inserter_rows(rows, count)
+          return in_column(fluid_plant.build(five(rows, count)), NAMES.inserter, 10)
         end
 
-        it("puts the inserter at the middle row when it has no connection", function()
-          assert.are.same({{2, west}}, inserter_rows({0, 4}))
+        it("puts the inserter in the first row that has no connection: the second row when the top one has", function()
+          assert.are.same({{1, west}}, inserter_rows({0, 4}))
         end)
 
-        it("puts it at the row above the middle when the middle row has a connection", function()
-          assert.are.same({{1, west}}, inserter_rows({2}))
-        end)
-
-        it("puts it at the row under the middle when the rows at the middle and above it have connections", function()
-          assert.are.same({{3, west}}, inserter_rows({1, 2}))
-        end)
-
-        it("puts it at the top row when the three rows in the middle have connections", function()
+        it("puts it in the top row when that has none, whatever connections are further down", function()
           assert.are.same({{0, west}}, inserter_rows({1, 2, 3}))
+        end)
+
+        it("puts it in the bottom row when every row above it has a connection", function()
+          assert.are.same({{4, west}}, inserter_rows({0, 1, 2, 3}))
+        end)
+
+        it("puts the inserter of the second plant in its last free row, as the assembling machines have it", function()
+          -- the second plant starts at the row 5: its last free row is the row 9
+          assert.are.same({{0, west}, {9, west}}, inserter_rows({2}, 2))
         end)
 
         it("takes two boxes that have a connection at the same row for one connection: one pair of underground pipes", function()
           local entities = fluid_plant.build(five({2, 2}))
 
           assert.are.same({{2, east}}, in_column(entities, NAMES.pipe_to_ground, 10))
-        end)
-      end)
-
-      describe("for plants wider than the machines that make the fluid, which set the least the wire has to reach", function()
-        -- plants of 7 x 7 with a connection at their top and bottom rows (the middle row, the fourth, is free for the inserter), beside machines of
-        -- 5 x 5, which need a wire of 5: so the wire of 6.5 or 7 that a test sets is the one the poles of the inserters that bring the item need
-        local function wide(count, wire)
-          local asked = with_item(2, count)
-          asked.plants = {
-            machine = "plant-7", recipe = "r", size = 7, count = count, rows = {inputs = -1, outputs = 7},
-            boxes = {{production_type = "input", tiles = {{x = 6, y = -1}}}, {production_type = "input", tiles = {{x = 0, y = -1}}}},
-          }
-          asked.makers.pole_wire_distance = wire
-          return asked
-        end
-
-        it("refuses a wire shorter than a plant is wide, which does not reach from the pole of one inserter of the item to the next", function()
-          local build = function() fluid_plant.build(wide(2, 6.5)) end
-
-          assert.has_error(build, "fluid_plant: a wire has to reach from the pole of one plant to the next")
-        end)
-
-        it("takes a wire exactly as long as a plant is wide", function()
-          local build = function() fluid_plant.build(wide(1, 7)) end
-
-          assert.has_no.errors(build)
         end)
       end)
 
@@ -496,7 +473,7 @@ describe("fluid_plant", function()
 
         local build = function() fluid_plant.build(asked) end
 
-        assert.has_error(build, "fluid_plant: every row of a plant has a pipe connection, so no inserter can take the item in")
+        assert.has_error(build, "input_side: a machine has fewer rows without a pipe connection than input inserters")
       end)
     end)
 

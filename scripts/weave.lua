@@ -495,25 +495,59 @@ local function unreached_message(row, reach, longest_wire)
   return "weave: no free tile beside the belts reaches the inserter in row " .. row .. near .. ": the pole reaches " .. reach .. " rows"
 end
 
+-- The last of the free tiles after `from` and no further down than `upto`, or nil.
+---@param free_taps integer[]  ascending
+---@param from number
+---@param upto number
+---@return integer|nil
+local function bridge_tile(free_taps, from, upto)
+  local best
+  for _, free in ipairs(free_taps) do
+    if free > from and free <= upto then
+      best = free
+    end
+  end
+  return best
+end
+
+-- The row of the pole after the one in the row `before` (nil for the first), for the inserter in `row`: the last free tile that reaches
+-- it within the wire of that pole. With `bridges`, when there is none, the last free tile within the wire that is not past the inserter
+-- (none that reaches it is within the wire, so those are further up): a pole that only bridges the wire, and leaves the inserter to the pole
+-- after it. A tile past the inserter is not one: it would count as powering an inserter it does not reach.
+---@param plan {free_taps: integer[]}
+---@param row integer
+---@param reach integer
+---@param before integer|nil
+---@param longest_wire number|nil
+---@param bridges boolean|nil
+---@return integer
+local function next_pole(plan, row, reach, before, longest_wire, bridges)
+  local lowest = (before and longest_wire) and before + longest_wire or math.huge
+  local best = last_free_tile(plan.free_taps, row, reach, lowest)
+  if not best and bridges and before then
+    best = bridge_tile(plan.free_taps, before, math.min(lowest, row))
+  end
+  assert(best, unreached_message(row, reach, longest_wire))
+  return best
+end
+
 -- The rows of the poles that power every inserter, in the free tiles of the column of the poles: from the first row that no
 -- pole powers, the last free tile that reaches it, so as few as will do. A pole powers the rows `reach` away from it either way
 -- (the inserters are at most two tiles from that column, which both poles reach). When the inserters stand far apart, the
 -- last free tile may be further from the pole before it than a wire reaches, so `longest_wire` keeps it nearer (the poles stand
--- in one column: the rows between two are the tiles).
+-- in one column: the rows between two are the tiles). When no tile that reaches an inserter is within the wire of the pole before it,
+-- the plan is refused, unless `bridges` lets poles stand between that only bridge the wire (see `next_pole`).
 ---@param plan {inserters: {row: integer}[], free_taps: integer[]}  a `bpgen.WeavePlan`, or any plan that says these two
 ---@param reach integer  how many rows each way a pole powers (see `layout.pole_reach`)
 ---@param longest_wire? number  the longest wire a pole holds, in tiles; no limit when nil (see `bpgen.SharedNames.pole_wire_distance`)
+---@param bridges? boolean
 ---@return integer[] rows  ascending
-function weave.pole_rows(plan, reach, longest_wire)
+function weave.pole_rows(plan, reach, longest_wire, bridges)
   local rows, powered_to = {}, -math.huge
   for _, inserter in ipairs(plan.inserters) do
-    if inserter.row > powered_to then
-      local before = rows[#rows]
-      local lowest = (before and longest_wire) and before + longest_wire or math.huge
-      local best = last_free_tile(plan.free_taps, inserter.row, reach, lowest)
-      assert(best, unreached_message(inserter.row, reach, longest_wire))
-      rows[#rows + 1] = best
-      powered_to = best + reach
+    while inserter.row > powered_to do
+      rows[#rows + 1] = next_pole(plan, inserter.row, reach, rows[#rows], longest_wire, bridges)
+      powered_to = rows[#rows] + reach
     end
   end
   return rows

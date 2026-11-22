@@ -89,7 +89,8 @@
 -- pipe that opens east in the middle row; the input belt; the tunnel column, with the end that opens west and the poles that power
 -- the inserters, two tiles away; and the trunk. With two woven belts the trunk of belt b, beside the inner column, is between the
 -- belt and the tunnel column and the poles stand in the inner column (see scripts/weave.lua). The pictures are in
--- `spec/layout_spec.lua`.
+-- `spec/layout_spec.lua`. With one belt, `scripts/input_side.lua` draws the pipes, the inserters and the poles of that side, the code
+-- that draws the west side of the chemical plants that take an item too (the connection is data there: the middle row here).
 --
 -- A column of furnaces that has to make more than one lane of plates is built wide (the planner decides, see
 -- `bpgen.StageRequest.wide`): the machines go in twos with one output inserter each, the belt winds, and the input side is
@@ -179,6 +180,7 @@
 local constants = require("scripts.constants")
 local entity_list = require("scripts.entity_list")
 local grid = require("scripts.grid")
+local input_side = require("scripts.input_side")
 local output_side = require("scripts.output_side")
 local weave = require("scripts.weave")
 
@@ -510,18 +512,28 @@ function Builder:pole_rows_of(plan)
   return weave.pole_rows(plan, self.pole_reach, self.names.pole_wire_distance)
 end
 
+-- What `input_side` is asked for a column whose machines take a fluid (scripts/input_side.lua), the same code that draws the west side
+-- of the chemical plants that take an item. The fluid connection of an assembling machine is in the middle of the side it faces, so the
+-- machines face west and the pipe comes in at the middle row: the row 1 of a machine of 3 x 3, the only size drawn (`plan_fluid`).
+---@return bpgen.InputSideRequest
+function Builder:input_side_request()
+  local geometry, names = self.geometry, self.names
+  return {
+    column = self:machine_column(), connections = {1}, inserters = geometry.input_count,
+    inserter = self:inserter_name(geometry.input_fast), pipe_to_ground = names.pipe_to_ground,
+    pole = names.pole, pole_reach = self.pole_reach, pole_wire_distance = names.pole_wire_distance,
+    inserter_column = geometry.input_inserter_column, tunnel_column = geometry.pipe_tunnel_column,
+  }
+end
+
 -- The rows of the input inserters of machine `index` when the machines take a fluid: the top and the bottom row, since the
 -- middle row is the fluid connection. A machine with one inserter has it in its top row when it is the first of a pair and in
--- its bottom row when it is the second (see `Builder:inserter_top`).
+-- its bottom row when it is the second (see `input_side.inserter_rows`).
 ---@param index integer
 ---@return integer[]
 function Builder:fluid_input_rows(index)
-  local top = self:machine_top(index)
-  local bottom = top + self.geometry.size - 1
-  if self.geometry.input_count == 2 then
-    return {top, bottom}
-  end
-  return {index % 2 == 1 and bottom or top}
+  local request = self:input_side_request()
+  return input_side.inserter_rows(request.column, request.connections, index, request.inserters)
 end
 
 -- Works out where the poles of a column with a fluid and one input belt stand: in the free tiles of the tunnel column, west of
@@ -532,17 +544,7 @@ function Builder:plan_fluid()
   assert(self.draws_input_belt, "layout: the pipes of a fluid come from outside the column, not from the column before it")
   assert(geometry.long_count == 0, "layout: machines that take a fluid have no long-handed inserters")
   assert(not (geometry.powered_from_output or geometry.second_belt or geometry.fuel_weave), "layout: a fluid does not go with another weave")
-  assert(self.pole_reach >= 2, "layout: poles that reach one tile do not reach the input inserters from the tunnel column")
-  local plan = {inserters = {}, free_taps = {}}
-  for index = 0, self.machine_count - 1 do
-    local top = self:machine_top(index)
-    for _, row in ipairs(self:fluid_input_rows(index)) do
-      plan.inserters[#plan.inserters + 1] = {row = row}
-    end
-    plan.free_taps[#plan.free_taps + 1] = top
-    plan.free_taps[#plan.free_taps + 1] = top + geometry.size - 1
-  end
-  self.fluid_pole_rows = self:pole_rows_of(plan)
+  self.fluid_pole_rows = input_side.pole_rows(self:input_side_request())
 end
 
 -- Stores an entity and numbers it, because blueprints identify entities by number.
@@ -1016,9 +1018,7 @@ function Builder:add_input_inserters(index)
     return
   end
   if geometry.fluid then
-    for _, row in ipairs(self:fluid_input_rows(index)) do
-      self:add_inserters(self:inserter_name(geometry.input_fast), geometry.input_inserter_column, row, 1)
-    end
+    input_side.add_machine_inserters(self.entities, self:input_side_request(), index)
     return
   end
   self:add_inserters(self:inserter_name(geometry.input_fast), geometry.input_inserter_column, self:plain_input_top(index), geometry.input_count)
@@ -1110,13 +1110,10 @@ end
 function Builder:add_fluid_pipes()
   local geometry, names = self.geometry, self.names
   local pipe = assert(names.pipe, "layout: the names give no pipe for the fluid")
-  local underground = assert(names.pipe_to_ground, "layout: the names give no underground pipe for the fluid")
-  for index = 0, self.machine_count - 1 do
-    local row = self:machine_top(index) + 1
-    self:add({name = underground, position = grid.position(geometry.input_inserter_column, row), direction = east})
-    self:add({name = underground, position = grid.position(geometry.pipe_tunnel_column, row), direction = west})
-  end
-  for row = geometry.first_row, self:machine_top(self.machine_count - 1) + 1 do
+  assert(names.pipe_to_ground, "layout: the names give no underground pipe for the fluid")
+  local request = self:input_side_request()
+  input_side.add_tunnels(self.entities, request)
+  for row = geometry.first_row, self:machine_top(self.machine_count - 1) + request.connections[#request.connections] do
     self:add({name = pipe, position = grid.position(geometry.pipe_tunnel_column - 1, row), direction = north})
   end
 end

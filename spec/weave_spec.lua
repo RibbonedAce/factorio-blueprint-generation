@@ -343,6 +343,60 @@ describe("weave", function()
 
       assert.has_error(build, "weave: no free tile beside the belts reaches the inserter in row 20 within 9 tiles of the pole before it: the pole reaches 3 rows")
     end)
+
+    describe("with poles that only bridge the wire", function()
+      -- Inserters in the rows 0 and 9, and the tiles that reach the second (the rows 7 to 11 for poles that reach two) are further than a wire of
+      -- 7.5 from the pole in the row 0: the free tiles 8 and 9 are, and the tile 7 is a pipe's.
+      local function far_plan()
+        return {inserters = {{row = 0}, {row = 9}}, free_taps = {0, 3, 5, 8, 9}}
+      end
+
+      it("puts a pole in the last free tile the wire reaches, before the tiles that reach the inserter, and the next pole there", function()
+        local rows = weave.pole_rows(far_plan(), 2, 7.5, true)
+
+        assert.are.same({0, 5, 9}, rows)
+      end)
+
+      it("refuses the same plan when it is not asked to bridge", function()
+        local build = function() weave.pole_rows(far_plan(), 2, 7.5) end
+
+        assert.has_error(build, "weave: no free tile beside the belts reaches the inserter in row 9 within 7.5 tiles of the pole before it: the pole reaches 2 rows")
+      end)
+
+      it("bridges more than once when the inserters are more than two wires apart", function()
+        local plan = {inserters = {{row = 0}, {row = 30}}, free_taps = {0, 5, 10, 15, 20, 25, 29, 30}}
+
+        local rows = weave.pole_rows(plan, 2, 7, true)
+
+        assert.are.same({0, 5, 10, 15, 20, 25, 30}, rows)
+      end)
+
+      it("does not bridge to a free tile past the inserter, which does not reach it", function()
+        -- the tiles that reach the inserter in the row 10 (8 to 12) are none; the tile in the row 14 is further down than it reaches
+        local plan = {inserters = {{row = 0}, {row = 10}}, free_taps = {0, 5, 14}}
+
+        local build = function() weave.pole_rows(plan, 2, 20, true) end
+
+        assert.has_error(build, "weave: no free tile beside the belts reaches the inserter in row 10 within 20 tiles of the pole before it: the pole reaches 2 rows")
+      end)
+
+      it("does not bridge when the poles are not limited by a wire, or when no pole came before", function()
+        assert.are.same({3, 14}, weave.pole_rows(sparse_plan(), 3, nil, true))
+        assert.are.same({0}, weave.pole_rows({inserters = {{row = 0}}, free_taps = {0}}, 2, 7, true))
+      end)
+
+      it("takes the same poles as without bridging when no inserter needs one", function()
+        assert.are.same(weave.pole_rows(sparse_plan(), 3, 9), weave.pole_rows(sparse_plan(), 3, 9, true))
+      end)
+
+      it("still refuses an inserter that no free tile reaches, whatever bridges there are", function()
+        local plan = {inserters = {{row = 0}, {row = 20}}, free_taps = {0, 3}}
+
+        local build = function() weave.pole_rows(plan, 3, 9, true) end
+
+        assert.has_error(build, "weave: no free tile beside the belts reaches the inserter in row 20 within 9 tiles of the pole before it: the pole reaches 3 rows")
+      end)
+    end)
   end)
 
   describe("machines with a pipe in the middle row of their input side, two belts", function()

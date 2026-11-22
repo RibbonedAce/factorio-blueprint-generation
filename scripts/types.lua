@@ -384,6 +384,22 @@
 ---@field pole_wire_distance number  how far a wire between two poles reaches
 ---@field inserter_column integer  the tile column of the inserters; the belt is in the next one, or in the next two when it winds
 
+-- The input side of a column of machines that take a fluid (scripts/input_side.lua) ----
+
+-- What `input_side` is asked for: a column of machines that face west and take a fluid by the pipe connections of the side they face, and
+-- items from a belt beside the inserters.
+---@class bpgen.InputSideRequest
+---@field column bpgen.MachineColumn
+---@field connections integer[]  the rows from the top of a machine where the pipe connections of what it takes are, ascending: the same for every machine
+---@field inserters integer  how many input inserters each machine has: at most as many as it has rows without a connection
+---@field inserter string  prototype name
+---@field pipe_to_ground string  prototype name of the underground pipe
+---@field pole string  prototype name
+---@field pole_reach integer  how many tiles each way a pole powers (see `layout.pole_reach`)
+---@field pole_wire_distance? number  how far a wire between two poles reaches; no limit when nil
+---@field inserter_column integer  the tile column beside the machines: the inserters, and the ends of the underground pipes that open east
+---@field tunnel_column integer  the tile column on the other side of the belt (or belts): the ends that open west, and the poles
+
 -- A row of machines that make a fluid from a fluid (scripts/fluid_row.lua) --------------
 
 -- One fluid box of a machine, as plain data: where its pipes connect, for the machine facing north.

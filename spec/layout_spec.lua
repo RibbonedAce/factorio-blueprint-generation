@@ -2671,7 +2671,7 @@ describe("layout", function()
         local stage = {machine_count = 2, machine = MACHINE, shape = shape_of(1), suppliers = {}}
 
         assert.has_error(function() layout.chain_block({stage}, builders.merged(names, {pole_supply_distance = 1.5}), {product_belt = true}) end,
-          "layout: poles that reach one tile do not reach the input inserters from the tunnel column")
+          "input_side: a pole in the tunnel column has to reach the inserters, 2 columns away")
       end)
 
       it("refuses a machine that is not 3 x 3, which has no fluid connection in the middle row of a 2-row side", function()

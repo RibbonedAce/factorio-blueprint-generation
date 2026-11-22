@@ -12,8 +12,9 @@
 -- underground pipes that open east to the plants at each connection of what they take), the plants, the pipe that takes the fluid they make
 -- away (o, with a pipe at every row, past every connection of what they give) and a column of poles for the plants (P). As in the columns of
 -- the other recipes that take a fluid and items (see scripts/layout.lua), the fluid goes under the belt from the trunk to every connection of
--- every plant, and an inserter at the row of each plant that has no connection takes the items from the belt, both of them, which share it,
--- one on each lane. Drawn for two plants of 3 x 3 with the connections at their top and bottom rows (u: an end of an underground pipe, =
+-- every plant, and an inserter in a row of each plant that has no connection takes the items from the belt, both of them, which share it,
+-- one on each lane: scripts/input_side.lua draws all of that, for those recipes too. Drawn for two plants of 3 x 3 with the connections at
+-- their top and bottom rows (u: an end of an underground pipe, =
 -- a pipe, ^ a belt, < an inserter, + a pole), from the north, row 0 being the first row of the first plant:
 --
 --   x:   0 1 2 3  4 5 6  7 8
@@ -38,6 +39,7 @@
 local entity_list = require("scripts.entity_list")
 local fluid_plant = require("scripts.fluid_plant")
 local grid = require("scripts.grid")
+local input_side = require("scripts.input_side")
 local layout = require("scripts.layout")
 local output_side = require("scripts.output_side")
 
@@ -97,7 +99,7 @@ function item_fluid_plants.fits(plants)
     if not plants.item_output then
       connection_rows(plants, "output", facing, plants.size)
     end
-    fluid_plant.inserter_row(plants, inputs)
+    assert(#input_side.free_rows(plants.size, inputs) >= 1, "item_fluid_plants: every row of a plant has a pipe connection, so no inserter can take the items in")
   end))
 end
 
@@ -113,23 +115,6 @@ local function add_pipes(entities, pipe, column, first, last)
   end
 end
 
--- The two ends of an underground pipe at each connection of what the plants take, under the belt: the end beside the plant opens east to
--- it and the end in the column of the tunnels opens west, where the trunk of pipes is.
----@param entities bpgen.Entity[]
----@param request bpgen.ItemFluidPlantsBuild
----@param columns table
----@param rows integer[]  the connection rows of a plant
-local function add_tunnels(entities, request, columns, rows)
-  local plants = request.plants
-  for index = 0, plants.count - 1 do
-    for _, row in ipairs(rows) do
-      local at = index * plants.size + row
-      entity_list.append(entities, {name = request.pipe_to_ground, position = grid.position(columns.inserter, at), direction = east})
-      entity_list.append(entities, {name = request.pipe_to_ground, position = grid.position(columns.tunnel, at), direction = west})
-    end
-  end
-end
-
 -- The belt b beside the plants, from the first row to the last row of the last plant, running north: the belts of the two items reach its
 -- south end (see scripts/item_fluid_chain.lua) and the inserters of the plants take from it as it passes.
 ---@param entities bpgen.Entity[]
@@ -142,24 +127,21 @@ local function add_belt(entities, request, columns, last_row)
   end
 end
 
--- An inserter of each plant at its row without a connection, which takes from the belt b into the plant (an inserter faces the side it
--- picks up from: west), and a pole for it in the column of the tunnels, wired to the one before it. Gives the poles.
----@param entities bpgen.Entity[]
+-- What `input_side.add` is asked for the plants: the underground pipes that take what they take under the belt b, from the tunnels to each
+-- connection, and the inserter of each plant at its row without a connection, which takes from the belt b into the plant, with its pole in
+-- the column of the tunnels. The same code as for the assembling machine that takes a fluid (scripts/input_side.lua).
 ---@param request bpgen.ItemFluidPlantsBuild
 ---@param columns table
----@param row integer  the row of a plant that has no connection
----@return bpgen.Entity[]
-local function add_inserters(entities, request, columns, row)
-  local plants, added = request.plants, {}
-  for index = 0, plants.count - 1 do
-    local at = index * plants.size + row
-    entity_list.append(entities, {name = request.inserter, position = grid.position(columns.inserter, at), direction = west})
-    added[#added + 1] = entity_list.append(entities, {name = request.pole, position = grid.position(columns.tunnel, at)})
-  end
-  for index = 2, #added do
-    layout.connect_poles(added[index - 1], added[index])
-  end
-  return added
+---@param inputs integer[]  the connection rows of a plant
+---@return bpgen.InputSideRequest
+local function input_request(request, columns, inputs)
+  local plants = request.plants
+  return {
+    column = {first_row = 0, spacing = plants.size, size = plants.size, count = plants.count},
+    connections = inputs, inserters = 1, inserter = request.inserter, pipe_to_ground = request.pipe_to_ground,
+    pole = request.pole, pole_reach = layout.pole_reach(request.pole_supply_distance), pole_wire_distance = request.pole_wire_distance,
+    inserter_column = columns.inserter, tunnel_column = columns.tunnel,
+  }
 end
 
 -- A pole for each plant, east of the pipe that takes the made fluid away, in the middle row of the plant, wired to the one before it. Gives
@@ -251,10 +233,9 @@ function item_fluid_plants.build(request)
   local last_plant = (plants.count - 1) * plants.size
   local entities = {}
   add_plants(entities, plants, columns, facing)
-  add_tunnels(entities, request, columns, inputs)
   add_pipes(entities, request.pipe, columns.trunk, 0, last_plant + inputs[#inputs])
   add_belt(entities, request, columns, last_plant + plants.size - 1)
-  local inserter_poles = add_inserters(entities, request, columns, fluid_plant.inserter_row(plants, inputs))
+  local inserter_poles = input_side.add(entities, input_request(request, columns, inputs))
   local plant_poles, exit_row = add_output_side(entities, request, columns, facing)
   return {
     entities = entities, columns = columns, groups = {plant_poles, inserter_poles}, last_row = last_plant + plants.size - 1, output_exit_row = exit_row,

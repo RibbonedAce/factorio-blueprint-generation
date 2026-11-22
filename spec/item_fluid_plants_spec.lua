@@ -382,7 +382,8 @@ describe("item_fluid_plants", function()
 
     describe("for plants of 5 x 5, whose connections of what they take are at their second and fourth rows and of what they give at their second and fourth", function()
       -- as they face north: what they take above them at the columns 1 and 3, what they give under them at the columns 1 and 3. Facing west
-      -- the connections are at the rows 1 and 3, so the middle row, the third, has none, and the inserter stands there
+      -- the connections are at the rows 1 and 3, so the rows 0, 2 and 4 have none: the inserter of the first plant stands in the first of them,
+      -- that of the second in the last (the second plant starts at the row 5, so its last row is the row 9)
       local function five(count)
         local asked = request(count)
         asked.plants = {
@@ -396,11 +397,11 @@ describe("item_fluid_plants", function()
         return asked
       end
 
-      it("puts the inserter and the pole of the inserter in the middle row of each plant, which has no connection", function()
+      it("puts the inserter of the first plant in its first free row and that of the second in its last, with the poles in the free tiles that reach them", function()
         local block = item_fluid_plants.build(five(2))
 
-        assert.are.same({{2, west}, {7, west}}, in_column(block.entities, NAMES.inserter, 3))
-        assert.are.same({2, 7}, rows_in(block.entities, NAMES.pole, 1))
+        assert.are.same({{0, west}, {9, west}}, in_column(block.entities, NAMES.inserter, 3))
+        assert.are.same({2, 9}, rows_in(block.entities, NAMES.pole, 1))
       end)
 
       it("puts the pole of each plant in its middle row, east of the pipe of the acid", function()
@@ -490,7 +491,7 @@ describe("item_fluid_plants", function()
 
       local build = function() item_fluid_plants.build(full) end
 
-      assert.has_error(build, "fluid_plant: every row of a plant has a pipe connection, so no inserter can take the item in")
+      assert.has_error(build, "input_side: a machine has fewer rows without a pipe connection than input inserters")
     end)
   end)
 end)
