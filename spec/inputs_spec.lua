@@ -370,4 +370,16 @@ describe("inputs", function()
       assert.has_no.errors(function() lay(leaves, 3) end)
     end)
   end)
+
+  describe("belts_down", function()
+    it("gives the belts of a column that run south, from the first row to the last", function()
+      local belts = inputs.belts_down(NAMES, 2, 1, 3)
+
+      assert.are.same({".v", ".v", ".v"}, picture.draw(belts, {}, 1, 1, 2, 3))
+    end)
+
+    it("gives no belt when the last row is above the first", function()
+      assert.are.same({}, inputs.belts_down(NAMES, 2, 3, 2))
+    end)
+  end)
 end)

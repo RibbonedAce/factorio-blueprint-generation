@@ -78,22 +78,7 @@ end
 
 -- The block with its belt of raw items coming in from the north at its top.
 local function iron_from_the_north(rows)
-  return furnace_block(0, {{key = "iron", x = 0, y = 0, direction = south}}, rows)
-end
-
--- The block with two belts of raw items that come in from the west and run east into it: the block is moved 3 columns east, and a belt runs
--- east along the rows 0 and 2 from the west edge of its frame to the belt of raw items, which stands in the column 3.
-local function iron_from_the_west()
-  local block = furnace_block(3, {{key = "ore", x = 0, y = 0, direction = east}, {key = "coal", x = 0, y = 2, direction = east}})
-  for _, row in ipairs({0, 2}) do
-    for column = 0, 2 do
-      block.entities[#block.entities + 1] = {
-        name = NAMES.belt, position = grid.position(column, row), direction = east, entity_number = #block.entities + 1,
-      }
-    end
-  end
-  block.product = {column = 8, last_row = 3}
-  return block
+  return furnace_block(0, {{key = "iron", x = 0, y = 0}}, rows)
 end
 
 local SIZES = {["oil-refinery"] = 5, ["sulfur-plant"] = 3, ["acid-plant"] = 3, ["battery-plant"] = 3, ["stone-furnace"] = 2}
@@ -302,40 +287,18 @@ describe("item_fluid_chain", function()
 
     it("takes a belt that runs south at the first tile of the block, and is not in its first column, down the column it is in", function()
       local block = iron_from_the_north()
-      block.raw = {{key = "iron", x = 2, y = 0, direction = south}}
+      block.raw = {{key = "iron", x = 2, y = 0}}
 
       local chain = item_fluid_chain.build(request(block))
 
       assert.are.same({"transport-belt south", "transport-belt east", {key = "iron", x = 0, y = -1}}, {at(chain.entities, 2, -1), at(chain.entities, 1, -1), chain.inlets[1]})
     end)
 
-    it("refuses a belt that runs east into the block but does not start at its west edge", function()
-      local block = iron_from_the_west()
-      block.raw[1].x = 1
-
-      local build = function() item_fluid_chain.build(request(block)) end
-
-      assert.has_error(build, "item_fluid_chain: a belt of raw items comes in at the west edge of the block of the belts part, running east, or at its top, running south")
-    end)
-
-    it("takes belts that run east into the block down the columns before it, and east along the rows of the block, the upper one nearest the block", function()
-      local chain = item_fluid_chain.build(request(iron_from_the_west()))
-
-      -- the block is moved to the column 2, so that the two belts come down the columns 1 and 0: the ore, the upper, down the column 1
-      assert.are.equal(2, chain.places.belts_x)
-      assert.are.same({
-        "transport-belt south", "transport-belt south", "transport-belt east", "transport-belt east", "transport-belt east", "transport-belt east",
-      }, {at(chain.entities, 1, -1), at(chain.entities, 0, 1), at(chain.entities, 1, 0), at(chain.entities, 0, 2), at(chain.entities, 1, 2), at(chain.entities, 2, 2)})
-      assert.are.same({
-        {key = "coal", x = 0, y = -1}, {key = "ore", x = 0, y = -4}, {key = "input", x = 0, y = -7}, {key = "supplied", x = 0, y = -10},
-      }, chain.inlets)
-    end)
-
     describe("with a belts part that is only the belt of a raw item, which has no machines and no poles", function()
       local function raw_block()
         return {
           entities = {{entity_number = 1, name = NAMES.belt, position = grid.position(0, 0), direction = south}}, poles = {},
-          product = {column = 0, last_row = 0}, raw = {{key = "coal", x = 0, y = 0, direction = south}},
+          product = {column = 0, last_row = 0}, raw = {{key = "coal", x = 0, y = 0}},
         }
       end
 
@@ -363,11 +326,11 @@ describe("item_fluid_chain", function()
       assert.has_consecutive_numbers(chain.entities)
     end)
 
-    for _, case in ipairs({{1, "north", true}, {2, "north", true}, {5, "north", true}, {3, "west", true}, {2, "north", false}, {3, "west", false}}) do
-      it(string.format("passes the validator for %d final plants, with the belt of raw items from the %s%s: powered, one network of poles, the pipes meet", case[1], case[2], case[3] and "" or ", the water not shared"), function()
-        local chain = item_fluid_chain.build(request(case[2] == "north" and iron_from_the_north() or iron_from_the_west(), case[1], case[3]))
+    for _, case in ipairs({{1, true}, {2, true}, {5, true}, {2, false}}) do
+      it(string.format("passes the validator for %d final plants%s: powered, one network of poles, the pipes meet", case[1], case[2] and "" or ", the water not shared"), function()
+        local chain = item_fluid_chain.build(request(iron_from_the_north(), case[1], case[2]))
 
-        local problems = validator.validate(chain.entities, catalog(case[3]))
+        local problems = validator.validate(chain.entities, catalog(case[2]))
 
         assert.are.same({}, problems)
       end)
@@ -407,14 +370,14 @@ describe("item_fluid_chain", function()
     -- copper furnaces in 7 to 12, the chain in 14 to 45 (its last column, the poles of the plants of the acid, is the 45th) and the plants of the battery
     -- from the column 47: the trunk 47, the tunnels 48, the belt b 49 and the plants 51 to 53. Their pipe of the acid is the column 44.
     local function copper_from_the_north()
-      return furnace_block(0, {{key = "copper", x = 0, y = 0, direction = south}})
+      return furnace_block(0, {{key = "copper", x = 0, y = 0}})
     end
 
     -- What `item_fluid_chain.build_nested` is asked for `count` plants of the battery, the chain being the one of the acid of two plants.
-    local function nested_request(count, chain_belts)
+    local function nested_request(count)
       return {
         first_part = iron_from_the_north(), second_part = copper_from_the_north(),
-        fluid_chain = item_fluid_chain.build_block(request(chain_belts or iron_from_the_north(), 2)),
+        fluid_chain = item_fluid_chain.build_block(request(iron_from_the_north(), 2)),
         final_plants = {
           plants = {machine = "battery-plant", recipe = "battery", size = 3, count = count or 2, boxes = plant_boxes(), rows = {inputs = -1, outputs = 3}, item_output = true},
           inserter = NAMES.inserter, belt = NAMES.belt, pipe = NAMES.pipe, pipe_to_ground = NAMES.pipe_to_ground, pole = NAMES.pole,
@@ -436,16 +399,6 @@ describe("item_fluid_chain", function()
       local result = item_fluid_chain.build_nested(nested_request())
 
       assert.are.equal(12, result.places.arc_row)
-    end)
-
-    it("leaves the columns of the belts of raw items that run east into the second part before it, after the column free", function()
-      local asked = nested_request()
-      asked.second_part = iron_from_the_west()
-
-      local result = item_fluid_chain.build_nested(asked)
-
-      -- the part has two belts that run east into it, so its frame starts 2 columns after the first part's free column; its own furnaces are 3 columns in
-      assert.are.same({9, 19}, {result.places.second_x, result.places.chain_x}) -- the chain after the part, whose last column is the 8th of its frame
     end)
 
     it("takes the next row for the pipe of the acid when a pole of the plants of the acid stands in the first", function()
@@ -507,19 +460,6 @@ describe("item_fluid_chain", function()
       assert.are.same({"chain:input", "chain:iron", "chain:supplied", "first:iron", "second:copper"}, keys)
     end)
 
-    it("moves the column where a belt of raw items of the chain turns east into its block along with the chain", function()
-      local request_with = nested_request(2, iron_from_the_west())
-      local ore
-      for _, start in ipairs(request_with.fluid_chain.starts) do
-        ore = start.key == "ore" and start or ore
-      end
-
-      local result = item_fluid_chain.build_nested(request_with)
-
-      -- the belt runs east along its row up to the column before the block, which is `until_x` of the start, moved with the chain
-      assert.are.equal(NAMES.belt .. " " .. east, at(result.entities, result.places.chain_x + ore.until_x, ore.y))
-    end)
-
     it("refuses a chain whose pipe of the fluid has no row where it reaches the trunk without meeting a pole", function()
       local asked = nested_request()
       asked.fluid_chain.final.output_exit_row = -1
@@ -533,6 +473,113 @@ describe("item_fluid_chain", function()
       local result = item_fluid_chain.build_nested(nested_request())
 
       assert.has_consecutive_numbers(result.entities)
+    end)
+  end)
+
+  describe("with the band that brings in one belt of each material", function()
+    local OPTIONS = {lane_items_per_minute = 450, underground_reach = 5}
+
+    -- The block of furnaces with its belt taking ore and coal, as the band is asked for them.
+    local function fed(block, ore)
+      block.raw[1].feed = {items = {{name = ore, amount = 100}, {name = "coal", amount = 8}}}
+      return block
+    end
+
+    local function banded(request_without)
+      request_without.band = {names = NAMES, options = OPTIONS}
+      return request_without
+    end
+
+    it("brings the belts of raw items in through one band at the top, and the pipes above it, each entry on a row of its own", function()
+      local chain = item_fluid_chain.build(banded(request(fed(iron_from_the_north(), "iron-ore"))))
+
+      -- the pipes come in above the band, two rows over its first row and three apart; the ore and the coal in the first and the third row of the band
+      assert.are.same({{key = "supplied", x = 0, y = -6}, {key = "input", x = 0, y = -3}, {key = "iron-ore", x = 0, y = 0}, {key = "coal", x = 0, y = 2}}, chain.inlets)
+    end)
+
+    it("puts the blocks under the band: east of the mixer and 3 rows down, under the belt that comes down from the trunk", function()
+      local chain = item_fluid_chain.build(banded(request(fed(iron_from_the_north(), "iron-ore"))))
+
+      assert.are.same({"transport-belt south", "transport-belt south", "transport-belt east"}, {at(chain.entities, 4, 2), at(chain.entities, 4, 3), at(chain.entities, 1, 1)})
+    end)
+
+    it("takes the pipes down through the band, to where they start under it", function()
+      local chain = item_fluid_chain.build(banded(request(fed(iron_from_the_north(), "iron-ore"))))
+
+      -- the pipe of the crude oil starts in the first row of its block, which is the row 3 of the blueprint, and comes up to its entry, the row -3;
+      -- the entry of the water, in the row -6, runs over its column
+      local start = item_fluid_chain.build_block(request(iron_from_the_north())).starts[2]
+      local rows = {}
+      for _, entity in ipairs(chain.entities) do
+        local tile = grid.top_left_tile(entity.position)
+        if tile.x == start.x + 4 and entity.name == NAMES.pipe and tile.y < 3 then
+          rows[#rows + 1] = tile.y
+        end
+      end
+      table.sort(rows)
+      assert.are.same({"input", -6, -3, -2, -1, 0, 1, 2}, {start.key, table.unpack(rows)})
+    end)
+
+    for _, count in ipairs({1, 2, 5}) do
+      it(string.format("passes the validator for %d final plants: powered, one network of poles, the pipes meet", count), function()
+        local chain = item_fluid_chain.build(banded(request(fed(iron_from_the_north(), "iron-ore"), count)))
+
+        assert.are.same({}, validator.validate(chain.entities, catalog()))
+      end)
+    end
+
+    it("refuses a block whose belt of raw items takes nothing from the band, next to one that does", function()
+      local asked = banded({
+        first_part = fed(iron_from_the_north(), "iron-ore"), second_part = iron_from_the_north(),
+        fluid_chain = item_fluid_chain.build_block(request(fed(iron_from_the_north(), "iron-ore"), 2)),
+        final_plants = final_request(2), size_of = size_of,
+      })
+
+      local build = function() item_fluid_chain.build_nested(asked) end
+
+      assert.has_error(build, "item_fluid_chain: a belt of raw items has no feed, so the band cannot bring it in")
+    end)
+
+    describe("for a nested chain", function()
+      local function nested_banded()
+        local asked = {
+          first_part = fed(iron_from_the_north(), "iron-ore"), second_part = fed(furnace_block(0, {{key = "copper", x = 0, y = 0}}), "copper-ore"),
+          fluid_chain = item_fluid_chain.build_block(request(fed(iron_from_the_north(), "iron-ore"), 2)),
+          final_plants = {
+            plants = {machine = "battery-plant", recipe = "battery", size = 3, count = 2, boxes = plant_boxes(), rows = {inputs = -1, outputs = 3}, item_output = true},
+            inserter = NAMES.inserter, belt = NAMES.belt, pipe = NAMES.pipe, pipe_to_ground = NAMES.pipe_to_ground, pole = NAMES.pole,
+            pole_supply_distance = 2.5, pole_wire_distance = 7.5, underground_reach = 10,
+          },
+          size_of = size_of,
+        }
+        return banded(asked)
+      end
+
+      it("brings in the belts of all three furnaces through one band: one belt for each material, and the coal once", function()
+        local result = item_fluid_chain.build_nested(nested_banded())
+
+        local items = {}
+        for _, inlet in ipairs(result.inlets) do
+          if inlet.y >= 0 then
+            items[#items + 1] = inlet.key
+          end
+        end
+        assert.are.same({"coal", "iron-ore", "copper-ore"}, items)
+      end)
+
+      it("passes the validator", function()
+        local result = item_fluid_chain.build_nested(nested_banded())
+        local entries = catalog()
+        entries["battery-plant"] = {kind = "machine", width = 3, height = 3, needs_power = true, fluid_connections = {acid = {{x = 0, y = -1}, {x = 2, y = -1}}}}
+
+        assert.are.same({}, validator.validate(result.entities, entries))
+      end)
+
+      it("numbers the entities from 1 with no gap", function()
+        local result = item_fluid_chain.build_nested(nested_banded())
+
+        assert.has_consecutive_numbers(result.entities)
+      end)
     end)
   end)
 end)

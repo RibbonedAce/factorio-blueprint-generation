@@ -108,7 +108,7 @@ local function lane_problems(entities, belts_come_in)
     local rows = {}
     for _, belt in ipairs(builders.entities_named(entities, "transport-belt")) do
       local tile = grid.top_left_tile(belt.position)
-      if tile.x == 0 and tile.y < 0 then
+      if tile.x == 0 then
         rows[#rows + 1] = tile.y
       end
     end
@@ -313,8 +313,8 @@ describe("the generator for a fluid made from two items and a fluid", function()
     generator.generate("sulfuric-acid", 1000, fake_force{})
     lights.add = add
 
-    -- the coal, the iron ore, the crude oil and the water of both plants
-    assert.are.same({{x = -1, y = -1}, {x = -1, y = -4}, {x = -1, y = -7}, {x = -1, y = -10}}, told.free_tiles)
+    -- the water of both plants and the crude oil, above the band, and the iron ore and the coal, in its first and its third row
+    assert.are.same({{x = -1, y = -6}, {x = -1, y = -3}, {x = -1, y = 0}, {x = -1, y = 2}}, told.free_tiles)
   end)
 
   describe("an item made from an item made in plants, a raw item and a fluid (explosives)", function()
@@ -331,12 +331,12 @@ describe("the generator for a fluid made from two items and a fluid", function()
       }, changes))
     end
 
-    -- What the belt tracer finds wrong with the lanes: the coal comes in on the row above the blueprint and the plants eat the sulfur and the coal.
+    -- What the belt tracer finds wrong with the lanes: the coal comes in at the west edge and the plants eat the sulfur and the coal.
     local function coal_lane_problems(entities)
       local rows = {}
       for _, belt in ipairs(builders.entities_named(entities, "transport-belt")) do
         local tile = grid.top_left_tile(belt.position)
-        if tile.x == 0 and tile.y < 0 then
+        if tile.x == 0 then
           rows[#rows + 1] = tile.y
         end
       end

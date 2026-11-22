@@ -17,4 +17,7 @@ constants.LANES_PER_BELT = 2
 constants.WINDING_MACHINE_SIZE = 3
 constants.WINDING_OUTPUT_INSERTERS = 2
 
+-- The farthest apart the two ends of an underground pipe may be: the game allows 10; a hop here stays under it, 9 at the most.
+constants.PIPE_REACH = 10
+
 return constants

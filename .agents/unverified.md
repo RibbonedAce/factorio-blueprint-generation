@@ -189,3 +189,9 @@ What the specs cannot show: each section lists what a feature assumes about the 
 - That the two plate belts on the belt b of the plants of the battery (the iron plates on the lane of the arc, the copper plates side-loaded onto the other) do not starve a lane when the plates come at the rates the plan counts: the belt tracer follows the lanes in the specs, not in game.
 - That the pipe of the acid, which runs along the first row into the trunk of the plants of the battery between two poles, has the pressure it needs over its length (the planner caps the plants by the length a run of pipes may have, as for the other chains).
 - That the 6 belts of the design with one belt of each material (the ore and the fuel of three columns of furnaces) are the right number for the player: two columns of iron furnaces are drawn, the battery's and the acid's, by the owner's choice.
+
+## Unverified in the shared band of the chains (5bc)
+
+- That the band's belts keep their lanes over the longer runs the chains have (a trunk of ore and coal that passes over two or three furnace blocks before its last leaf): the tracer follows lanes, splitters and undergrounds in the specs, not in game (the same as the band of any recipe, see "Unverified in game" in inputs-plan.md).
+- That a pipe that goes down through the band under belts with underground pipes comes out where the specs draw it: no recipe has one yet (the pipes of the chains start east of the last furnace block, so no trunk reaches over them), `spec/corner_entries_spec.lua` draws them.
+- That the blocks put 3 rows or more lower than before, to hang under the band, still reach everything by the belts: the poles of the blocks are wired by the same `poles.join`, with bridge poles where a wire does not reach, as before.

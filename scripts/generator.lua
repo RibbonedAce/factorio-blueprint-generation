@@ -2301,58 +2301,58 @@ local function raw_start(entities, belt)
 end
 
 -- The block of the steps that make the second item of a chain, made apart (see `bpgen.BeltsBlock`): its entities, its poles, the tile of the end
--- of its product belt and where its belts of raw items come in. Also gives the names of the items of the belts that come in, from the top down
--- (nothing for the original design) and the layout it was made from.
+-- of its product belt and where its belt of raw items comes in, with what the belt takes in the design that brings in one belt of each material
+-- (the band that does that is the whole blueprint's, see scripts/shared_band.lua, so the block is the one the original design draws). Also gives
+-- the layout it was made from.
 ---@param job bpgen.Job  the job of the steps on belts
 ---@param planned bpgen.PlannedStage  with its `demand`
 ---@return bpgen.BeltsBlock
 ---@return bpgen.StageLayout root
----@return string[]|nil belts
 local function belts_block(job, planned)
-  local entities, belts, root, supplies = build_entities(job, planned)
-  local poles, raw = {}, {}
+  local root = layout_stage(planned, planner.lane_items_per_minute(job.belt_speed), layout.pole_reach(job.names.pole_supply_distance))
+  local entities, raw_stages = rows.build(root, job.names)
+  assert(#raw_stages == 1, "generator: the steps that make the second item of a chain take raw items on more than one belt")
+  local poles = {}
   for _, entity in ipairs(entities) do
     if entity.name == job.names.pole then
       poles[#poles + 1] = entity
     end
   end
-  for _, supply in ipairs(supplies) do
-    raw[#raw + 1] = {key = supply.item, x = supply.x, y = supply.y, direction = east}
-  end
-  if #raw == 0 then
-    local start = raw_start(entities, job.names.belt)
-    raw[1] = {key = "belt", x = start.x, y = start.y, direction = south}
-  end
-  return {entities = entities, poles = poles, product = product_end(entities, job.names.belt), raw = raw}, root, belts
+  local start = raw_start(entities, job.names.belt)
+  local feed = job.input_options and assert(raw_stages[1].feed, "generator: the step fed raw items has no feed") or nil
+  return {entities = entities, poles = poles, product = product_end(entities, job.names.belt), raw = {{key = "belt", x = start.x, y = start.y, feed = feed}}}, root
 end
 
 -- The block of the part of a chain whose second item is raw: no machines, only the belt that comes in at the top left, which is the belt of
--- its product too (a single tile, from which the chain takes it on). Also the name of the item of the belt, for the entry.
+-- its product too (a single tile, from which the chain takes it on), and what it takes a minute in the design that brings in one belt of each
+-- material.
 ---@param item string
----@param belt string  the prototype name of the belt
+---@param amount number  a minute
+---@param job bpgen.Job
 ---@return bpgen.BeltsBlock
-local function raw_item_block(item, belt)
+local function raw_item_block(item, amount, job)
   local entities = {}
-  entity_list.append(entities, {name = belt, position = grid.position(0, 0), direction = south})
-  return {entities = entities, poles = {}, product = {column = 0, last_row = 0}, raw = {{key = item, x = 0, y = 0, direction = south}}}
+  entity_list.append(entities, {name = job.names.belt, position = grid.position(0, 0), direction = south})
+  local feed = job.input_options and {items = {{name = item, amount = amount}}} or nil
+  return {entities = entities, poles = {}, product = {column = 0, last_row = 0}, raw = {{key = item, x = 0, y = 0, feed = feed}}}
 end
 
--- The block of the part of a chain that makes the second item, with what it takes a minute (as `raw_amounts` gives it), the layout of its
--- steps (nil when the item is raw) and the names of the belts that come in (nil for the original design).
+-- The block of the part of a chain that makes the second item, with what it takes a minute (as `raw_amounts` gives it) and the layout of its
+-- steps (nil when the item is raw).
 ---@param job bpgen.Job
 ---@param plans bpgen.ItemFluidChainPlans
 ---@return bpgen.BeltsBlock block
 ---@return bpgen.StageLayout|nil belts_root
----@return string[]|nil belts
 ---@return bpgen.RawAmount[] belts_raws
 local function second_item_block(job, plans)
   if plans.belts then
     local belts_raws = raw_amounts(plans.belts) -- also notes what each step takes, which the layout needs
-    local block, belts_root, belts = belts_block(plans.belts_job, plans.belts)
-    return block, belts_root, belts, belts_raws
+    local block, belts_root = belts_block(plans.belts_job, plans.belts)
+    return block, belts_root, belts_raws
   end
   local raw_item = belts_item_of(job.parts --[[@as bpgen.ChainParts]])
-  return raw_item_block(raw_item, job.names.belt), nil, {raw_item}, {{name = raw_item, amount = item_amount(plans.final, raw_item)}}
+  local amount = item_amount(plans.final, raw_item)
+  return raw_item_block(raw_item, amount, job), nil, {{name = raw_item, amount = amount}}
 end
 
 -- The tiles on a side of each machine of a chain, by name.
@@ -2378,24 +2378,40 @@ local function shares_fluid(job, plans)
   return supplied ~= nil and supplied.name == job.root.recipe.fluids[1].name
 end
 
--- What comes in at each entry of a chain, by its key (see `item_fluid_chain.build`): the crude oil, the water of the plants part (which is the
--- water of the final plants too, when they take the same fluid) and, for the design that brings in one belt of each material, the item of
--- each belt. The fluid the final plants take has an entry of its own, "final_fluid", when it is not the same.
+-- What comes in at each entry of a chain that is a pipe, by its key (see `item_fluid_chain.build`): the crude oil, the water of the plants part
+-- (which is the water of the final plants too, when they take the same fluid). The fluid the final plants take has an entry of its own,
+-- "final_fluid", when it is not the same.
 ---@param job bpgen.Job
 ---@param plans bpgen.ItemFluidChainPlans
----@param belts string[]|nil  the items of the belts that come in
 ---@return table<string, {name: string, type: "item"|"fluid"}>
-local function chain_things(job, plans, belts)
+local function chain_things(job, plans)
   local supplied = plans.plants.supplied[1]
-  local things = {
+  return {
     input = {name = job.maker.recipe.fluids[1].name, type = "fluid"},
     supplied = supplied and {name = supplied.name, type = "fluid"},
     final_fluid = {name = job.root.recipe.fluids[1].name, type = "fluid"},
   }
-  for _, item in ipairs(belts or {}) do
-    things[item] = {name = item, type = "item"}
+end
+
+-- What comes in at each entry of a blueprint made of parts: the pipes `things` knows, and, in the design that brings in one belt of each material,
+-- a belt of the item whose name is the key of each of the other entries (the band names its belts by their item). The original design has a
+-- belt of raw items for each part, which no panel names.
+---@param job bpgen.Job
+---@param inlets {key: string}[]
+---@param things table<string, {name: string, type: "item"|"fluid"}>  the pipes, by the key of their entry
+---@return table<string, {name: string, type: "item"|"fluid"}>
+local function entry_things(job, inlets, things)
+  if not job.input_options then
+    return things
   end
-  return things
+  local all = {}
+  for key, thing in pairs(things) do
+    all[key] = thing
+  end
+  for _, inlet in ipairs(inlets) do
+    all[inlet.key] = all[inlet.key] or {name = inlet.key, type = "item"}
+  end
+  return all
 end
 
 -- What a chain takes in a minute, from the top of the blueprint down: what the steps on belts take (the raw items, then the fuel), the water
@@ -2456,6 +2472,13 @@ local function chain_summaries(job, plans)
   })
 end
 
+-- What the band that brings in one belt of each material is built with: nil for the original design.
+---@param job bpgen.Job
+---@return bpgen.BandRequest|nil
+local function band_of(job)
+  return job.input_options and {names = job.names, options = job.input_options} or nil
+end
+
 -- What `item_fluid_chain.build` and `item_fluid_chain.build_block` are asked for the plans of a chain, with the block of its second item.
 ---@param job bpgen.Job
 ---@param plans bpgen.ItemFluidChainPlans
@@ -2465,81 +2488,8 @@ end
 local function chain_request(job, plans, block, sizes)
   return {
     plants_part = fluid_plant_build(plans.plants_job, plans.plants), belts_part = block, final_plants = item_fluid_plants_request(job, plans.final),
-    shared_fluid = shares_fluid(job, plans), size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
+    shared_fluid = shares_fluid(job, plans), band = band_of(job), size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
   }
-end
-
--- The fluid asked for, made from two items and a fluid: the blueprint of the plants that make the first item (with the machines that make
--- the fluid they take), the steps that make the second on belts, and the plants of the fluid (see scripts/item_fluid_chain.lua), and the words
--- for the player.
----@param job bpgen.Job
----@return bpgen.Generated|nil
----@return LocalisedString|nil error_message
-local function generate_item_fluid_chain(job)
-  local plans, reason, max_rate = plan_item_fluid_chain(job)
-  if not plans then
-    ---@cast reason bpgen.PlanReason -- the planner always gives a reason when it gives no plan
-    return nil, messages.plan_problem(reason, max_rate)
-  end
-  local block, belts_root, belts, belts_raws = second_item_block(job, plans)
-  local sizes = chain_sizes(job, belts_root)
-  local built = item_fluid_chain.build(chain_request(job, plans, block, sizes))
-  add_inlet_labels(job, built.entities, built.inlets, chain_things(job, plans, belts), sizes)
-  add_row_lights(job, built.entities, built.inlets, sizes)
-  return {
-    entities = built.entities,
-    description = messages.description(job.item_name, plans.final.output_per_minute, chain_summaries(job, plans)),
-    message = messages.ready(plans.final.output_per_minute, job.root.item, chain_raws(job, plans, belts_raws), belts),
-  }
-end
-
--- One part of a nested chain, made apart, with what it takes a minute, what its entries bring, the tiles on a side of its machines and what
--- its machines are.
----@class bpgen.NestedPart
----@field block bpgen.BeltsBlock|bpgen.ItemFluidChainBlock
----@field raws bpgen.RawAmount[]
----@field things table<string, {name: string, type: "item"|"fluid"}>  by the key of the entry (see `item_fluid_chain.build_nested`)
----@field sizes table<string, integer>
----@field summaries bpgen.StageSummary[]
-
--- The part of a nested chain that makes an item on belts.
----@param job bpgen.Job  the job of its steps
----@param planned bpgen.PlannedStage
----@return bpgen.NestedPart
-local function belts_part(job, planned)
-  local raws = raw_amounts(planned) -- also notes what each step takes, which the layout needs
-  local block, root, belts = belts_block(job, planned)
-  local things = {}
-  for _, item in ipairs(belts or {}) do
-    things[item] = {name = item, type = "item"}
-  end
-  return {block = block, raws = raws, things = things, sizes = machine_sizes_of(root, {}), summaries = stage_summaries(planned)}
-end
-
--- The part of a nested chain that makes the fluid: a chain, made apart (see `item_fluid_chain.build_block`).
----@param job bpgen.Job  the job of the chain
----@param plans bpgen.ItemFluidChainPlans
----@return bpgen.NestedPart
-local function chain_part(job, plans)
-  local block, belts_root, belts, belts_raws = second_item_block(job, plans)
-  local sizes = chain_sizes(job, belts_root)
-  return {
-    block = item_fluid_chain.build_block(chain_request(job, plans, block, sizes)), raws = chain_raws(job, plans, belts_raws),
-    things = chain_things(job, plans, belts), sizes = sizes, summaries = chain_summaries(job, plans),
-  }
-end
-
--- What the entries of a nested chain bring, by the key of the entry: the key of its part's entry with the name of the part before it.
----@param parts table<string, bpgen.NestedPart>
----@return table<string, {name: string, type: "item"|"fluid"}>
-local function nested_things(parts)
-  local things = {}
-  for name, part in pairs(parts) do
-    for key, thing in pairs(part.things) do
-      things[name .. ":" .. key] = thing
-    end
-  end
-  return things
 end
 
 -- The names of the belts that come in, from the top of the blueprint down, for the design that brings in one belt of each material; nil for
@@ -2559,6 +2509,91 @@ local function belts_from_the_top(job, inlets, things)
     names[#names + 1] = thing and thing.type == "item" and thing.name or nil
   end
   return names
+end
+
+-- The names of the belts that come in, for the message of a chain: in the design that brings in one belt of each material, those of the band, from
+-- the top down; in the original design nothing, unless its second item is raw, which comes in on a belt of its own (the one belt the player
+-- brings, which the message names).
+---@param job bpgen.Job
+---@param plans bpgen.ItemFluidChainPlans
+---@param inlets {key: string, x: integer, y: integer}[]
+---@param things table<string, {name: string, type: "item"|"fluid"}>
+---@return string[]|nil
+local function chain_belts(job, plans, inlets, things)
+  if job.input_options then
+    return belts_from_the_top(job, inlets, things)
+  end
+  return not plans.belts and {belts_item_of(job.parts --[[@as bpgen.ChainParts]])} or nil
+end
+
+-- The fluid asked for, made from two items and a fluid: the blueprint of the plants that make the first item (with the machines that make
+-- the fluid they take), the steps that make the second on belts, and the plants of the fluid (see scripts/item_fluid_chain.lua), and the words
+-- for the player.
+---@param job bpgen.Job
+---@return bpgen.Generated|nil
+---@return LocalisedString|nil error_message
+local function generate_item_fluid_chain(job)
+  local plans, reason, max_rate = plan_item_fluid_chain(job)
+  if not plans then
+    ---@cast reason bpgen.PlanReason -- the planner always gives a reason when it gives no plan
+    return nil, messages.plan_problem(reason, max_rate)
+  end
+  local block, belts_root, belts_raws = second_item_block(job, plans)
+  local sizes = chain_sizes(job, belts_root)
+  local built = item_fluid_chain.build(chain_request(job, plans, block, sizes))
+  local things = entry_things(job, built.inlets, chain_things(job, plans))
+  add_inlet_labels(job, built.entities, built.inlets, things, sizes)
+  add_row_lights(job, built.entities, built.inlets, sizes)
+  return {
+    entities = built.entities,
+    description = messages.description(job.item_name, plans.final.output_per_minute, chain_summaries(job, plans)),
+    message = messages.ready(plans.final.output_per_minute, job.root.item, chain_raws(job, plans, belts_raws), chain_belts(job, plans, built.inlets, things)),
+  }
+end
+
+-- One part of a nested chain, made apart, with what it takes a minute, what its entries bring, the tiles on a side of its machines and what
+-- its machines are.
+---@class bpgen.NestedPart
+---@field block bpgen.BeltsBlock|bpgen.ItemFluidChainBlock
+---@field raws bpgen.RawAmount[]
+---@field things table<string, {name: string, type: "item"|"fluid"}>  by the key of the entry (see `item_fluid_chain.build_nested`)
+---@field sizes table<string, integer>
+---@field summaries bpgen.StageSummary[]
+
+-- The part of a nested chain that makes an item on belts.
+---@param job bpgen.Job  the job of its steps
+---@param planned bpgen.PlannedStage
+---@return bpgen.NestedPart
+local function belts_part(job, planned)
+  local raws = raw_amounts(planned) -- also notes what each step takes, which the layout needs
+  local block, root = belts_block(job, planned)
+  return {block = block, raws = raws, things = {}, sizes = machine_sizes_of(root, {}), summaries = stage_summaries(planned)}
+end
+
+-- The part of a nested chain that makes the fluid: a chain, made apart (see `item_fluid_chain.build_block`).
+---@param job bpgen.Job  the job of the chain
+---@param plans bpgen.ItemFluidChainPlans
+---@return bpgen.NestedPart
+local function chain_part(job, plans)
+  local block, belts_root, belts_raws = second_item_block(job, plans)
+  local sizes = chain_sizes(job, belts_root)
+  return {
+    block = item_fluid_chain.build_block(chain_request(job, plans, block, sizes)), raws = chain_raws(job, plans, belts_raws),
+    things = chain_things(job, plans), sizes = sizes, summaries = chain_summaries(job, plans),
+  }
+end
+
+-- What the entries of a nested chain bring, by the key of the entry: the key of its part's entry with the name of the part before it.
+---@param parts table<string, bpgen.NestedPart>
+---@return table<string, {name: string, type: "item"|"fluid"}>
+local function nested_things(parts)
+  local things = {}
+  for name, part in pairs(parts) do
+    for key, thing in pairs(part.things) do
+      things[name .. ":" .. key] = thing
+    end
+  end
+  return things
 end
 
 -- The tiles on a side of each machine of a nested chain: those of its parts and of its plants.
@@ -2590,10 +2625,10 @@ local function generate_nested_chain(job)
   local sizes = nested_sizes(job, parts)
   local built = item_fluid_chain.build_nested({
     first_part = parts.first.block --[[@as bpgen.BeltsBlock]], second_part = parts.second.block --[[@as bpgen.BeltsBlock]],
-    fluid_chain = parts.chain.block --[[@as bpgen.ItemFluidChainBlock]], final_plants = item_fluid_plants_request(job, plans.final),
+    fluid_chain = parts.chain.block --[[@as bpgen.ItemFluidChainBlock]], final_plants = item_fluid_plants_request(job, plans.final), band = band_of(job),
     size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
   })
-  local things = nested_things(parts)
+  local things = entry_things(job, built.inlets, nested_things(parts))
   add_inlet_labels(job, built.entities, built.inlets, things, sizes)
   add_row_lights(job, built.entities, built.inlets, sizes)
   local made, raws = plans.final.output_per_minute, merged_raws({parts.first.raws, parts.second.raws, parts.chain.raws})

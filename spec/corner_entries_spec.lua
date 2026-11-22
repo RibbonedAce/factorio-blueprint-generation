@@ -97,26 +97,6 @@ describe("corner_entries", function()
       assert.are.same({{key = "crude", x = 0, y = -1}, {key = "coal", x = 0, y = -4}}, entries)
     end)
 
-    it("takes a belt that turns east to a block: down its column to the row of the block, and east along that row to the column it says", function()
-      local entities = {}
-
-      local entries = corner_entries.add(entities, {
-        {key = "coal", x = 2, y = 2, name = "belt", belt = true, until_x = 4}, {key = "crude", x = 6, y = 0, name = "pipe"},
-      })
-
-      local ways = {}
-      for _, belt in ipairs(entities) do
-        local tile = grid.top_left_tile(belt.position)
-        if belt.name == "belt" then
-          ways[#ways + 1] = string.format("%d,%d %s", tile.x, tile.y, belt.direction)
-        end
-      end
-      table.sort(ways)
-      -- the row -1 from the edge to the column 2, the column 2 from the row -1 to the row 1, the row 2 from the column 2 to the column 4
-      assert.are.same({"0,-1 east", "1,-1 east", "2,-1 south", "2,0 south", "2,1 south", "2,2 east", "3,2 east", "4,2 east"}, ways)
-      assert.are.same({key = "coal", x = 0, y = -1}, entries[1])
-    end)
-
     it("numbers the entities from 1 with no gap", function()
       local entities = {}
 
@@ -244,6 +224,112 @@ describe("corner_entries", function()
         corner_entries.add(entities, water_and_crude())
 
         assert.has_consecutive_numbers(entities)
+      end)
+    end)
+
+    it("puts the first entry above the row the options give as the top of the blueprint", function()
+      local entities = {}
+
+      local entries = corner_entries.add(entities, {{key = "crude", x = 3, y = 5, name = "pipe"}}, {top = 2})
+
+      assert.are.same({{key = "crude", x = 0, y = 1}}, entries)
+    end)
+
+    describe("with belts across the way of a pipe", function()
+      -- What stands in the column `x` from the row -4 to the row 6, a letter for each tile: p a pipe, n the end of an underground pipe that is
+      -- open to the north, s one open to the south, . nothing.
+      local function column(entities, x)
+        local letters = {}
+        for row = -4, 6 do
+          letters[row] = "."
+        end
+        for _, entity in ipairs(entities) do
+          local tile = grid.top_left_tile(entity.position)
+          if tile.x == x and entity.name == "pipe" then
+            letters[tile.y] = "p"
+          elseif tile.x == x and entity.name == "pipe-to-ground" then
+            letters[tile.y] = entity.direction == defines.direction.north and "n" or "s"
+          end
+        end
+        return table.concat(letters, "", -4, 6)
+      end
+
+      local function options_with(rows)
+        local taken = {}
+        for _, row in ipairs(rows) do
+          taken[grid.key(4, row)] = true
+        end
+        return {top = 0, taken = taken, pipe_to_ground = "pipe-to-ground"}
+      end
+
+      it("goes under a belt with an underground pipe, from the tile before it to the tile after it", function()
+        local entities = {}
+
+        corner_entries.add(entities, {{key = "crude", x = 4, y = 6, name = "pipe"}}, options_with({2}))
+
+        -- the entry is in the row -1; the underground pipe starts in the row 1 and comes out in the row 3
+        assert.are.equal("...ppn.spp.", column(entities, 4))
+      end)
+
+      it("goes under belts in rows next to each other with one underground pipe", function()
+        local entities = {}
+
+        corner_entries.add(entities, {{key = "crude", x = 4, y = 7, name = "pipe"}}, options_with({2, 3}))
+
+        assert.are.equal("...ppn..spp", column(entities, 4))
+      end)
+
+      it("goes under belts three rows apart with two underground pipes that meet in the rows between", function()
+        local entities = {}
+
+        corner_entries.add(entities, {{key = "crude", x = 4, y = 7, name = "pipe"}}, options_with({1, 4}))
+
+        assert.are.equal("...pn.sn.sp", column(entities, 4))
+      end)
+
+      it("goes under the belts for the pipe that joins an entry too", function()
+        local entities = {}
+
+        corner_entries.add(entities, {
+          {key = "water", x = 8, y = 7, name = "pipe"}, {key = "more", x = 4, y = 7, name = "pipe", joins = "water"},
+        }, options_with({2}))
+
+        assert.are.equal("...ppn.sppp", column(entities, 4))
+      end)
+
+      local function rows_from(first, count)
+        local rows = {}
+        for row = first, first + count - 1 do
+          rows[#rows + 1] = row
+        end
+        return rows
+      end
+
+      it("goes under as many belts as an underground pipe spans: 8, with the tile before and the tile after them, 10 tiles apart at the most", function()
+        local run = function() corner_entries.add({}, {{key = "crude", x = 4, y = 14, name = "pipe"}}, options_with(rows_from(1, 8))) end
+
+        assert.has_no.errors(run)
+      end)
+
+      it("stops when the belts are more than an underground pipe spans: 9", function()
+        local run = function() corner_entries.add({}, {{key = "crude", x = 4, y = 14, name = "pipe"}}, options_with(rows_from(1, 9))) end
+
+        assert.has_error(run, "corner_entries: a pipe has to pass under more belts than an underground pipe spans")
+      end)
+
+      it("stops when a belt is right above the tile where the pipe starts, which leaves no tile to come out of the ground at", function()
+        local run = function() corner_entries.add({}, {{key = "crude", x = 4, y = 6, name = "pipe"}}, options_with({5})) end
+
+        assert.has_error(run, "corner_entries: a pipe has no free tile to come out of the ground at")
+      end)
+
+      it("stops when no underground pipe is named for a pipe that crosses belts", function()
+        local options = options_with({2})
+        options.pipe_to_ground = nil
+
+        local run = function() corner_entries.add({}, {{key = "crude", x = 4, y = 6, name = "pipe"}}, options) end
+
+        assert.has_error(run, "corner_entries: no underground pipe for a pipe that crosses belts")
       end)
     end)
   end)

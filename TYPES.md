@@ -59,9 +59,12 @@ flowchart LR
   fluid_plant -->|"Entity list"| generator
   generator -->|"ItemFluidPlantsRequest"| planner
   planner -->|"ItemFluidPlantsPlan"| generator
-  generator -->|"ItemFluidChainBuild: FluidPlantBuild, BeltsBlock, ItemFluidPlantsBuild"| item_fluid_chain["item_fluid_chain.lua"]
+  generator -->|"ItemFluidChainBuild: FluidPlantBuild, BeltsBlock, ItemFluidPlantsBuild, BandRequest"| item_fluid_chain["item_fluid_chain.lua"]
+  item_fluid_chain -->|"EntryStart list, InputOptions, SharedNames"| shared_band["shared_band.lua"]
+  shared_band -->|"BandLeaf list as FeedLeaf"| feeds["feeds.lua"]
+  shared_band -->|"SharedBand: moved starts, Supply list"| item_fluid_chain
   item_fluid_chain -->|"ItemFluidChain: Entity list, entries"| generator
-  generator -->|"NestedChainBuild: two BeltsBlocks, ItemFluidChainBlock, ItemFluidPlantsBuild"| item_fluid_chain
+  generator -->|"NestedChainBuild: two BeltsBlocks, ItemFluidChainBlock, ItemFluidPlantsBuild, BandRequest"| item_fluid_chain
   item_fluid_chain -->|"NestedChain: Entity list, entries"| generator
 
   generator -->|"RawAmount, StageSummary, belts"| messages["messages.lua"]
@@ -96,6 +99,10 @@ flowchart TD
   item_fluid_chain --> item_fluid_plants
   item_fluid_chain --> fluid_plant
   item_fluid_chain --> corner_entries
+  item_fluid_chain --> shared_band
+  shared_band --> feeds
+  shared_band --> inputs
+  shared_band --> entity_list
   item_fluid_chain --> poles
   item_fluid_chain --> grid
   item_fluid_plants --> fluid_plant
@@ -640,7 +647,21 @@ classDiagram
   }
   class ItemFluidChainBuild {
     shared_fluid
+    band
     size_of
+  }
+  class BandRequest {
+    names
+    options
+  }
+  class BandLeaf {
+    start
+  }
+  class SharedBand {
+    starts
+    supplies
+    dx
+    dy
   }
   class ItemFluidChain {
     entities
@@ -654,6 +675,14 @@ classDiagram
   ItemFluidChainBuild *-- FluidPlantBuild : plants_part
   ItemFluidChainBuild *-- BeltsBlock : belts_part
   ItemFluidChainBuild *-- ItemFluidPlantsBuild : final_plants
+  ItemFluidChainBuild *-- BandRequest : band
+  BandRequest *-- InputOptions : options
+  BandRequest *-- SharedNames : names
+  BandLeaf --|> FeedLeaf
+  BandLeaf *-- EntryStart : start
+  EntryStart *-- Feed : feed
+  SharedBand *-- EntryStart : starts
+  SharedBand *-- Supply : supplies
   ItemFluidChainBuild ..> ItemFluidChain : item_fluid_chain.build
   FluidRowRequest *-- Recipe : recipe
   FluidPlantRequest *-- Recipe : recipe and maker_recipe
@@ -671,7 +700,7 @@ classDiagram
 
 | Where | Types |
 |---|---|
-| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, MachineColumn, BeltTile, WindingRequest, OutputSideRequest, InputSideRequest, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, FluidPlantRequest, FluidPlantPlan, FluidPlantBuild, ItemFluidPlantsRequest, ItemFluidPlantsPlan, ItemFluidPlantsBuild, ItemFluidPlantsBlock, BeltsBlock, ItemFluidChainBuild, ItemFluidChainPlaces, ItemFluidChainBlock, ItemFluidChain, NestedChainBuild, NestedChainPlaces, NestedChain, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
+| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, MachineColumn, BeltTile, WindingRequest, OutputSideRequest, InputSideRequest, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, FluidPlantRequest, FluidPlantPlan, FluidPlantBuild, ItemFluidPlantsRequest, ItemFluidPlantsPlan, ItemFluidPlantsBuild, ItemFluidPlantsBlock, BeltsBlock, BandRequest, ItemFluidChainBuild, ItemFluidChainPlaces, ItemFluidChainBlock, ItemFluidChain, NestedChainBuild, NestedChainPlaces, NestedChain, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
 | `scripts/generator.lua` | EnergySource, Candidate, StageData, InserterData, Job, Arrangement, ChainParts, NestedParts, NestedPart, NestedChainPlans, PlannedStage, Demand, DemandTotals, ItemFluidChainPlans |
 | `scripts/planner.lua` | InputInserters, MachineRates, StageContext, Sizes |
@@ -681,4 +710,5 @@ classDiagram
 | `scripts/inputs.lua` | Band |
 | `scripts/poles.lua` | PolePair |
 | `scripts/output_side.lua` | WindingTiles |
-| `scripts/corner_entries.lua` | EntryStart, Entry |
+| `scripts/corner_entries.lua` | EntryStart, EntryOptions, Entry |
+| `scripts/shared_band.lua` | BandLeaf, SharedBand |

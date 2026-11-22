@@ -530,14 +530,20 @@
 ---@field entities bpgen.Entity[]  numbered from 1, with the wires of its poles
 ---@field poles bpgen.Entity[]  its poles (of `entities`), wired together
 ---@field product {column: integer, last_row: integer}  the tile column of its belt of product, which runs south, and the row of its last tile
----@field raw {key: string, x: integer, y: integer, direction: defines.direction}[]  where the belts of raw items start: the tile, and the way the belt runs there (south at the top of the block, or east at its west edge)
+---@field raw {key: string, x: integer, y: integer, feed?: bpgen.Feed}[]  where the belts of raw items start, running south: the tile, and what the belt takes a minute when the band brings it (see `bpgen.BandRequest`)
 
 -- What `item_fluid_chain.build` is asked for: the three blocks.
+-- What the band that brings in one belt of each material (scripts/shared_band.lua) is built with.
+---@class bpgen.BandRequest
+---@field names bpgen.SharedNames  with the splitter, the underground belt and the underground pipe
+---@field options bpgen.InputOptions
+
 ---@class bpgen.ItemFluidChainBuild
 ---@field plants_part bpgen.FluidPlantBuild  the plants that make one of the items from fluids, with the machines that make the fluid they take
 ---@field belts_part bpgen.BeltsBlock  the block that makes the other item on belts
 ---@field final_plants bpgen.ItemFluidPlantsBuild  the plants that take both items and a fluid
 ---@field shared_fluid boolean  whether the fluid that comes in beside the plants part is the one the final plants take: one entry brings it to both
+---@field band? bpgen.BandRequest  the design that brings in one belt of each material; nil for the original design, a belt of raw items for each block
 ---@field size_of fun(entity: bpgen.Entity): integer, integer  how many tiles across and along the map an entity covers
 
 -- Where the blocks of `item_fluid_chain.build` are, from the west.
@@ -565,6 +571,7 @@
 ---@field second_part bpgen.BeltsBlock  the block that makes the second item
 ---@field fluid_chain bpgen.ItemFluidChainBlock  the chain that makes the fluid the final plants take, made apart (`item_fluid_chain.build_block`)
 ---@field final_plants bpgen.ItemFluidPlantsBuild
+---@field band? bpgen.BandRequest  the design that brings in one belt of each material; nil for the original design
 ---@field size_of fun(entity: bpgen.Entity): integer, integer  how many tiles across and along the entity covers
 
 -- Where the parts of a nested chain stand: the columns of each part, of the belts that go to the final plants, and the row of the arc.

@@ -39,7 +39,9 @@
 --
 -- Everything that comes in starts at the top left, as `scripts/corner_entries.lua` has it: the pipes of the plants part (the crude oil of
 -- its refineries and the water beside its plants, with the water of the final plants joined to it when it is the same fluid), and the belts
--- of the belts part. The poles of the blocks are joined into one network.
+-- of the belts part. In the design that brings in one belt of each material (`request.band`) the belts of raw items come in through one band
+-- at the top, one belt for each material, which scripts/shared_band.lua draws (the blocks are under it), and the pipes come in above it and
+-- go down through it with underground pipes. The poles of the blocks are joined into one network.
 --
 -- `build_nested` makes the blueprint of a recipe whose two items are both made on belts and whose fluid another chain makes (battery: iron
 -- plate and copper plate from furnaces, and the sulfuric acid of the chain above, which `build_block` gives as a block). From west to east:
@@ -53,6 +55,7 @@ local entity_list = require("scripts.entity_list")
 local fluid_plant = require("scripts.fluid_plant")
 local grid = require("scripts.grid")
 local poles = require("scripts.poles")
+local shared_band = require("scripts.shared_band")
 
 local item_fluid_chain = {}
 
@@ -88,38 +91,19 @@ local function copies_of(group, added)
   return copies
 end
 
--- The starts of the belts of raw items of the belts part (see `corner_entries.add`), for the block at the column `x_block`: a belt that runs
--- south at the first tile of the block comes down its own column; the belts that run east into the block, which stand one under the other
--- at its west edge, come down the columns before it, the upper one the column nearest the block, so that none crosses another.
+-- The starts of the belts of raw items of the belts part (see `corner_entries.add`), for the block at the column `x_block`: each belt runs south
+-- at the first tile of the block and comes down its own column, and carries the `feed` of its block, when the band brings it (see
+-- `bring_in`).
 ---@param belts_part bpgen.BeltsBlock
 ---@param x_block integer
 ---@param belt string
 ---@return bpgen.EntryStart[]
 local function belts_starts(belts_part, x_block, belt)
-  local ordered = {table.unpack(belts_part.raw)}
-  table.sort(ordered, function(first, second) return first.y < second.y end)
-  local starts, rank = {}, 0
-  for _, raw in ipairs(ordered) do
-    if raw.direction == south then
-      starts[#starts + 1] = {key = raw.key, x = x_block + raw.x, y = raw.y, name = belt, belt = true}
-    else
-      assert(raw.direction == east and raw.x == 0, "item_fluid_chain: a belt of raw items comes in at the west edge of the block of the belts part, running east, or at its top, running south")
-      rank = rank + 1
-      starts[#starts + 1] = {key = raw.key, x = x_block - rank, y = raw.y, name = belt, belt = true, until_x = x_block - 1}
-    end
+  local starts = {}
+  for index, raw in ipairs(belts_part.raw) do
+    starts[index] = {key = raw.key, x = x_block + raw.x, y = raw.y, name = belt, belt = true, feed = raw.feed}
   end
   return starts
-end
-
--- How many columns the belts of raw items take west of the block of the belts part: the ones that run east into it.
----@param belts_part bpgen.BeltsBlock
----@return integer
-local function lead_of(belts_part)
-  local lead = 0
-  for _, raw in ipairs(belts_part.raw) do
-    lead = lead + (raw.direction == east and 1 or 0)
-  end
-  return lead
 end
 
 -- A run of belt tiles down or up one column, all running the way given.
@@ -187,7 +171,7 @@ end
 ---@param final_block bpgen.ItemFluidPlantsBlock
 ---@return bpgen.ItemFluidChainPlaces
 local function places_of(request, plants_block, final_block)
-  local belts_x = lead_of(request.belts_part)
+  local belts_x = 0
   local belts_right, belts_bottom = extent_of(request.belts_part.entities, request.size_of)
   local plants_x = belts_x + belts_right + 1 + BLOCK_GAP
   local plants_product = plants_x + plants_block.product_belt.column
@@ -215,7 +199,7 @@ local function join_poles(entities, request, groups)
   })
 end
 
--- A copy of an entry start moved `dx` columns east, with the column where its belt turns east into its block (`until_x`), if it has one.
+-- A copy of an entry start moved `dx` columns east.
 ---@param start bpgen.EntryStart
 ---@param dx integer
 ---@return bpgen.EntryStart
@@ -225,8 +209,37 @@ local function moved(start, dx)
     copy[key] = value
   end
   copy.x = start.x + dx
-  copy.until_x = start.until_x and start.until_x + dx or nil
   return copy
+end
+
+-- The row above the first row of the blueprint where the entries of the pipes come in, with the band: the first entry is two rows above the
+-- band, so that the display panel of the belt that comes in at its first row has room (see scripts/labels.lua).
+local BAND_ENTRY_TOP = -2
+
+-- Brings in everything that comes in, at the top left corner: with `request.band`, the belts of raw items through one band (see
+-- scripts/shared_band.lua), which moves the blueprint east and down, and the pipes above it, going down through the band with underground
+-- pipes; without it, each belt and pipe on a row of its own (see scripts/corner_entries.lua). Returns the entries, from the top.
+---@param entities bpgen.Entity[]  the blueprint, which poles are in
+---@param starts bpgen.EntryStart[]
+---@param request {band?: bpgen.BandRequest, size_of: fun(entity: bpgen.Entity): integer, integer}
+---@return {key: string, x: integer, y: integer}[]
+local function bring_in(entities, starts, request)
+  local band = request.band
+  if not band then
+    return corner_entries.add(entities, starts)
+  end
+  local added = shared_band.add(entities, starts, band.names, band.options)
+  for _, start in ipairs(added.starts) do
+    assert(not start.belt, "item_fluid_chain: a belt of raw items has no feed, so the band cannot bring it in")
+  end
+  local inlets = corner_entries.add(entities, added.starts, {
+    top = BAND_ENTRY_TOP, taken = grid.taken_tiles(entities, request.size_of), pipe_to_ground = band.names.pipe_to_ground,
+  })
+  for _, supply in ipairs(added.supplies) do
+    inlets[#inlets + 1] = {key = supply.item, x = supply.x, y = supply.y}
+  end
+  table.sort(inlets, function(first, second) return first.y < second.y end)
+  return inlets
 end
 
 -- Where everything that comes in starts: the pipes of the plants part (moved to where it stands), the trunk of the fluid of the final
@@ -281,7 +294,7 @@ end
 ---@return bpgen.ItemFluidChain
 function item_fluid_chain.build(request)
   local block = item_fluid_chain.build_block(request)
-  local inlets = corner_entries.add(block.entities, block.starts)
+  local inlets = bring_in(block.entities, block.starts, request)
   join_poles(block.entities, request, block.groups)
   return {entities = block.entities, inlets = inlets, places = block.places, final = block.final}
 end
@@ -306,9 +319,9 @@ end
 ---@return bpgen.NestedChainPlaces
 local function nested_places_of(request, final_block)
   local first, second, chain = request.first_part, request.second_part, request.fluid_chain
-  local first_x = lead_of(first)
+  local first_x = 0
   local first_right, first_bottom = extent_of(first.entities, request.size_of)
-  local second_x = first_x + first_right + 1 + BLOCK_GAP + lead_of(second)
+  local second_x = first_x + first_right + 1 + BLOCK_GAP
   local second_right, second_bottom = extent_of(second.entities, request.size_of)
   local chain_x = second_x + second_right + 1 + BLOCK_GAP
   local chain_right, chain_bottom = extent_of(chain.entities, request.size_of)
@@ -399,7 +412,7 @@ function item_fluid_chain.build_nested(request)
   add_second_belt(entities, request.final_plants.belt, places, request.second_part.product.last_row + 1)
   add_belt_b_tail(entities, request.final_plants.belt, places, final_block.last_row + 1)
   add_fluid_link(entities, request, places)
-  local inlets = corner_entries.add(entities, nested_starts_of(request, places))
+  local inlets = bring_in(entities, nested_starts_of(request, places), request)
   local groups = {copies_of(request.first_part.poles, first_added), copies_of(request.second_part.poles, second_added)}
   for _, group in ipairs(request.fluid_chain.groups) do
     groups[#groups + 1] = copies_of(group, chain_added)

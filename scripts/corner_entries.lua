@@ -15,14 +15,6 @@
 --   o=. . v           row -1: the entry of the pipe that starts at the column 1
 --   . = . . v         row 0 and below: the blueprint, with its pipe and belt starting here
 --
--- A belt that does not go on south but turns east, to a block that takes its belts from the west (the first tile of the block is east of
--- the column the belt comes down), says where it turns east to (`until_x`): it comes down its column to the row of the block, which is
--- `start.y`, and runs east along that row up to that column.
---
---   o>>>v             row -4
---   . . . v
---   . . . >>>[block]  the row of the block, `start.y`; `until_x` is the last tile before the block
---
 -- Two pipes of one fluid that start at different columns are one entry (`joins`): the pipe of the one that starts furthest east goes up to
 -- the row and west along it to the edge, as above, and the other goes up to the same row and joins it there, so that the player brings the
 -- fluid once and it divides itself, as pipes do (there is no splitter to build). The entry is on the row that its furthest start has,
@@ -34,8 +26,21 @@
 --   o=.=...=          row -1: the entry of the pipe that starts at the column 1, west of both
 --   .=.=...=          row 0 and below: the blueprint, with the three pipes starting here
 --
+-- A blueprint with belts across the way of a pipe (the band that divides the belts that come in, see scripts/inputs.lua, which the pipes
+-- come down through from above) gives `taken`, the tiles that are in use: a pipe goes under a run of them with an underground pipe, one
+-- tile before the run and one after it (`u` is the end of an underground pipe), and the entries come in above the first row of the blueprint
+-- as `top` says. The belts of the band are drawn here as `-`:
+--
+--   o=======v         row -4
+--   . . . . =
+--   . . . . u         the tile before the belts
+--   - - - - -         the belts that the pipe goes under
+--   . . . . u         the tile after them
+--   . . . . =
+--
 -- The panels that tell what each entry is are put beside them (scripts/labels.lua).
 
+local constants = require("scripts.constants")
 local entity_list = require("scripts.entity_list")
 local grid = require("scripts.grid")
 
@@ -53,7 +58,7 @@ local ROWS_APART = 3
 ---@field y integer
 ---@field name string  prototype name of the pipe or the belt
 ---@field belt? boolean  a belt: the tiles run east along the row and south down the column, where a pipe has no direction
----@field until_x? integer  of a belt: the column of the last tile of the run east along the row `y`, when it does not go on south
+---@field feed? bpgen.Feed  of a belt of raw items that the band of scripts/shared_band.lua brings down: what it takes a minute; the band draws the belt as far as its first tile, so `corner_entries` is not asked for it
 ---@field joins? string  of a pipe: the key of the start of another pipe, of the same fluid, whose entry this one joins (see the head of this file)
 
 -- The tiles of a run of an entry, from `first` to `last` along the column or the row `across`, going the way given (nothing for a pipe).
@@ -67,16 +72,54 @@ local function add_run(entities, start, run)
   end
 end
 
--- The tiles of one entry: up from the tile where it starts to the row, and west along it to the edge (and, for a belt that turns east, the
--- run east to the block).
+-- What a run of an entry is asked for.
+---@class bpgen.EntryOptions
+---@field top? integer  the first row of the blueprint: the entries come in above it (the top row of the starts by default)
+---@field taken? table<string, true>  the tiles in use, as `grid.key`s: a pipe goes under them
+---@field pipe_to_ground? string  the prototype name of the underground pipe, when `taken` is given
+
+-- A pipe down a column, from row `first` to row `last`: plain pipes, and where tiles are taken an underground pipe from the tile before them to
+-- the tile after them.
+---@param entities bpgen.Entity[]
+---@param start bpgen.EntryStart
+---@param first integer
+---@param last integer
+---@param options bpgen.EntryOptions
+local function add_pipe_column(entities, start, first, last, options)
+  local taken, row = options.taken or {}, first
+  local function add(name, at, direction)
+    assert(not taken[grid.key(start.x, at)] and at >= first and at <= last, "corner_entries: a pipe has no free tile to come out of the ground at")
+    entity_list.append(entities, {name = name, position = grid.position(start.x, at), direction = direction})
+  end
+  while row <= last do
+    if taken[grid.key(start.x, row + 1)] and row + 1 <= last then
+      local after = row + 1
+      while taken[grid.key(start.x, after + 1)] do
+        after = after + 1
+      end
+      assert(after + 1 - row < constants.PIPE_REACH, "corner_entries: a pipe has to pass under more belts than an underground pipe spans")
+      add(assert(options.pipe_to_ground, "corner_entries: no underground pipe for a pipe that crosses belts"), row, north)
+      add(options.pipe_to_ground, after + 1, south)
+      row = after + 2
+    else
+      add(start.name, row)
+      row = row + 1
+    end
+  end
+end
+
+-- The tiles of one entry: up from the tile where it starts to the row, and west along it to the edge.
 ---@param entities bpgen.Entity[]
 ---@param start bpgen.EntryStart
 ---@param row integer
-local function add_line(entities, start, row)
-  local up, along = start.belt and south or nil, start.belt and east or nil
-  add_run(entities, start, {along = "column", across = start.x, first = row, last = start.y - 1, direction = up})
-  add_run(entities, start, {along = "row", across = row, first = 0, last = start.x - 1, direction = along})
-  add_run(entities, start, {along = "row", across = start.y, first = start.x, last = start.until_x or start.x - 1, direction = along})
+---@param options bpgen.EntryOptions
+local function add_line(entities, start, row, options)
+  if start.belt then
+    add_run(entities, start, {along = "column", across = start.x, first = row, last = start.y - 1, direction = south})
+  else
+    add_pipe_column(entities, start, row, start.y - 1, options)
+  end
+  add_run(entities, start, {along = "row", across = row, first = 0, last = start.x - 1, direction = start.belt and east or nil})
 end
 
 -- One entry: the starts that come in as one, the one the others join first.
@@ -132,26 +175,41 @@ local function assert_planar(entries)
   end
 end
 
--- The pipes and belts of the entries of `starts`, appended to `entities`. Gives the entry of each, at the west edge, in the order of the
--- entries from the west: the key is that of the start the others join, when there are several.
----@param entities bpgen.Entity[]
+-- The first row of the blueprint: the one the options give, or the top row of the starts.
 ---@param starts bpgen.EntryStart[]
----@return {key: string, x: integer, y: integer}[] entries  `x` is 0 and `y` the row of the entry
-function corner_entries.add(entities, starts)
-  local ordered = entries_of(starts)
-  assert_planar(ordered)
-  table.sort(ordered, function(first, second) return first.far.x < second.far.x end)
+---@param options bpgen.EntryOptions
+---@return integer
+local function first_row_of(starts, options)
+  if options.top then
+    return options.top
+  end
   local top = math.huge
   for _, start in ipairs(starts) do
     top = math.min(top, start.y)
   end
+  return top
+end
+
+-- The pipes and belts of the entries of `starts`, appended to `entities`. Gives the entry of each, at the west edge, in the order of the
+-- entries from the west: the key is that of the start the others join, when there are several.
+---@param entities bpgen.Entity[]
+---@param starts bpgen.EntryStart[]
+---@param options? bpgen.EntryOptions
+---@return {key: string, x: integer, y: integer}[] entries  `x` is 0 and `y` the row of the entry
+function corner_entries.add(entities, starts, options)
+  options = options or {}
+  local ordered = entries_of(starts)
+  assert_planar(ordered)
+  table.sort(ordered, function(first, second) return first.far.x < second.far.x end)
+  local top = first_row_of(starts, options)
   local entries = {}
   for index, entry in ipairs(ordered) do
     local row = top - 1 - ROWS_APART * (index - 1)
-    add_line(entities, entry.far, row)
+    add_line(entities, entry.far, row, options)
     for _, start in ipairs(entry.starts) do
       if start ~= entry.far then
-        add_run(entities, start, {along = "column", across = start.x, first = row + 1, last = start.y - 1})
+        assert(not start.belt, "corner_entries: only pipes join each other")
+        add_pipe_column(entities, start, row + 1, start.y - 1, options)
       end
     end
     entries[index] = {key = entry.starts[1].key, x = 0, y = row}

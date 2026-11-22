@@ -403,6 +403,21 @@ function inputs.fuel_tail(names, column, last, head)
   return band.entities
 end
 
+-- The belts of a column that run south from row `first` to row `last` (none when `last` is above `first`): the belt of a leaf from the last tile
+-- of its descent to the first tile of the block it comes down to, when the block stands lower than the descent ends.
+---@param names bpgen.SharedNames
+---@param column integer
+---@param first integer
+---@param last integer
+---@return bpgen.NewEntity[]
+function inputs.belts_down(names, column, first, last)
+  local band = new_band(names, {})
+  for row = first, last do
+    band:add_belt(column, row, south)
+  end
+  return band.entities
+end
+
 -- The top band for this plan, once the columns are placed (every leaf has its `drop_x`): the entities (without
 -- numbers), the belts the player brings in from the top down, and for every leaf the row of the last tile of its belt.
 -- Gives the trunks and the feeders their rows and the buses their places.

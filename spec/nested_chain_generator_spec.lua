@@ -130,17 +130,6 @@ local function catalog()
   return entries
 end
 
--- The names of the belts that come in, from the top of the blueprint down, which the message of a blueprint of the design with one belt of each
--- material lists.
-local function belts_of(message)
-  local names = {}
-  for _, item in ipairs(message[5]) do
-    local name = type(item) == "table" and tostring(item[1]):match("^item%-name%.(.+)$")
-    names[#names + 1] = name or nil
-  end
-  return names
-end
-
 -- What the belt tracer finds wrong with the lanes of the belts. For the design with one belt of each material (`belts` names the belts that
 -- come in, from the top down) it is told where each starts, at the west edge above the blueprint, and that a furnace takes the ore on one lane and
 -- the fuel on the other.
@@ -158,7 +147,7 @@ local function lane_problems(entities, belts)
     local rows = {}
     for _, belt in ipairs(builders.entities_named(entities, "transport-belt")) do
       local tile = grid.top_left_tile(belt.position)
-      if tile.x == 0 and tile.y < 0 then
+      if tile.x == 0 then
         rows[#rows + 1] = tile.y
       end
     end
@@ -211,7 +200,7 @@ describe("the generator for an item made from two items on belts and a fluid tha
         local result = generator.generate("battery", rate, force)
 
         assert.are.same({}, validator.validate(renamed(result.entities), catalog()))
-        assert.are.same({}, lane_problems(result.entities, force and belts_of(result.message) or nil))
+        assert.are.same({}, lane_problems(result.entities, force and builders.belts_named(result.message) or nil))
       end
     end)
   end
@@ -237,20 +226,20 @@ describe("the generator for an item made from two items on belts and a fluid tha
 
     local result = generator.generate("battery", 100, fake_force{})
 
-    -- six belts: the ore and the fuel of the furnaces of the batteries' iron, of the copper and of the iron of the acid
+    -- three belts, one for each material: the ore of the iron of the batteries and of the acid together, the copper ore and the coal of the three furnaces
     assert.are.equal("blueprint-generation.generated-with-belts", result.message[1])
-    assert.are.equal(6, #belts_of(result.message))
+    assert.are.same({"coal", "iron-ore", "copper-ore"}, builders.belts_named(result.message))
   end)
 
-  it("puts a display panel beside each of the six belts, the crude oil and the water, once the force has unlocked it", function()
+  it("puts a display panel beside each of the three belts, the crude oil and the water, once the force has unlocked it", function()
     _G.prototypes = battery_game()
 
     local result = generator.generate("battery", 100, fake_force{})
 
-    assert.are.equal(8, count_named(result.entities, "display-panel"))
+    assert.are.equal(5, count_named(result.entities, "display-panel"))
   end)
 
-  it("brings every entry to the top left corner, on a row of its own", function()
+  it("brings every entry to the top left corner, on a row of its own: the pipes above the band, the belts in it", function()
     _G.prototypes = battery_game()
 
     local result = generator.generate("battery", 100, fake_force{})
@@ -258,12 +247,12 @@ describe("the generator for an item made from two items on belts and a fluid tha
     local rows = {}
     for _, entity in ipairs(result.entities) do
       local tile = grid.top_left_tile(entity.position)
-      if tile.x == 0 and tile.y < 0 and (entity.name == "transport-belt" or entity.name == "pipe") then
+      if tile.x == 0 and (entity.name == "transport-belt" or entity.name == "pipe") then
         rows[#rows + 1] = tile.y
       end
     end
     table.sort(rows)
-    assert.are.same({-22, -19, -16, -13, -10, -7, -4, -1}, rows)
+    assert.are.same({-6, -3, 0, 2, 5}, rows)
   end)
 
   describe("the most one blueprint makes", function()

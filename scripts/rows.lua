@@ -66,6 +66,7 @@
 -- lower, under a band along the top (scripts/inputs.lua) where scripts/feeds.lua's trunks are made from
 -- the belts that come in, with splitters and underground belts. It needs both of those researched.
 
+local constants = require("scripts.constants")
 local entity_list = require("scripts.entity_list")
 local feeds = require("scripts.feeds")
 local grid = require("scripts.grid")
@@ -670,8 +671,7 @@ end
 -- The most tiles of pipe that one pump serves: a pipe system longer than that needs another pump.
 local MOST_PIPES_OF_A_PUMP = 320
 
--- The farthest apart the two ends of an underground pipe may be: the game allows 10; a hop here stays under it, 9 at the most.
-local PIPE_REACH = 10
+local PIPE_REACH = constants.PIPE_REACH
 
 -- The tops of the trunks of pipes of the columns that take a fluid, as tiles.
 ---@param columns bpgen.Column[]

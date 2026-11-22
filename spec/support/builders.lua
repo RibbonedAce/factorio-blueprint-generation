@@ -197,6 +197,19 @@ function builders.entities_named(entities, name)
   return found
 end
 
+-- The items of the belts that come in, from the top of the blueprint down, as the message of a blueprint in the design with one belt of each material
+-- lists them (`message[5]` is a text that joins the names of the items).
+---@param message table
+---@return string[]
+function builders.belts_named(message)
+  local names = {}
+  for _, item in ipairs(message[5]) do
+    local name = type(item) == "table" and tostring(item[1]):match("^item%-name%.(.+)$")
+    names[#names + 1] = name or nil
+  end
+  return names
+end
+
 -- How many entities of the list have the name.
 ---@param entities table[]
 ---@param name string
