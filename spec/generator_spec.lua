@@ -3904,7 +3904,7 @@ describe("generator", function()
       generator.generate("basic-oil-processing", 1000, fake_force{})
       lights.add = add
 
-      assert.are.same({{x = -1, y = -1}}, told.free_tiles)
+      assert.are.same({{x = -3, y = -1}}, told.free_tiles)
     end)
 
     it("puts a display panel with the crude oil beside the entry at the top left corner, above it, once the force has unlocked it", function()
@@ -3918,7 +3918,7 @@ describe("generator", function()
         panels[#panels + 1] = {tile.x, tile.y, panel.icon.type, panel.icon.name}
       end
       table.sort(panels, function(a, b) return a[1] < b[1] end)
-      assert.are.same({{0, -2, "fluid", "crude-oil"}}, panels)
+      assert.are.same({{-2, -2, "fluid", "crude-oil"}}, panels)
     end)
 
     it("has no panels without the force's display panel, nor without a force", function()
@@ -3974,12 +3974,12 @@ describe("generator", function()
       assert.are.same({nil, {"blueprint-generation.error-locked", {"fluid-name.petroleum-gas"}}}, {result, error_message})
     end)
 
-    it("builds with the medium pole, one for each refinery, once the force has unlocked it", function()
+    it("builds with the medium pole once the force has unlocked it", function()
       _G.prototypes = oil_game()
 
       local result = generator.generate("basic-oil-processing", 1000, fake_force{})
 
-      assert.are.same({2, 0}, {count_named(result.entities, "medium-electric-pole"), count_named(result.entities, "small-electric-pole")})
+      assert.are.same({3, 0}, {count_named(result.entities, "medium-electric-pole"), count_named(result.entities, "small-electric-pole")})
     end)
 
     it("puts lamps on the blueprint once the force has unlocked the small lamp", function()
@@ -4319,7 +4319,7 @@ describe("generator", function()
         generator.generate("plastic-bar", 100, fake_force{})
         lights.add = add
 
-        assert.are.same({{x = -1, y = -1}, {x = -1, y = -4}}, told.free_tiles)
+        assert.are.same({{x = -3, y = -1}, {x = -1, y = -4}}, told.free_tiles)
       end)
 
       describe("with plants of 3 x 3 or 7 x 7 and the poles of the game", function()
@@ -4547,7 +4547,7 @@ describe("generator", function()
         generator.generate("sulfur", 100, fake_force{})
         lights.add = add
 
-        assert.are.same({{x = -1, y = -1}, {x = -1, y = -4}}, told.free_tiles)
+        assert.are.same({{x = -3, y = -1}, {x = -3, y = -4}}, told.free_tiles)
       end)
 
       it("puts a display panel with each fluid that comes in at the north end, once the force has unlocked the panel", function()

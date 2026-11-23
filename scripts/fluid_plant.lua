@@ -349,7 +349,8 @@ end
 ---@param entities bpgen.Entity[]
 ---@param request bpgen.FluidPlantBuild
 ---@param groups bpgen.Entity[][]  the poles of the machines that make the fluid and of the plants, from the top
-local function join_poles(entities, request, groups)
+---@param entry_poles bpgen.Entity[]  the poles of the pumps of the entries
+local function join_poles(entities, request, groups, entry_poles)
   local sizes = {[request.makers.machine] = request.makers.size, [request.plants.machine] = request.plants.size}
   local taken = grid.taken_tiles(entities, function(entity)
     local across = sizes[entity.name] or 1
@@ -358,6 +359,9 @@ local function join_poles(entities, request, groups)
   local firsts = {}
   for _, group in ipairs(groups) do
     firsts[#firsts + 1] = {group[1]}
+  end
+  for _, pole in ipairs(entry_poles) do
+    firsts[#firsts + 1] = {pole}
   end
   poles.join(firsts, {
     entities = entities, taken = taken, pole = request.makers.pole, wire_distance = request.makers.pole_wire_distance,
@@ -442,8 +446,8 @@ end
 ---@return {input: {x: integer, y: integer}, output: {x: integer, y: integer}, supplied?: {x: integer, y: integer}, inlets: bpgen.EntryStart[]} entries  `supplied`: where the fluid that comes in beside the machines that make the fluid starts, for plants that take two; `inlets`: the entries of what comes in, at the west edge (keys "input", "supplied", "items"), see scripts/corner_entries.lua
 function fluid_plant.build(request)
   local block = fluid_plant.build_block(request)
-  block.entries.inlets = corner_entries.add(block.entities, block.entries.starts)
-  join_poles(block.entities, request, block.groups)
+  block.entries.inlets = corner_entries.add(block.entities, block.entries.starts, {pump = request.pump, pole = request.makers.pole})
+  join_poles(block.entities, request, block.groups, corner_entries.poles_of(block.entries.inlets))
   return block.entities, block.entries
 end
 

@@ -21,27 +21,27 @@ local fake_force = builders.fake_force
 -- What each recipe makes at the most, and what limits it: where the steps of belts or the part that makes the fluid cannot go on.
 local CASES = {
   {
-    recipe = "gas-flask", fluid = "petroleum-gas", alone = "basic-oil-processing", designs = {"original", "new"}, rates = {1, 10, 225}, most = "225", pumps = 0,
+    recipe = "gas-flask", fluid = "petroleum-gas", alone = "basic-oil-processing", designs = {"original", "new"}, rates = {1, 10, 225}, most = "225", pumps = 1,
     -- two iron plates for each flask, on a lane of 450 a minute (the refineries could make flasks' worth of gas up to 691)
     panels = {"coal", "crude-oil", "iron-ore"},
     described = "gas-flask: 18.75 per minute from 2 x stone-furnace, 2 x oil-refinery, 1 x assembling-machine-2",
     taken = {coal = "2.7", ["crude-oil"] = "2400", ["iron-ore"] = "37.5"}, order = {"iron-ore", "coal", "crude-oil"},
   },
   {
-    recipe = "acid-flask", fluid = "sulfuric-acid", alone = "sulfuric-acid", designs = {"original", "new"}, rates = {1, 10, 84}, most = "84", pumps = 0,
+    recipe = "acid-flask", fluid = "sulfuric-acid", alone = "sulfuric-acid", designs = {"original", "new"}, rates = {1, 10, 84}, most = "84", pumps = 2,
     -- the chain that makes the acid makes 4,200 a minute at the most, which is 84 flasks of 50 units
     panels = {"coal", "crude-oil", "iron-ore", "water"},
     described = "acid-flask: 18.75 per minute from 2 x stone-furnace, 6 x oil-refinery, 5 x chemical-plant, 2 x stone-furnace, 1 x assembling-machine-2",
     taken = {coal = "5.4", ["crude-oil"] = "6720", ["iron-ore"] = "75", water = "5544"}, order = {"iron-ore", "coal", "water", "crude-oil"},
   },
   {
-    recipe = "petroleum-gas-barrel", fluid = "petroleum-gas", alone = "basic-oil-processing", designs = {"new"}, rates = {1, 10, 180}, most = "180", pumps = 0,
+    recipe = "petroleum-gas-barrel", fluid = "petroleum-gas", alone = "basic-oil-processing", designs = {"new"}, rates = {1, 10, 180}, most = "180", pumps = 1,
     panels = {"coal", "crude-oil", "iron-ore"},
     described = "petroleum-gas-barrel: 11.25 per minute from 3 x stone-furnace, 3 x stone-furnace, 1 x assembling-machine-2, 2 x oil-refinery, 1 x assembling-machine-2",
     taken = {coal = "8.1", ["crude-oil"] = "2400", ["iron-ore"] = "56.25"}, order = {"iron-ore", "coal", "crude-oil"},
   },
   {
-    recipe = "sulfuric-acid-barrel", fluid = "sulfuric-acid", alone = "sulfuric-acid", designs = {"new"}, rates = {1, 10, 84}, most = "84", pumps = 0,
+    recipe = "sulfuric-acid-barrel", fluid = "sulfuric-acid", alone = "sulfuric-acid", designs = {"new"}, rates = {1, 10, 84}, most = "84", pumps = 2,
     panels = {"coal", "crude-oil", "iron-ore", "water"},
     described = "sulfuric-acid-barrel: 11.25 per minute from 3 x stone-furnace, 3 x stone-furnace, 1 x assembling-machine-2, 3 x oil-refinery, 3 x chemical-plant, "
       .. "1 x stone-furnace, 1 x assembling-machine-2",
@@ -82,7 +82,7 @@ describe("a recipe on belts whose last step takes a fluid that machines make", f
         end
       end)
 
-      it("brings in no pump for the " .. case.fluid .. " of " .. case.recipe .. " in the " .. design .. " design", function()
+      it("puts a pump on each pipe that comes in for " .. case.recipe .. " in the " .. design .. " design, and none for the " .. case.fluid, function()
         _G.prototypes = the_game()
 
         local result = generator.generate(case.recipe, case.rates[2], force)

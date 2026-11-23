@@ -7,6 +7,7 @@ local config = require("scripts.config")
 local constants = require("scripts.constants")
 local chain = require("scripts.chain")
 local planner = require("scripts.planner")
+local poles = require("scripts.poles")
 local layout = require("scripts.layout")
 local input_side = require("scripts.input_side")
 local inputs = require("scripts.inputs")
@@ -1897,6 +1898,28 @@ local function row_sizes(job)
   return sizes
 end
 
+-- Wires the poles of the pumps of the entries to the poles of the row, with poles between them where a wire does not reach.
+---@param entities bpgen.Entity[]
+---@param inlets {pole?: bpgen.Entity}[]
+---@param names bpgen.SharedNames
+---@param sizes table<string, integer>
+local function join_row_poles(entities, inlets, names, sizes)
+  local row_poles, groups = {}, {}
+  for _, entity in ipairs(entities) do
+    if entity.name == names.pole and not (inlets[1] and inlets[1].pole == entity) then
+      row_poles[#row_poles + 1] = entity
+    end
+  end
+  groups[1] = {row_poles[1]}
+  for _, pole in ipairs(corner_entries.poles_of(inlets)) do
+    groups[#groups + 1] = {pole}
+  end
+  poles.join(groups, {
+    entities = entities, taken = grid.taken_tiles(entities, function(entity) return inputs.footprint(entity, names, sizes) end),
+    pole = names.pole, wire_distance = names.pole_wire_distance,
+  })
+end
+
 -- A row of machines for the fluid asked for, and the words for the player: what the row makes and takes a minute.
 ---@param job bpgen.Job
 ---@return bpgen.Generated|nil
@@ -1910,7 +1933,8 @@ local function generate_fluid_row(job)
   end
   local entities, entries = fluid_row.build(fluid_row_build(job, stage, plan.machines))
   fluid_row.turn(entities, entries, stage.machine, machine_size_of(stage))
-  local inlets = corner_entries.add(entities, {{key = "input", x = entries.input.x, y = entries.input.y, name = job.names.pipe}})
+  local inlets = corner_entries.add(entities, {{key = "input", x = entries.input.x, y = entries.input.y, name = job.names.pipe}}, {pump = job.names.pump, pole = job.names.pole})
+  join_row_poles(entities, inlets, job.names, row_sizes(job))
   finishing.add_inlet_labels(job, entities, inlets, {input = {name = stage.recipe.fluids[1].name, type = "fluid"}}, row_sizes(job))
   finishing.add_row_lights(job, entities, inlets, row_sizes(job))
   local crafts = plan.output_per_minute / planner.amount_made(stage.recipe, stage.item)
@@ -1958,7 +1982,7 @@ local function fluid_plant_build(job, plan)
     },
     inserter = job.names.inserter, belt = job.names.belt, output_inserters = plan.output_inserters, output_winds = plan.output_winds,
     item_input = #stage.recipe.ingredients == 1 or nil,
-    pipe_to_ground = job.names.pipe_to_ground, underground_reach = config.pipe_to_ground_reach,
+    pipe_to_ground = job.names.pipe_to_ground, underground_reach = config.pipe_to_ground_reach, pump = job.names.pump,
   }
 end
 
@@ -2388,7 +2412,7 @@ end
 local function chain_request(job, plans, block, sizes)
   return {
     plants_part = fluid_plant_build(plans.plants_job, plans.plants), belts_part = block, final_plants = item_fluid_plants_request(job, plans.final),
-    shared_fluid = shares_fluid(job, plans), band = band_of(job), size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
+    shared_fluid = shares_fluid(job, plans), band = band_of(job), pump = job.names.pump, size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
   }
 end
 
@@ -2520,7 +2544,7 @@ local function nested_request(job, plans, parts, sizes)
   return {
     first_part = parts.first.block --[[@as bpgen.BeltsBlock]], second_part = parts.second.block --[[@as bpgen.BeltsBlock]],
     fluid_chain = parts.chain.block --[[@as bpgen.ItemFluidChainBlock]], final_plants = item_fluid_plants_request(job, plans.final), band = band_of(job),
-    size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
+    pump = job.names.pump, size_of = function(entity) return inputs.footprint(entity, job.names, sizes) end,
   }
 end
 

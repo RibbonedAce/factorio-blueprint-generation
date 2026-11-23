@@ -79,6 +79,8 @@ end
 ---@field west? integer  the column of the west edge of the blueprint, where the entries open to the west (0 by default)
 ---@field taken? table<string, true>  the tiles in use, as `grid.key`s: a pipe goes under them
 ---@field pipe_to_ground? string  the prototype name of the underground pipe, when `taken` is given
+---@field pump? string  the prototype name of a pump: each pipe entry then starts with a pump facing east, in the two tiles west of the west edge, which the player's pipe feeds, so that the long pipe that brings the fluid in has its flow divided from the others'; needs `pole`
+---@field pole? string  the prototype name of the pole that powers the pump of each entry, in the row under it (the panel that tells what the entry is goes above)
 
 -- A pipe down a column, from row `first` to row `last`: plain pipes, and where tiles are taken an underground pipe from the tile before them to
 -- the tile after them.
@@ -121,7 +123,14 @@ local function add_line(entities, start, row, options)
   else
     add_pipe_column(entities, start, row, start.y - 1, options)
   end
-  add_run(entities, start, {along = "row", across = row, first = options.west or 0, last = start.x - 1, direction = start.belt and east or nil})
+  local west, pole = options.west or 0, nil
+  if options.pump and not start.belt then
+    assert(options.pole, "corner_entries: a pump needs a pole")
+    entity_list.append(entities, {name = options.pump, position = grid.position(west - 2, row, 2, 1), direction = east}) -- west of the edge: the pipe runs to its east end
+    pole = entity_list.append(entities, {name = options.pole, position = grid.position(west - 2, row + 1)})
+  end
+  add_run(entities, start, {along = "row", across = row, first = west, last = start.x - 1, direction = start.belt and east or nil})
+  return pole
 end
 
 -- One entry: the starts that come in as one, the one the others join first.
@@ -197,7 +206,7 @@ end
 ---@param entities bpgen.Entity[]
 ---@param starts bpgen.EntryStart[]
 ---@param options? bpgen.EntryOptions
----@return {key: string, x: integer, y: integer}[] entries  `x` is 0 and `y` the row of the entry
+---@return {key: string, x: integer, y: integer, pole?: bpgen.Entity}[] entries  `x` is 0 and `y` the row of the entry; `pole` powers the pump of an entry that has one
 function corner_entries.add(entities, starts, options)
   options = options or {}
   local ordered = entries_of(starts)
@@ -207,16 +216,27 @@ function corner_entries.add(entities, starts, options)
   local entries = {}
   for index, entry in ipairs(ordered) do
     local row = top - 1 - ROWS_APART * (index - 1)
-    add_line(entities, entry.far, row, options)
+    local pole = add_line(entities, entry.far, row, options)
     for _, start in ipairs(entry.starts) do
       if start ~= entry.far then
         assert(not start.belt, "corner_entries: only pipes join each other")
         add_pipe_column(entities, start, row + 1, start.y - 1, options)
       end
     end
-    entries[index] = {key = entry.starts[1].key, x = 0, y = row}
+    entries[index] = {key = entry.starts[1].key, x = pole and (options.west or 0) - 2 or 0, y = row, pole = pole}
   end
   return entries
+end
+
+-- The poles of the pumps of some entries (those that have one).
+---@param entries {pole?: bpgen.Entity}[]
+---@return bpgen.Entity[]
+function corner_entries.poles_of(entries)
+  local found = {}
+  for _, entry in ipairs(entries) do
+    found[#found + 1] = entry.pole
+  end
+  return found
 end
 
 return corner_entries

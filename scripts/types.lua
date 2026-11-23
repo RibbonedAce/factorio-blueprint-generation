@@ -515,6 +515,7 @@
 -- What `fluid_plant.build` is asked for: the machines that make a fluid, and the machines that make an item from it.
 ---@class bpgen.FluidPlantBuild
 ---@field makers bpgen.FluidRowBuild  the machines that make the fluid, which stand turned (see `fluid_row.turn`)
+---@field pump? string  prototype name of the pump each pipe entry starts with (none without it)
 ---@field plants {machine: string, recipe: string, size: integer, count: integer, boxes: bpgen.FluidBox[], rows: bpgen.FluidRows, fluid_boxes?: {source: integer, supplied: integer}}  the machines that make the item from it, with the pipe connections they have as they face north; `fluid_boxes` for a recipe that takes a second fluid too: the input boxes (1-based among the input ones) that take the fluid the machines make and the one that comes in
 ---@field output_inserters? integer  how many output inserters each plant has, 1 or 2
 ---@field output_winds? boolean  the belt the inserters drop on winds (scripts/output_side.lua): two inserters for each plant, or one for each, the plants in twos; else a plain belt
@@ -565,6 +566,7 @@
 ---@field plants_part bpgen.FluidPlantBuild  the plants that make one of the items from fluids, with the machines that make the fluid they take
 ---@field belts_part bpgen.BeltsBlock  the block that makes the other item on belts
 ---@field final_plants bpgen.ItemFluidPlantsBuild  the plants that take both items and a fluid
+---@field pump? string  prototype name of the pump each pipe entry starts with (none without it)
 ---@field shared_fluid boolean  whether the fluid that comes in beside the plants part is the one the final plants take: one entry brings it to both
 ---@field band? bpgen.BandRequest  the design that brings in one belt of each material; nil for the original design, a belt of raw items for each block
 ---@field size_of fun(entity: bpgen.Entity): integer, integer  how many tiles across and along the map an entity covers

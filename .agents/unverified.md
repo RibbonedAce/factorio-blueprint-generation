@@ -204,3 +204,8 @@ What the specs cannot show: each section lists what a feature assumes about the 
 - That the underground pipes of the entries of a block made apart (crude oil, water) come out where the specs draw them, under belts of raw items and trunks, which no recipe had before the plants columns.
 - That a block that makes more than the recipe takes (a whole block of plastic for a few advanced circuits) is what the player wants: the raw items the message lists are those of the whole block, as for the recipes made on their own, and the machines wait when their product has nowhere to go.
 - That the fluid pipes of the refineries and plants, which a block made apart carries in a column among the others, do not exceed the length a pipeline may have when the blueprint has several of them: the planner counts the length of each block's run, not the pipes of the whole blueprint.
+
+## Unverified in the pumps at the pipe entries (5be)
+
+- That the pole above each pump of an entry is powered by the network the wires and bridge poles make, and that the pump, which stands west of the blueprint, takes the pipe the player brings to its free west side.
+- That a pump at the entry of a fluid that comes in by a pipe the player already pumps is not in the way.

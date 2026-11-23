@@ -314,7 +314,7 @@ describe("the generator for a fluid made from two items and a fluid", function()
     lights.add = add
 
     -- the water of both plants and the crude oil, above the band, and the iron ore and the coal, in its first and its third row
-    assert.are.same({{x = -1, y = -6}, {x = -1, y = -3}, {x = -1, y = 0}, {x = -1, y = 2}}, told.free_tiles)
+    assert.are.same({{x = -3, y = -6}, {x = -3, y = -3}, {x = -1, y = 0}, {x = -1, y = 2}}, told.free_tiles)
   end)
 
   describe("an item made from an item made in plants, a raw item and a fluid (explosives)", function()

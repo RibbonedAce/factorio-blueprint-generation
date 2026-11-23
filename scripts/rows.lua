@@ -1065,15 +1065,17 @@ end
 -- Wires the poles of the columns into one network (see scripts/poles.lua).
 ---@param columns bpgen.Column[]  at least one has a pole
 ---@param bridge? bpgen.PoleBridge  to put poles between two that are further apart than a wire reaches
----@param inlet_pole? bpgen.Entity  the pole of the pump of the water inlet, which joins them too
-local function join_poles(columns, bridge, inlet_pole)
+---@param extra bpgen.Entity[]  the poles of the pumps (of the water inlet and of the entries of the blocks), which join them too, each alone
+local function join_poles(columns, bridge, extra)
   local groups = {}
   for _, column in ipairs(columns) do
     for _, group in ipairs(column.block and (column.block.pole_groups or {column.block.poles}) or {}) do
       groups[#groups + 1] = group
     end
   end
-  groups[#groups + 1] = inlet_pole and {inlet_pole} or {}
+  for _, pole in ipairs(extra) do
+    groups[#groups + 1] = {pole}
+  end
   poles.join(groups, bridge)
 end
 
@@ -1142,21 +1144,24 @@ end
 ---@param names bpgen.SharedNames
 ---@param inlet_pole? bpgen.Entity  the pole of the pump of the water inlet
 ---@return bpgen.Supply[]
+---@return bpgen.Entity[] poles  of the pumps of the entries
 local function add_block_pipes(entities, columns, names, inlet_pole)
   local starts, fluid_of = pipe_starts_of(columns)
   if #starts == 0 then
-    return {}
+    return {}, {}
   end
   local taken, left = covered_by(entities, columns, names)
   local top = inlet_pole and grid.top_left_tile(inlet_pole.position).y - 1 or ENTRY_TOP
   local entries = corner_entries.add(entities, starts, {
     top = top, taken = taken, west = left, pipe_to_ground = assert(names.pipe_to_ground, "rows: the names give no underground pipe for the pipes of a block"),
+    pump = names.pump, pole = names.pole,
   })
-  local supplies = {}
+  local supplies, poles_of_pumps = {}, {}
   for index, entry in ipairs(entries) do
     supplies[index] = {x = entry.x, y = entry.y, item = fluid_of[entry.key], type = "fluid"}
+    poles_of_pumps[#poles_of_pumps + 1] = entry.pole
   end
-  return supplies
+  return supplies, poles_of_pumps
 end
 
 -- Whether the blueprint has a block made apart.
@@ -1222,8 +1227,9 @@ function rows.build(root, names)
   add_arcs(entities, names, top)
   add_supplier_links(entities, columns, names)
   local inlet_pole = #pipe_trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
-  local entries = add_block_pipes(entities, columns, names, inlet_pole)
-  join_poles(columns, (inlet_pole or has_plants(columns)) and pole_bridge(entities, columns, names) or nil, inlet_pole)
+  local entries, entry_poles = add_block_pipes(entities, columns, names, inlet_pole)
+  entry_poles[#entry_poles + 1] = inlet_pole
+  join_poles(columns, (inlet_pole or has_plants(columns)) and pole_bridge(entities, columns, names) or nil, entry_poles)
   return entities, raw_stages_of(runs), entries
 end
 
@@ -1445,10 +1451,12 @@ end
 local function add_pipes_and_poles(entities, columns, names, supplies)
   add_supplier_links(entities, columns, names)
   local inlet_pole = #pipe_trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
-  for _, entry in ipairs(add_block_pipes(entities, columns, names, inlet_pole)) do
+  local entries, entry_poles = add_block_pipes(entities, columns, names, inlet_pole)
+  for _, entry in ipairs(entries) do
     supplies[#supplies + 1] = entry
   end
-  join_poles(columns, pole_bridge(entities, columns, names), inlet_pole)
+  entry_poles[#entry_poles + 1] = inlet_pole
+  join_poles(columns, pole_bridge(entities, columns, names), entry_poles)
 end
 
 -- The blueprint for `root` in the design that takes one belt of each material (see the top of the file and

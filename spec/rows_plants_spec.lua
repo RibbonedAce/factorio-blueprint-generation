@@ -124,7 +124,7 @@ describe("a block made apart, as a column of the row", function()
     end)
 
     it("brings in the pipe at the top left corner, above the blueprint, and says what it brings", function()
-      assert.are.same({{x = 0, y = -3, item = "crude-oil", type = "fluid"}}, entries)
+      assert.are.same({{x = -2, y = -3, item = "crude-oil", type = "fluid"}}, entries)
     end)
 
     it("passes the validator", function()
@@ -165,7 +165,7 @@ describe("a block made apart, as a column of the row", function()
         "=....................", "=....................", "t....................", ">>>>>>>>v.....^}GGG}v", ">v......v}ii}v^}GGG+v", "bv.......+ii+v^+GGG.v",
         "=v.PPP.v.....v^......", "=v}PPP}v.....v^......", "=v+PPP+v.....v^......", ".......v>>>>>>^......", ".......>>^...........",
       }, drawn(result, 20, 7, -3))
-      assert.are.same({{x = 0, y = -3, item = "crude-oil", type = "fluid"}}, entries)
+      assert.are.same({{x = -2, y = -3, item = "crude-oil", type = "fluid"}}, entries)
       assert.are.same({}, validator.validate(result, catalog()))
     end)
 
@@ -204,8 +204,8 @@ describe("a block made apart, as a column of the row", function()
 
     it("brings the coal of the block in by a pure belt of its own and the pipe above the band, both through the same trunks as any column's", function()
       assert.are.same({
-        "=========....................", "........=....................", "........=....................", ">>v.....=.............^}GGG}v", "..v.....=.............^}GGG+v",
-        ">(v.)v..t.............^+GGG.v", "..SS.>>>>>>>>>>>v.....^......", "..v>>^..b.......v.....^......", "..v.....t.......v}ii}v^......",
+        "=========....................", "........=....................", "........=....................", ">>v.....=.............^}GGG}v", ".+v.....=.............^}GGG+v",
+        ">(v.)v..t.............^+GGG.v", "..SS.>>>>>>>>>>>v.....^......", "..v>>^..b.......v.....^......", "..v...+.t.......v}ii}v^......",
         "..>>>>>>>v.......+ii+v^......", "........bv...........v^......", "........=v.PPP.v.....v^......", "........=v}PPP}v.....v^......",
         "........=v+PPP+v.....v^......", "...............v>>>>>>^......", "...............>>^...........",
       }, drawn(entities, 28, 12, -3))
@@ -213,7 +213,7 @@ describe("a block made apart, as a column of the row", function()
 
     it("says what comes in, from the top down", function()
       assert.are.same({
-        {x = 0, y = -3, item = "crude-oil", type = "fluid"}, {x = 0, y = 0, item = "coal"}, {x = 0, y = 2, item = "iron-ore"},
+        {x = -2, y = -3, item = "crude-oil", type = "fluid"}, {x = 0, y = 0, item = "coal"}, {x = 0, y = 2, item = "iron-ore"},
       }, {supplies[3], supplies[1], supplies[2]})
     end)
 
@@ -237,8 +237,8 @@ describe("a block made apart, as a column of the row", function()
 
       assert.are.same({
         "=========........................", "........=........................", "........=........................", ">>v.....=..............^}GGG}v...",
-        "..v.....=..............^}GGG+v...", ">(v.)v..t..............^+GGG.v...", "..SS.>>>>>>>>>>>>v.....^.........", "..v>>^..b........v.....^.........",
-        "..v.....t........v}ii}v^.........", "..>>>>>>>v........+ii+v^.........", "........bv............v^.........",
+        ".+v.....=..............^}GGG+v...", ">(v.)v..t..............^+GGG.v...", "..SS.>>>>>>>>>>>>v.....^.........", "..v>>^..b........v.....^.........",
+        "..v...+.t........v}ii}v^.........", "..>>>>>>>v........+ii+v^.........", "........bv............v^.........",
         "........=v.PPP.vv.....v^.........", "........=v}PPP}vv.....v^.........", "........=v+PPP+vv.....v^.........",
         "...............v>>>>>>>^.........", "...............>>^...............",
       }, drawn(result, 32, 12, -3))
@@ -281,7 +281,7 @@ describe("a block made apart, as a column of the row", function()
         "PP=============..........", ">>>>>>>>v.....=.^}FFF}v..", ">v......v}ii}v=w^eFFF+v..", "bv.......+ii+v.+^}FFF.v..", "=v.PPP.v.....v..^........",
         "=v}PPP}v.....v..^........", "=v+PPP+v.....v..^........", ".......v>>>>>>>>^........",
       }, picture.draw(result, GLYPHS, 0, -6, 24, 6))
-      assert.are.same({{x = 0, y = -4, item = "crude-oil", type = "fluid"}}, entries)
+      assert.are.same({{x = -2, y = -4, item = "crude-oil", type = "fluid"}}, entries)
     end)
   end)
 
@@ -294,7 +294,7 @@ describe("a block made apart, as a column of the row", function()
 
       local _, _, entries = rows.build(root, NAMES)
 
-      assert.are.same({{x = 0, y = -3, item = "crude-oil", type = "fluid"}}, entries)
+      assert.are.same({{x = -2, y = -3, item = "crude-oil", type = "fluid"}}, entries)
     end)
 
     it("keeps two fluids apart", function()

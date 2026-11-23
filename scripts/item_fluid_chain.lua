@@ -188,10 +188,14 @@ end
 ---@param entities bpgen.Entity[]
 ---@param request bpgen.ItemFluidChainBuild
 ---@param groups bpgen.Entity[][]  the poles of each block, each group wired inside, in the entities
-local function join_poles(entities, request, groups)
+---@param inlets {pole?: bpgen.Entity}[]  the entries, some with the pole of a pump
+local function join_poles(entities, request, groups, inlets)
   local firsts = {}
   for _, group in ipairs(groups) do
     firsts[#firsts + 1] = {group[1]}
+  end
+  for _, pole in ipairs(corner_entries.poles_of(inlets)) do
+    firsts[#firsts + 1] = {pole}
   end
   poles.join(firsts, {
     entities = entities, taken = grid.taken_tiles(entities, request.size_of), pole = request.final_plants.pole,
@@ -226,7 +230,7 @@ local BAND_ENTRY_TOP = -2
 local function bring_in(entities, starts, request)
   local band = request.band
   if not band then
-    return corner_entries.add(entities, starts)
+    return corner_entries.add(entities, starts, {pump = request.pump, pole = request.final_plants.pole})
   end
   local added = shared_band.add(entities, starts, band.names, band.options)
   for _, start in ipairs(added.starts) do
@@ -234,6 +238,7 @@ local function bring_in(entities, starts, request)
   end
   local inlets = corner_entries.add(entities, added.starts, {
     top = BAND_ENTRY_TOP, taken = grid.taken_tiles(entities, request.size_of), pipe_to_ground = band.names.pipe_to_ground,
+    pump = request.pump, pole = request.final_plants.pole,
   })
   for _, supply in ipairs(added.supplies) do
     inlets[#inlets + 1] = {key = supply.item, x = supply.x, y = supply.y}
@@ -295,7 +300,7 @@ end
 function item_fluid_chain.build(request)
   local block = item_fluid_chain.build_block(request)
   local inlets = bring_in(block.entities, block.starts, request)
-  join_poles(block.entities, request, block.groups)
+  join_poles(block.entities, request, block.groups, inlets)
   return {entities = block.entities, inlets = inlets, places = block.places, final = block.final}
 end
 
@@ -429,7 +434,7 @@ end
 function item_fluid_chain.build_nested(request)
   local block = item_fluid_chain.build_nested_block(request)
   local inlets = bring_in(block.entities, block.starts, request)
-  join_poles(block.entities, request, block.groups)
+  join_poles(block.entities, request, block.groups, inlets)
   return {entities = block.entities, inlets = inlets, places = block.places, final = block.final}
 end
 
