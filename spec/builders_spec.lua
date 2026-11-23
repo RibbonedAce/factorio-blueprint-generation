@@ -283,11 +283,13 @@ describe("builders", function()
         assert.are.same({}, boxes[1].pipe_connections[1].positions)
       end)
 
-      it("are an input and an output with no connection for a machine that takes a fluid in", function()
+      it("are an input and an output for a machine that takes a fluid in, with the connections of an assembling machine 2: the middle of its top and of its bottom side", function()
         local boxes = boxes_of{fluid_input = true}
 
-        assert.are.same({{"input", 1, {}}, {"output", 2, {}}},
-          {{boxes[1].production_type, boxes[1].index, boxes[1].pipe_connections}, {boxes[2].production_type, boxes[2].index, boxes[2].pipe_connections}})
+        assert.are.same({{"input", 1, "north", {x = 0, y = -1}}, {"output", 2, "south", {x = 0, y = 1}}}, {
+          {boxes[1].production_type, boxes[1].index, boxes[1].pipe_connections[1].direction, boxes[1].pipe_connections[1].positions[1]},
+          {boxes[2].production_type, boxes[2].index, boxes[2].pipe_connections[1].direction, boxes[2].pipe_connections[1].positions[1]},
+        })
       end)
 
       it("are none for a machine that is told nothing about fluids", function()

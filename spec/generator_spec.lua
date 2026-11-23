@@ -20,6 +20,7 @@ local builders = require("spec.support.builders")
 local generator = require("scripts.generator")
 local config = require("scripts.config")
 local validator = require("spec.support.blueprint_validator")
+local tracer = require("spec.support.belt_tracer")
 local grid = require("scripts.grid")
 
 local fake_prototypes = builders.fake_prototypes
@@ -1836,6 +1837,73 @@ describe("generator", function()
       end)
     end)
 
+    describe("one made ingredient and a fluid: the step takes a column of its own, with room for its pipes", function()
+      -- 5 stone bricks and 100 water make 10 concrete in 10 s: one belt, with the bricks on it, goes to the machines that take the water.
+      local bricks_only = concrete_of{amount_of(5, "stone-brick"), fluid_of(100, "water")}
+      local bricks_recipes = {["stone-brick"] = brick, ["concrete"] = bricks_only}
+
+      -- What the belt tracer finds wrong with the lanes of the concrete made from bricks and water: the furnaces make the bricks from stone, which the
+      -- player supplies, and the machines that take the water eat them.
+      local function lane_problems(entities, belts)
+        local options = {
+          machines = {["stone-furnace"] = {size = 2, eats = {"stone"}, makes = "stone-brick"}, ["assembling-machine-2"] = {size = 3, eats = {"stone-brick"}, makes = "concrete"}},
+          raw = {["stone-furnace"] = true}, product = "concrete",
+        }
+        if belts then
+          local rows = {}
+          for _, belt in ipairs(builders.entities_named(entities, "transport-belt")) do
+            local tile = grid.top_left_tile(belt.position)
+            if tile.x == 0 then
+              rows[#rows + 1] = tile.y
+            end
+          end
+          table.sort(rows)
+          options.underground_reach, options.raw_lanes, options.supplies = 5, {["stone-furnace"] = {"stone", "coal"}}, {}
+          for index, item in ipairs(belts) do
+            options.supplies[index] = {x = 0, y = rows[index], item = item}
+          end
+        end
+        return tracer.problems(entities, options)
+      end
+
+      it("builds the machines of the concrete, one pump for their pipes, and a blueprint that passes the validator", function()
+        _G.prototypes = concrete_game{recipes = bricks_recipes}
+
+        local result = generator.generate("concrete", 90)
+
+        assert.are.same({1, {}}, {count_named(result.entities, "pump"), validator.validate(result.entities, catalog())})
+      end)
+
+      it("builds the same in the design that brings in one belt of each material", function()
+        _G.prototypes = concrete_game{recipes = bricks_recipes}
+        local entries = catalog()
+        entries[builders.POLES.medium.name] = {kind = "pole", width = 1, height = 1, supply_radius = builders.POLES.medium.supply_distance, wire_reach = builders.POLES.medium.wire_distance}
+
+        local result = generator.generate("concrete", 90, fake_force{})
+
+        assert.are.same({1, {}}, {count_named(result.entities, "pump"), validator.validate(result.entities, entries)})
+      end)
+
+      it("carries the bricks to the machines that take the water, in both designs of the belts: the belt tracer finds nothing wrong", function()
+        _G.prototypes = concrete_game{recipes = bricks_recipes}
+
+        local original = generator.generate("concrete", 90)
+        local new = generator.generate("concrete", 90, fake_force{})
+
+        assert.are.same({}, lane_problems(original.entities))
+        assert.are.same({}, lane_problems(new.entities, builders.belts_named(new.message)))
+      end)
+
+      it("builds the step inside another step too, where it is a column that the column of that step eats from", function()
+        local wrapped = a_recipe{energy = 0.5, ingredients = {amount_of(1, "concrete"), amount_of(1, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
+        _G.prototypes = concrete_game{recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["concrete"] = bricks_only, ["iron-gear-wheel"] = wrapped}}
+
+        local result = generator.generate("iron-gear-wheel", 10)
+
+        assert.are.same({1, {}}, {count_named(result.entities, "pump"), validator.validate(result.entities, catalog())})
+      end)
+    end)
+
     describe("refused", function()
       local function refusal_for(game_options, rate, force)
         _G.prototypes = concrete_game(game_options)
@@ -1843,25 +1911,6 @@ describe("generator", function()
         assert.is_nil(result)
         return error_message
       end
-
-      it("refuses a step that takes one made ingredient and a fluid inside another step, which is a column in a chain", function()
-        local bricks_only = concrete_of{amount_of(5, "stone-brick"), fluid_of(100, "water")}
-        local wrapped = a_recipe{energy = 0.5, ingredients = {amount_of(1, "concrete"), amount_of(1, "iron-plate")}, products = {amount_of(1, "iron-gear-wheel")}}
-        _G.prototypes = concrete_game{recipes = {["iron-plate"] = plate, ["stone-brick"] = brick, ["concrete"] = bricks_only, ["iron-gear-wheel"] = wrapped}}
-
-        local result, error_message = generator.generate("iron-gear-wheel", 10)
-
-        assert.is_nil(result)
-        assert.are.same({"blueprint-generation.error-fluid-single-input", {"item-name.concrete"}}, error_message)
-      end)
-
-      it("refuses a step that takes one made ingredient and a fluid, which is a column in a chain", function()
-        local bricks_only = concrete_of{amount_of(5, "stone-brick"), fluid_of(100, "water")}
-
-        local error_message = refusal_for{recipes = {["stone-brick"] = brick, ["concrete"] = bricks_only}}
-
-        assert.are.same({"blueprint-generation.error-fluid-single-input", {"item-name.concrete"}}, error_message)
-      end)
 
       it("refuses a recipe that takes two fluids", function()
         local two_fluids = concrete_of{amount_of(1, "iron-stick"), amount_of(5, "stone-brick"), fluid_of(100, "water"), fluid_of(10, "steam")}

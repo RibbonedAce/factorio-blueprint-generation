@@ -197,6 +197,40 @@ function builders.entities_named(entities, name)
   return found
 end
 
+-- Copies of the entities in which each entity called `name` is called by the column it stands in, among the columns of such entities from the
+-- west: `names[1]` for the first, `names[2]` for the second, and so on. The validator and the belt tracer know machines by name, and the furnaces of
+-- a chain (the iron plates, then the steel plates) are all stone furnaces, one column each.
+---@param entities table[]
+---@param name string
+---@param names string[]
+---@param size integer  how many tiles across the entities called `name` cover
+---@return table[]
+function builders.named_by_column(entities, name, names, size)
+  local columns, order = {}, {}
+  for _, entity in ipairs(entities) do
+    local x = entity.name == name and grid.top_left_tile(entity.position, size, size).x or nil
+    if x and not columns[x] then
+      columns[x], order[#order + 1] = true, x
+    end
+  end
+  table.sort(order)
+  local named_at = {}
+  for index, x in ipairs(order) do
+    named_at[x] = assert(names[index], "builders: there are more columns of " .. name .. " than names for them")
+  end
+  local copies = {}
+  for index, entity in ipairs(entities) do
+    copies[index] = {}
+    for key, value in pairs(entity) do
+      copies[index][key] = value
+    end
+    if entity.name == name then
+      copies[index].name = named_at[grid.top_left_tile(entity.position, size, size).x]
+    end
+  end
+  return copies
+end
+
 -- The items of the belts that come in, from the top of the blueprint down, as the message of a blueprint in the design with one belt of each material
 -- lists them (`message[5]` is a text that joins the names of the items).
 ---@param message table
@@ -583,7 +617,8 @@ function builders.fake_prototypes(options)
     }
   end
   -- The fluid boxes of a machine: those `pipe_boxes` has, each with the one pipe connection it says, else those `fluid_boxes`
-  -- names, else an input and an output when `fluid_input` is set, else none.
+  -- names, else an input and an output when `fluid_input` is set, else none. A box of those two kinds has the connection of the assembling
+  -- machine 2: in the middle of the top side for what it takes (as an input or an input-output box), in the middle of the bottom side for what it gives.
   local function fluid_boxes(fields)
     local boxes = {}
     for index, box in ipairs(fields.pipe_boxes or {}) do
@@ -596,7 +631,14 @@ function builders.fake_prototypes(options)
       }
     end
     for _, production_type in ipairs(fields.fluid_boxes or (fields.fluid_input and {"input", "output"} or {})) do
-      boxes[#boxes + 1] = {production_type = production_type, index = #boxes + 1, pipe_connections = {}}
+      local takes = production_type ~= "output"
+      boxes[#boxes + 1] = {
+        production_type = production_type, index = #boxes + 1,
+        pipe_connections = {{
+          connection_type = "normal", positions = turned_positions({x = 0, y = takes and -1 or 1}),
+          direction = takes and defines.direction.north or defines.direction.south,
+        }},
+      }
     end
     return boxes
   end

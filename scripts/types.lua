@@ -110,6 +110,8 @@
 ---@field machine_speed number  the machine's crafting speed
 ---@field fuel? string  item the machine burns; it takes one of the two input lanes (a stage fed raw items, or one that eats one made ingredient)
 ---@field inserters? bpgen.InserterLimits  nil means no limit: one inserter a side, full speed
+---@field block? {max_output: number}  the stage is a block made apart (see `bpgen.PlantsBlock`), not a column of machines: it makes at most `max_output` of its product a minute, as many as are asked for up to that, and what it takes it brings in itself, so it has no suppliers in the tree and takes no inserters or belts of it
+---@field fluid? boolean  the machines of the stage take a fluid, which the column that takes it has pipes for: it is a column of its own, which an arc brings the product of the stage before it to, so that stage is not built wide (an arc carries one lane, and has no winding belt)
 ---@field wide? boolean  the stage may be built wide, which the planner does only when the rate asks more than the plain design makes: a stage fed raw items that burns fuel and eats one ingredient gets a second input belt (the ingredient on both its lanes), woven with the first (the ingredient on one lane, the fuel on the other) so that two plain inserters on every machine reach both, so three lanes of the ingredient, and an output belt that winds (two lanes of product), also when it feeds another column. The stage that eats its product takes it on both lanes, if it eats nothing else and burns no fuel, and the stage must be the root or such a stage's supplier. Needs `inserters.machine_size`, one plain inserter on each side of a machine, and poles that reach the input side from the output side (the generator checks the last)
 
 ---@alias bpgen.PlanReason "unsupported-recipe"|"rate-too-high"  why the planner gave no plan
@@ -127,6 +129,7 @@
 ---@field rate_per_minute number  of the root stage's product
 ---@field lane_items_per_minute number  what one belt lane carries
 ---@field root bpgen.StageTree  the stage that makes what the player wants
+---@field most_per_minute? number  a limit from outside the planner on what the root can make a minute: the fluid it takes comes from a block that makes only so much
 
 ---@class bpgen.PlanTree  the plans for a tree of stages
 ---@field plan bpgen.Plan  the plan of the stage
@@ -188,7 +191,8 @@
 ---@field output_paired? boolean  the machines go in twos and the output belt winds, whatever the size of the machine and the inserter (plain, for a furnace), so that machines side by side fill a lane each and the product rides both lanes, also when the belt feeds another column; needs one output inserter and at least two machines
 ---@field powered_from_output? boolean  the inserters of the input side stand within reach of the poles beside the output side (a medium pole reaches the input inserters of a 2x2 machine from there), so the input side needs no poles of its own and may be full without rows of poles between the machines; the output side keeps a free tile for each machine. The generator sets it for every stage whose pole reaches (the medium pole, for a 2x2 machine)
 ---@field fuel_belt? boolean  the stage burns fuel and eats what the stage before it makes, which that stage puts on both lanes of the belt between them (it is built wide too): the fuel has a belt of its own, in a column beside the inserters (one column further east than usual) that goes under for two rows while the belt between the two stages detours through that column, so that two plain input inserters on every machine reach both (see `Builder:add_fuel_weave`); needs `output_paired` and `powered_from_output`
----@field fluid_input? boolean  the machines take a fluid in, in the middle of the side they face: the column faces them west, has a pipe in the middle row of its input side (an underground pipe from a trunk of pipes under the belts), and so its inserters stand in the top and the bottom row only (see scripts/layout.lua); for a 3x3 machine, and the first column of a chain; `input_belts` is nil or two belts with one inserter each
+---@field fluid_input? boolean  the machines take a fluid in, through the side they face: the column faces them west, has a pipe in the row of each connection of its input side (an underground pipe from a trunk of pipes under the belts), and so its inserters stand in the rows that have none (see scripts/layout.lua); for a 3x3 machine, and the first column of a chain; `input_belts` is nil or two belts with one inserter each
+---@field fluid_connections? integer[]  of a machine that takes a fluid: the rows from the top of a machine of the connections of what it takes, as it faces west (see `input_side.connection_rows`); the middle row, {1}, of an assembling machine when nil. A machine with a connection in its top and its bottom row (the chemical plant) has one row left for its inserter, so one input belt
 ---@field second_input_belt? boolean  the column draws its two input belts itself, woven (belt a goes under for two rows in the column beside the inserters while belt b, one column west, comes into it and goes back; `input_inserters` is 2), since they come down from the band: for a stage fed raw items that takes its second belt from there; the first column of a chain only
 
 -- One column of machines in a chain.
@@ -202,6 +206,8 @@
 ---@field suppliers? (bpgen.StageLayout|bpgen.RawSupplier)[]  what it eats: the stages whose products it eats, in the order of the recipe's ingredients, then the raw item that goes with them, if any; none or one in a chain, two when a recipe has two made ingredients or one made ingredient and a raw one (`rows.build` uses it; `layout.build_chain` ignores it)
 ---@field feed? bpgen.Feed  of a stage that eats only raw items: what it takes from the belts that come in a minute (`rows.build_pure` uses it; the original `rows.build` ignores it)
 ---@field second_feed? bpgen.Feed  of a stage built wide (its shape has `second_input_belt`): what it takes from its second input belt, one item on both lanes; `feed` is then what it takes from the first belt, the ingredient on one lane and the fuel on the other
+---@field fluid_supplier? bpgen.PlantsBlock  of a step that takes a fluid that machines make (petroleum gas from refineries): the block that makes it, which stands right west of the column of the step, its pipe joined to the trunk of the pipes of the step (see scripts/rows.lua)
+---@field plants? bpgen.PlantsBlock  a step that is not made of machines in a column but by a block made apart (plastic bar, in plants fed by refineries): the column of the step is that block (see scripts/rows.lua); the other fields are of a step of machines and are not set
 ---@field fuel_feed? bpgen.Feed  of a stage that burns fuel and eats what the stage before it in its chain makes (steel plate from iron plates): the fuel it takes a minute. It rides the free lane of the belt between the two stages, which therefore runs south, and is side-loaded at the head of that belt (`rows.build_pure` only; the original `rows.build` cannot do it)
 
 -- A raw item that a stage eats next to a made one: no machines, only a belt that brings the
@@ -227,12 +233,14 @@
 -- left edge and y = 0 its top; whoever uses it moves it.
 ---@class bpgen.Block
 ---@field entities bpgen.Entity[]  numbered from 1
----@field poles bpgen.Entity[]  every pole of the block, for wiring it to its neighbours
+---@field poles? bpgen.Entity[]  every pole of the block, for wiring it to its neighbours; nil for a block made apart, which has its poles in `pole_groups`
 ---@field product_column integer  tile column of the product belt, the rightmost column. The block does not draw it unless it is the last block of the blueprint
 ---@field height integer  rows
+---@field width? integer  of a block made apart: its tile columns (see `bpgen.PlantsBlock.width`), which can be more than the product column and one; for the other blocks the product belt is the rightmost column
 ---@field output_rows {first: integer, last: integer}  the rows where the output inserters of the last column drop onto the product belt
 ---@field long_rows? {first: integer, last: integer}  the rows of the first and the last long-handed input inserter of the first column, nil when it has none
 ---@field trunk_rows? table<string, integer>  of a column that takes from woven belts: the tile row, in the frame of the block, of the first tile of each belt (by letter "a", "b" and "c"), which the belt that brings it must end under (see `Builder:trunk_rows`); nil for a column that takes from one belt
+---@field pole_groups? bpgen.Entity[][]  of a block made apart: its poles in the groups that are each wired inside, which the poles of the blueprint are wired to by their nearest pairs (the block has no `poles` list then)
 ---@field pipe_trunk? {column: integer, row: integer}  of a column that takes a fluid: the tile column and the tile row, in the frame of the block, of the top of its trunk of pipes, which the pipe to the pump has to join; nil for a column that takes none
 ---@field raw_belts bpgen.RawBelt[]  where the belts of raw items start, from the top of the block down
 ---@field fuel_feeds bpgen.FuelFeed[]  the stages of the block that take fuel from the belt before them, left to right
@@ -287,11 +295,25 @@
 ---@field wire_distance number  the longest wire the pole holds, in tiles (see `bpgen.SharedNames.pole_wire_distance`)
 
 -- A chain or the column of a raw item, as `scripts/feeds.lua` sees it.
+-- A part of a blueprint made apart from the columns of machines of a recipe, which stands among them as a column of its own: plants that make an
+-- item from fluids and raw items, with the machines that make the fluids (see scripts/plants_block.lua). It is drawn in a frame whose column 0
+-- is its west edge and whose row 0 is its first row, and moved to its place whole.
+---@class bpgen.PlantsBlock
+---@field entities bpgen.Entity[]  numbered from 1, with the wires of its poles
+---@field pole_groups bpgen.Entity[][]  its poles, in groups that are each wired inside
+---@field product {column: integer, last_row: integer, fluid?: boolean}  the tile column of the belt its product leaves on, which runs south, and the row of its last tile: the block draws the belt down to it and the blueprint goes on. A block that makes a fluid (`fluid`) has no belt: the column is the one of the pipe the fluid leaves by, which runs down to that row from the row under it
+---@field width integer  tile columns from its west edge to its east edge: more than `product.column + 1` when the belt of the product winds, which has a column east of the one it leaves on
+---@field height integer  rows
+---@field starts bpgen.EntryStart[]  where what comes in starts: belts of raw items (running south, with their `feed` in the design with one belt of each material) and pipes (each with the `fluid` it brings)
+---@field sizes table<string, integer>  the tiles on a side of each of its machines, by name
+
 ---@class bpgen.FeedLeaf
 ---@field index number  place among the columns, from the west (a fraction for the fuel of a stage in the middle of a chain, just after its chain, and for the second input belt of a chain built wide, just before it)
 ---@field feed bpgen.Feed
 ---@field drop_x? integer  the tile column its belt comes down, once the columns are placed
 ---@field second_of? bpgen.Column  for the second input belt of a chain built wide: the chain
+---@field plants? bpgen.Column  for a belt of raw items of a block made apart: its column
+---@field start? bpgen.EntryStart  for a belt of raw items of a block made apart: where the belt starts in the block
 ---@field owner? bpgen.Column  for a fuel feed: the chain column whose stage burns the fuel
 ---@field fuel? bpgen.FuelFeed  for a fuel feed: where the fuel has to arrive in the block of `owner`
 
@@ -522,7 +544,8 @@
 ---@field columns {trunk: integer, tunnel: integer, belt: integer, inserter: integer, plant: integer, output: integer, pole: integer, width: integer}
 ---@field groups bpgen.Entity[][]  the poles of the plants and the poles of the inserters, each group wired inside
 ---@field last_row integer  the last row of the last plant, where the belt b ends in this block (the belts of the two items reach its south end further down)
----@field output_exit_row integer|nil  the last row of the pipe that takes the made fluid away, whose end opens south; nil for plants that make an item, whose belt leaves in the column `columns.pole`
+---@field output_exit_row integer|nil  the last row of the pipe that takes the made fluid away, whose end opens south; nil for plants that make an item
+---@field output_belt integer|nil  for plants that make an item, the tile column the belt of the product ends in, which runs south (the belt starts a row above the first plant and winds when the plan says so); nil for a fluid
 
 -- The block of the belts part of `item_fluid_chain.build`: the steps that make an item on belts from raw items (furnaces, assemblers, whatever
 -- the belts layout builds), made apart from it by the generator from the game's recipes, in a frame whose (0, 0) is its top-left tile.
@@ -585,6 +608,13 @@
 ---@field trunk integer  the column of the trunk of the fluid of the final plants
 ---@field belt_b integer
 ---@field arc_row integer
+
+---@class bpgen.NestedChainBlock  a nested chain without its entries and the joining of its poles (see `item_fluid_chain.build_nested_block`)
+---@field entities bpgen.Entity[]
+---@field starts bpgen.EntryStart[]  where what comes in starts, in the frame of the block, with the name of its part before the key
+---@field groups bpgen.Entity[][]  the poles of each part, each group wired inside
+---@field places bpgen.NestedChainPlaces
+---@field final bpgen.ItemFluidPlantsBlock
 
 ---@class bpgen.NestedChain
 ---@field entities bpgen.Entity[]

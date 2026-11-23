@@ -26,7 +26,7 @@ flowchart LR
   generator -->|"TreeRequest: StageTree of StageRequest"| planner["planner.lua"]
   planner -->|"PlanTree of Plan"| generator
 
-  generator -->|"StageLayout tree with Feed, SharedNames, InputOptions"| rows["rows.lua"]
+  generator -->|"StageLayout tree with Feed, PlantsBlock, SharedNames, InputOptions"| rows["rows.lua"]
   rows -->|"StageLayout, Names"| layout["layout.lua"]
   layout -->|"Block"| rows
   rows -->|"FeedLeaf list, lane size"| feeds["feeds.lua"]
@@ -36,10 +36,14 @@ flowchart LR
   rows -->|"pole groups, PoleBridge"| poles["poles.lua"]
   poles -->|"wires on poles, bridge poles"| rows
   rows -->|"Entity list, Supply list"| generator
-  generator -->|"Entity list, Supply list, LabelOptions"| labels["labels.lua"]
-  labels -->|"display panels added to the Entity list"| generator
-  generator -->|"Entity list, LightOptions"| lights["lights.lua"]
-  lights -->|"lamps added to the Entity list"| generator
+  generator -->|"Entity list, Supply list, StageLayout, Job"| finishing["finishing.lua"]
+  finishing -->|"Entity list, Supply list, LabelOptions"| labels["labels.lua"]
+  labels -->|"display panels added to the Entity list"| finishing
+  finishing -->|"Entity list, LightOptions"| lights["lights.lua"]
+  lights -->|"lamps added to the Entity list"| finishing
+  finishing -->|"panels and lamps added to the Entity list"| generator
+  rows -->|"EntryStart list, EntryOptions"| corner_entries["corner_entries.lua"]
+  corner_entries -->|"pipes (some underground) added to the Entity list, the entries"| rows
 
   generator -->|"FluidRowRequest"| planner
   planner -->|"FluidRowPlan"| generator
@@ -66,6 +70,15 @@ flowchart LR
   item_fluid_chain -->|"ItemFluidChain: Entity list, entries"| generator
   generator -->|"NestedChainBuild: two BeltsBlocks, ItemFluidChainBlock, ItemFluidPlantsBuild, BandRequest"| item_fluid_chain
   item_fluid_chain -->|"NestedChain: Entity list, entries"| generator
+
+  generator -->|"what fluid_plant, item_fluid_chain or fluid_row built, the fluid of each pipe, the feed of each belt, sizes"| plants_block["plants_block.lua"]
+  plants_block -->|"PlantsBlock"| generator
+  generator -->|"PlannedStage tree"| accounting["accounting.lua"]
+  accounting -->|"RawAmount list, StageSummary list, the Demand of each PlannedStage"| generator
+  generator -->|"a machine prototype, its size"| fluid_boxes["fluid_boxes.lua"]
+  fluid_boxes -->|"FluidBox list"| generator
+  generator -->|"a raw item, the belt, its Feed"| belts_blocks["belts_blocks.lua"]
+  belts_blocks -->|"BeltsBlock"| generator
 
   generator -->|"RawAmount, StageSummary, belts"| messages["messages.lua"]
   messages -->|"LocalisedString, description"| generator
@@ -96,6 +109,21 @@ flowchart TD
   generator --> item_fluid_chain
   generator --> item_fluid_plants
   generator --> output_side
+  generator --> input_side
+  generator --> entity_list
+  generator --> grid
+  generator --> plants_block
+  generator --> accounting
+  generator --> finishing
+  generator --> fluid_boxes
+  generator --> belts_blocks
+  accounting --> planner
+  finishing --> inputs
+  finishing --> labels
+  finishing --> lights
+  plants_block --> grid
+  belts_blocks --> entity_list
+  belts_blocks --> grid
   item_fluid_chain --> item_fluid_plants
   item_fluid_chain --> fluid_plant
   item_fluid_chain --> corner_entries
@@ -121,14 +149,15 @@ flowchart TD
   gui --> recipes
   fluid_row --> layout
   fluid_row --> grid
-  generator --> labels
-  generator --> lights
   labels --> lights
   labels --> grid
   generator --> messages
   lights --> constants
   lights --> grid
   rows --> feeds
+  rows --> constants
+  rows --> corner_entries
+  rows --> entity_list
   rows --> inputs
   rows --> layout
   rows --> poles
@@ -175,6 +204,8 @@ classDiagram
     machine_size
     fluid_input
     fuel_use
+    plants
+    fluid_supplier
   }
   class EnergySource {
     kind
@@ -217,6 +248,7 @@ classDiagram
   class TreeRequest {
     rate_per_minute
     lane_items_per_minute
+    most_per_minute
   }
   class ChainRequest
   class PlanRequest
@@ -253,7 +285,16 @@ classDiagram
     c
   }
   class PlanTree
-  class PlannedStage
+  class PlannedStage {
+    block
+    fluid_block
+  }
+  class PlannedBlock {
+    raws
+    fluids
+    summaries
+    build
+  }
   class Demand {
     name
     amount
@@ -281,6 +322,8 @@ classDiagram
   PlannedStage *-- Plan : plan
   PlannedStage *-- Demand : demand
   PlannedStage o-- PlannedStage : suppliers
+  PlannedStage *-- PlannedBlock : block, a step made in plants
+  PlannedStage *-- PlannedBlock : fluid_block, the part that makes the fluid the root takes
   Job *-- StageData : root
   Job *-- InputOptions : inputs, only for the new design
   TreeRequest ..> PlanTree : planner.plan_tree
@@ -299,6 +342,17 @@ classDiagram
     machine
     belt
     recipe
+    plants
+    fluid_supplier
+  }
+  class PlantsBlock {
+    entities
+    pole_groups
+    product
+    width
+    height
+    starts
+    sizes
   }
   class Shape {
     machine_size
@@ -329,6 +383,8 @@ classDiagram
   StageLayout *-- Feed : feed, only a stage fed raw items
   StageLayout *-- Feed : second_feed, only a stage built wide, what its second input belt carries
   StageLayout *-- Feed : fuel_feed, only a stage that burns fuel from the belt before it
+  StageLayout *-- PlantsBlock : plants, a step made in plants such as plastic bar, the block is its column and its product leaves by a belt
+  StageLayout *-- PlantsBlock : fluid_supplier, the block that makes the fluid the step takes, such as petroleum gas, and its product leaves by a pipe
   RawSupplier *-- Feed
   Feed *-- FeedItem : items
 
@@ -444,6 +500,10 @@ classDiagram
   class Column {
     kind
     belt
+    starts
+    sizes
+    plants_leaves
+    supplier_column
     index
     x0
     x_source
@@ -469,6 +529,8 @@ classDiagram
   }
 
   Column o-- Column : children
+  Column --> Column : supplier_column, the block that makes the fluid a final column takes, right west of its pipes, with no arc
+  Column o-- FeedLeaf : plants_leaves, the belts of raw items of a block made apart
   Column --> Column : parent
   Column *-- Arc : arc
   Column --> Block : block
@@ -684,6 +746,18 @@ classDiagram
   SharedBand *-- EntryStart : starts
   SharedBand *-- Supply : supplies
   ItemFluidChainBuild ..> ItemFluidChain : item_fluid_chain.build
+  class NestedChainBlock {
+    entities
+    starts
+    groups
+    places
+    final
+  }
+  NestedChainBlock *-- ItemFluidPlantsBlock : final
+  PlantsBlock o-- EntryStart : starts
+  ItemFluidChainBlock ..> PlantsBlock : plants_block.of_chain
+  NestedChainBlock ..> PlantsBlock : plants_block.of_nested
+  FluidRowBuild ..> PlantsBlock : plants_block.of_fluid_row, once turned
   FluidRowRequest *-- Recipe : recipe
   FluidPlantRequest *-- Recipe : recipe and maker_recipe
   FluidPlantRequest ..> FluidPlantPlan : planner.plan_fluid_plant
@@ -700,9 +774,10 @@ classDiagram
 
 | Where | Types |
 |---|---|
-| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, MachineColumn, BeltTile, WindingRequest, OutputSideRequest, InputSideRequest, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, FluidPlantRequest, FluidPlantPlan, FluidPlantBuild, ItemFluidPlantsRequest, ItemFluidPlantsPlan, ItemFluidPlantsBuild, ItemFluidPlantsBlock, BeltsBlock, BandRequest, ItemFluidChainBuild, ItemFluidChainPlaces, ItemFluidChainBlock, ItemFluidChain, NestedChainBuild, NestedChainPlaces, NestedChain, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
+| `scripts/types.lua` (cross module) | SharedNames, Names, MachineChoice, BeltTier, Production, ChainStage, RecipeItem, Recipe, InserterLimits, StageRequest, ChainRequest, StageTree, TreeRequest, PlanTree, PlanRequest, PlanInput, Belts, Plan, Position, Tile, Wire, Shape, StageLayout, RawSupplier, Feed, FeedItem, BlockOptions, Block, FuelFeed, RawBelt, WeaveTile, WeavePlan, RawAmount, StageSummary, NewEntity, Entity, InputOptions, LightOptions, LabelOptions, Supply, PoleBridge, FeedLeaf, Trunk, Feeder, PureBelt, FeedPlan, MachineColumn, BeltTile, WindingRequest, OutputSideRequest, InputSideRequest, FluidBox, FluidRows, FluidRowRequest, FluidRowPlan, FluidRowBuild, FluidPlantRequest, FluidPlantPlan, FluidPlantBuild, ItemFluidPlantsRequest, ItemFluidPlantsPlan, ItemFluidPlantsBuild, ItemFluidPlantsBlock, BeltsBlock, BandRequest, ItemFluidChainBuild, ItemFluidChainPlaces, ItemFluidChainBlock, ItemFluidChain, NestedChainBuild, NestedChainPlaces, NestedChainBlock, NestedChain, PlantsBlock, Generated; the aliases ChainReason, RecipeLookup, PlanReason |
 | `scripts/config.lua` | Config |
-| `scripts/generator.lua` | EnergySource, Candidate, StageData, InserterData, Job, Arrangement, ChainParts, NestedParts, NestedPart, NestedChainPlans, PlannedStage, Demand, DemandTotals, ItemFluidChainPlans |
+| `scripts/generator.lua` | EnergySource, Candidate, StageData, InserterData, Job, Arrangement, ChainParts, NestedParts, NestedPart, NestedChainPlans, PlannedStage, PlannedBlock, ItemFluidChainPlans |
+| `scripts/accounting.lua` | Demand, DemandTotals |
 | `scripts/planner.lua` | InputInserters, MachineRates, StageContext, Sizes |
 | `scripts/chain.lua` | MadeIngredient |
 | `scripts/layout.lua` | Geometry, Place, Poles, SharedBelt, Builder |

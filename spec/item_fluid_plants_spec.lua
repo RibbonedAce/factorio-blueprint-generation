@@ -339,6 +339,39 @@ describe("item_fluid_plants", function()
         end)
       end)
 
+      -- The column of the lowest tile of the belts east of the inserters, where the belt of the product ends.
+      local function lowest_belt_column(block)
+        local lowest, column = -1, nil
+        for _, belt in ipairs(builders.entities_named(block.entities, NAMES.belt)) do
+          local tile = grid.top_left_tile(belt.position)
+          if tile.x > block.columns.output and tile.y > lowest then
+            lowest, column = tile.y, tile.x
+          end
+        end
+        return column
+      end
+
+      it("says the column the belt of the product ends in: the one beside the inserters for a plain belt", function()
+        local block = item_fluid_plants.build(item_request(2))
+
+        assert.are.same({block.columns.output + 1, lowest_belt_column(block)}, {block.output_belt, block.output_belt})
+      end)
+
+      it("says the column the belt of the product ends in for a winding belt too, whichever of its two columns that is", function()
+        for _, count in ipairs({2, 3, 4}) do
+          local asked = item_request(count)
+          asked.plants.output_winds, asked.plants.output_inserters = true, 2
+
+          local block = item_fluid_plants.build(asked)
+
+          assert.are.equal(lowest_belt_column(block), block.output_belt)
+        end
+      end)
+
+      it("gives no column of a product belt for plants that make a fluid", function()
+        assert.is_nil(item_fluid_plants.build(request(2)).output_belt)
+      end)
+
       it("takes plants with no connection of what they give", function()
         local gives_nothing = {{production_type = "input", tiles = {{x = 0, y = -1}}}, {production_type = "input", tiles = {{x = 2, y = -1}}}}
         local plants = plants_with(1, gives_nothing, {inputs = -1, outputs = 3})

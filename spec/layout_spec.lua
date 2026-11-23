@@ -602,11 +602,11 @@ describe("layout", function()
 
   describe("max_fluid_inserters", function()
     it("leaves the middle row of the input side of a 3 x 3 machine to the pipe, so the top and the bottom row get inserters", function()
-      assert.are.equal(2, layout.max_fluid_inserters(3))
+      assert.are.equal(2, layout.max_fluid_inserters(3, {1}))
     end)
 
     it("gives a machine of another size none, since the pipes are drawn for 3 x 3 machines", function()
-      assert.is_nil(layout.max_fluid_inserters(2))
+      assert.is_nil(layout.max_fluid_inserters(2, {1}))
     end)
   end)
 

@@ -193,17 +193,20 @@ end
 
 -- The east side of the plants: for plants that make a fluid, the pipe that takes it away along every connection of what they give and a pole
 -- beside it for each plant; for plants that make an item, the output side of a column of 3 x 3 machines (`output_side.add`: the inserters,
--- their poles and the belt, which winds when the plan says so). Gives the poles of the plants and the last row of the pipe, nil for an item.
+-- their poles and the belt, which winds when the plan says so). Gives the poles of the plants, the last row of the pipe (nil for an item) and
+-- the column the belt of the product ends in (nil for a fluid).
 ---@param entities bpgen.Entity[]
 ---@param request bpgen.ItemFluidPlantsBuild
 ---@param columns table
 ---@param facing defines.direction
 ---@return bpgen.Entity[] poles
 ---@return integer|nil exit_row
+---@return integer|nil belt_column
 local function add_output_side(entities, request, columns, facing)
   local plants = request.plants
   if plants.item_output then
-    return output_side.add(entities, output_request(request, columns)), nil
+    local poles, belt_column = output_side.add(entities, output_request(request, columns))
+    return poles, nil, belt_column
   end
   local outputs = connection_rows(plants, "output", facing, plants.size)
   local last = (plants.count - 1) * plants.size + outputs[#outputs]
@@ -236,9 +239,10 @@ function item_fluid_plants.build(request)
   add_pipes(entities, request.pipe, columns.trunk, 0, last_plant + inputs[#inputs])
   add_belt(entities, request, columns, last_plant + plants.size - 1)
   local inserter_poles = input_side.add(entities, input_request(request, columns, inputs))
-  local plant_poles, exit_row = add_output_side(entities, request, columns, facing)
+  local plant_poles, exit_row, belt_column = add_output_side(entities, request, columns, facing)
   return {
     entities = entities, columns = columns, groups = {plant_poles, inserter_poles}, last_row = last_plant + plants.size - 1, output_exit_row = exit_row,
+    output_belt = belt_column,
   }
 end
 

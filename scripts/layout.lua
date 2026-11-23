@@ -254,13 +254,16 @@ function layout.max_woven_inserters(machine_size)
   return machine_size == weave.MACHINE_SIZE and machine_size or nil
 end
 
--- The most inserters the input side of a machine gets when it takes a fluid through a pipe in the middle row of that side (see
--- "A machine that takes a fluid" above): the top and the bottom row, from one belt or, one on each, from two woven belts. Nil for a
--- machine the pipes are not drawn for.
+-- The most inserters the input side of a machine gets when it takes a fluid through pipes at the rows `connections` of that side (see
+-- "A machine that takes a fluid" above): the rows no connection takes, from one belt or, one on each, from two woven belts. For the
+-- connection of an assembling machine, in the middle row, they are the top and the bottom row; the chemical plant has two connections, in
+-- those rows, and the middle row is the one. Nil for a machine the pipes are not drawn for.
 ---@param machine_size integer
+---@param connections integer[]  the rows from the top of the machine of the connections of what it takes
 ---@return integer|nil
-function layout.max_fluid_inserters(machine_size)
-  return machine_size == weave.MACHINE_SIZE and 2 or nil
+function layout.max_fluid_inserters(machine_size, connections)
+  local free = #input_side.free_rows(machine_size, connections)
+  return machine_size == weave.MACHINE_SIZE and free > 0 and free or nil
 end
 
 -- The most belts a column of machines can take from, woven (see scripts/weave.lua), when its pole powers the inserters
@@ -304,7 +307,8 @@ layout.PIPE_COLUMNS = 2
 ---@field powered_from_output boolean  the poles beside the output side power the inserters of the input side too (see `bpgen.Shape.powered_from_output`)
 ---@field belt_counts? table<string, integer>  of a column that takes from two or three woven belts of its own (see `Shape.input_belts`), the inserters of a machine on each belt
 ---@field weave boolean  the column draws its two or three input belts woven (see scripts/weave.lua), which come up from the south
----@field fluid boolean  the machines take a fluid in through a pipe in the middle row of their input side (see `Shape.fluid_input`)
+---@field fluid boolean  the machines take a fluid in through pipes at the rows `fluid_connections` of their input side (see `Shape.fluid_input`)
+---@field fluid_connections? integer[]  of a column with a fluid: the rows from the top of a machine of the connections of what it takes
 ---@field pipe_tunnel_column integer  of a column with a fluid: the tile column where the underground pipes start, west of the belts; the trunk of pipes is the column beside it
 ---@field second_belt boolean  the column draws its two input belts woven, the second in the column west of the input belt (see `Builder:add_woven_input_belts`)
 ---@field fuel_weave boolean  the column's fuel has a belt of its own in the column east of the input belt, woven with it (see `Builder:add_fuel_weave`); the inserters and the machines stand one column further east
@@ -384,6 +388,7 @@ local function set_columns(geometry, shape, place)
   geometry.output_inserter_column = machine_column + geometry.size
   geometry.output_belt_column = machine_column + geometry.size + (geometry.output_winds and 2 or 1)
   geometry.pipe_tunnel_column = place.origin - (shape.input_belts and weave.PIPED_WIDTH or 0) - 1
+  geometry.fluid_connections = shape.fluid_input and (shape.fluid_connections or {1}) or nil
 end
 
 ---@param shape bpgen.Shape
@@ -513,13 +518,14 @@ function Builder:pole_rows_of(plan)
 end
 
 -- What `input_side` is asked for a column whose machines take a fluid (scripts/input_side.lua), the same code that draws the west side
--- of the chemical plants that take an item. The fluid connection of an assembling machine is in the middle of the side it faces, so the
--- machines face west and the pipe comes in at the middle row: the row 1 of a machine of 3 x 3, the only size drawn (`plan_fluid`).
+-- of the chemical plants that take an item. The machines face west, where their connections of what they take are: those of an assembling
+-- machine are in the middle row, the row 1 of a machine of 3 x 3, the only size drawn (`plan_fluid`), and those of a chemical plant in its
+-- top and its bottom row (`Shape.fluid_connections`).
 ---@return bpgen.InputSideRequest
 function Builder:input_side_request()
   local geometry, names = self.geometry, self.names
   return {
-    column = self:machine_column(), connections = {1}, inserters = geometry.input_count,
+    column = self:machine_column(), connections = geometry.fluid_connections, inserters = geometry.input_count,
     inserter = self:inserter_name(geometry.input_fast), pipe_to_ground = names.pipe_to_ground,
     pole = names.pole, pole_reach = self.pole_reach, pole_wire_distance = names.pole_wire_distance,
     inserter_column = geometry.input_inserter_column, tunnel_column = geometry.pipe_tunnel_column,

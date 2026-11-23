@@ -51,6 +51,63 @@ function input_side.free_rows(size, connections)
   return free
 end
 
+-- Whether a fluid box takes a fluid in: it is one of the two kinds that do.
+---@param box bpgen.FluidBox
+---@return boolean
+local function takes_a_fluid(box)
+  return box.production_type == "input" or box.production_type == "input-output"
+end
+
+-- The row from the top of a machine of `size` tiles of a pipe connection tile when the machine faces west, or nil when the tile is not above
+-- the machine as it faces north.
+---@param tile {x: integer, y: integer}
+---@param size integer
+---@return integer|nil
+local function west_row_of(tile, size)
+  if tile.y ~= -1 or tile.x < 0 or tile.x >= size then
+    return nil
+  end
+  return size - 1 - tile.x
+end
+
+-- The rows of pipe connection tiles when the machine faces west, once each, ascending, or nil when one is not above the machine.
+---@param tiles {x: integer, y: integer}[]
+---@param size integer
+---@return integer[]|nil
+local function west_rows_of(tiles, size)
+  local seen, rows = {}, {}
+  for _, tile in ipairs(tiles) do
+    local row = west_row_of(tile, size)
+    if not row then
+      return nil
+    end
+    if not seen[row] then
+      seen[row] = true
+      rows[#rows + 1] = row
+    end
+  end
+  table.sort(rows)
+  return rows
+end
+
+-- The rows from the top of a machine of `size` tiles of the pipe connections of what it takes (its fluid boxes that take a fluid, the ones that
+-- take and give included), once each, from the top, as the machine faces west with the connections it has facing north: the tile above the
+-- machine at its column x is the tile west of it at its row `size - 1 - x`. Nil when it has none, or one is not on its north side, which is
+-- its west side when it faces west (the layout draws the pipes of what a machine takes on that side only).
+---@param boxes bpgen.FluidBox[]
+---@param size integer
+---@return integer[]|nil
+function input_side.connection_rows(boxes, size)
+  local tiles = {}
+  for _, box in ipairs(boxes) do
+    for _, tile in ipairs(takes_a_fluid(box) and box.tiles or {}) do
+      tiles[#tiles + 1] = tile
+    end
+  end
+  local rows = west_rows_of(tiles, size)
+  return rows and #rows > 0 and rows or nil
+end
+
 -- The tile rows of the `count` input inserters of machine number `index` (from 0): the first free rows of a machine that is the first of its
 -- pair, the last free rows of the second, so that the inserters of the second machine of a pair and of the first of the next stand together
 -- (the pattern of `output_side.inserter_top`, for the rows the connections leave).

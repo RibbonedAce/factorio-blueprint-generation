@@ -1372,15 +1372,16 @@ local function choose_belts(stage, lanes, raw)
 end
 
 -- Whether a stage takes the product of the stage that feeds it on both lanes of one belt: it eats that product and
--- nothing else (no second ingredient, no fuel, whose lane the product would have to leave free), so a supplier built wide,
--- which puts its product on both lanes, can feed it. (A stage with one ingredient has one supplier at most.) A stage that
+-- nothing else (no second ingredient, no fuel, whose lane the product would have to leave free, and no fluid: the column that takes one
+-- is a column of its own, which an arc brings the product to, and an arc carries one lane), so a supplier built wide, which puts its
+-- product on both lanes, can feed it. (A stage with one ingredient has one supplier at most.) A stage that
 -- burns fuel takes plates on both lanes only when it is built wide too (it has a belt of its own for the fuel), which it is
 -- when it asks for it and the tree allows it (`may_widen`): its supplier is not built wide for nothing otherwise.
 ---@param stage bpgen.StageRequest
 ---@param may_widen boolean  whether the tree allows `stage` itself to be built wide
 ---@return boolean
 local function takes_both_lanes(stage, may_widen)
-  return #stage.recipe.ingredients == 1 and (stage.fuel == nil or (stage.wide == true and may_widen))
+  return #stage.recipe.ingredients == 1 and not stage.fluid and (stage.fuel == nil or (stage.wide == true and may_widen))
 end
 
 -- Whether a stage is of the kind that is built wide (see `bpgen.StageRequest.wide`): it asks for it, burns fuel and eats
@@ -1498,6 +1499,21 @@ local function supplier_contexts(tree, request, widen, may_widen)
   return suppliers
 end
 
+-- The context of a stage that is a block made apart (see `bpgen.StageRequest.block`): it counts as one machine that makes `max_output` of
+-- its product a minute at the most and eats nothing from the belts of the tree, since what it takes it brings in itself. Its product rides one lane
+-- of the belt that takes it, so it makes no more than a lane carries.
+---@param stage bpgen.StageRequest
+---@param request bpgen.TreeRequest
+---@return bpgen.StageContext
+local function block_context(stage, request)
+  local most = assert(stage.block).max_output
+  return {
+    request = stage, suppliers = {}, lane_items_per_minute = request.lane_items_per_minute, lanes = {stage.product}, belts = {a = {}}, winds = false,
+    wide = false, machines_worth = math.min(1, request.lane_items_per_minute / most),
+    per_machine = {output = most, inputs = {}, input_inserters = 0, input_fast = false, long_inserters = 0, output_inserters = 0, output_fast = false},
+  }
+end
+
 -- Everything the planner works out about a stage and the stages that feed it before
 -- it is asked for a rate, or nil when one of them does not fit (see `stage_lanes`,
 -- `is_supported`). Only the root stage may wind its output belt, but for the stages built wide: a stage is built wide when
@@ -1510,6 +1526,9 @@ end
 ---@param may_widen boolean  this stage may be one of them
 ---@return bpgen.StageContext|nil
 function stage_context(tree, request, is_root, widen, may_widen)
+  if tree.stage.block then
+    return block_context(tree.stage, request)
+  end
   local suppliers = supplier_contexts(tree, request, widen, may_widen)
   if not suppliers then
     return nil
@@ -1739,12 +1758,12 @@ function planner.plan_tree(request)
   if request.rate_per_minute > final_output(root, 1) + EPSILON then
     root = root_context(request, true) --[[@as bpgen.StageContext]] -- it fits when the same stages do, narrow
   end
-  local most = final_output(root, 1)
+  local most = math.min(final_output(root, 1), request.most_per_minute or math.huge)
   if request.rate_per_minute > most + EPSILON then
     return nil, "rate-too-high", most
   end
   local sizes = sizes_for(root, request.rate_per_minute)
-  return plans_of(root, sizes, final_output(root, 1, sizes))
+  return plans_of(root, sizes, math.min(final_output(root, 1, sizes), request.most_per_minute or math.huge)) -- the machines, whole, can make more than a limit from outside allows
 end
 
 -- The most the root stage of the request can make per minute in a single blueprint,
@@ -1758,7 +1777,7 @@ function planner.max_tree_rate(request)
   if not root then
     return nil, "unsupported-recipe"
   end
-  return final_output(root, 1), nil
+  return math.min(final_output(root, 1), request.most_per_minute or math.huge), nil
 end
 
 -- A chain is a tree in which every stage is fed by the one before it. Nil for no stages.

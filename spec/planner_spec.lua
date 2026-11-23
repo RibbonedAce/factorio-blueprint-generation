@@ -3017,4 +3017,104 @@ describe("planner", function()
       end)
     end)
   end)
+
+  describe("plan_tree, for a recipe that takes the product of a block made apart", function()
+    -- An assembler (speed 0.5, 0.5 s) crafts 60 times a minute: gadgets, 1 plate and 2 plastic bars to 1, eat 60 plates and 120 plastic bars a minute
+    -- and make 60. The plastic comes from a block that makes 100 a minute at the most, which is what the block says it makes, in a stage of its own.
+    local iron_recipe = {energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
+    local gadget_recipe = {energy = 0.5, ingredients = {amount_of(1, "iron-plate"), amount_of(2, "plastic-bar")}, products = {amount_of(1, "gadget")}}
+
+    local function tree(max_output, plastic_per_gadget)
+      local plastic = {stage = {product = "plastic-bar", recipe = {energy = 1, ingredients = {}, products = {amount_of(2, "plastic-bar")}}, machine_speed = 1, block = {max_output = max_output}}, suppliers = {}}
+      local recipe = {energy = 0.5, ingredients = {amount_of(1, "iron-plate"), amount_of(plastic_per_gadget or 2, "plastic-bar")}, products = {amount_of(1, "gadget")}}
+      return {
+        rate_per_minute = 10, lane_items_per_minute = 450,
+        root = {
+          stage = {product = "gadget", recipe = recipe, machine_speed = 0.5},
+          suppliers = {{stage = {product = "iron-plate", recipe = iron_recipe, machine_speed = 1, fuel = "coal"}, suppliers = {}}, plastic},
+        },
+      }
+    end
+
+    it("asks the block for what the rate needs of its product", function()
+      local plans = planner.plan_tree(tree(100))
+
+      -- 10 gadgets a minute take 20 plastic bars, a fifth of 100
+      assert.near(0.2, plans.suppliers[2].plan.load, 1e-9)
+    end)
+
+    it("counts the block as one machine, which eats nothing from the belts", function()
+      local plans = planner.plan_tree(tree(100))
+
+      assert.are.same({1, {}}, {plans.suppliers[2].plan.machines, plans.suppliers[2].plan.inputs})
+    end)
+
+    it("limits the rate by what the block makes", function()
+      assert.are.equal(50, planner.max_tree_rate(tree(100)))
+    end)
+
+    it("refuses a rate above that, naming the most", function()
+      local request = tree(100)
+      request.rate_per_minute = 51
+
+      local plans, reason, max_rate = planner.plan_tree(request)
+
+      assert.are.same({nil, "rate-too-high", 50}, {plans, reason, max_rate})
+    end)
+
+    it("limits the rate by the lane the product rides when the block makes more than a lane carries", function()
+      -- the block could make 1,000 plastic bars a minute, and a lane carries 450 of them, which are 225 gadgets
+      assert.are.equal(225, planner.max_tree_rate(tree(1000)))
+    end)
+
+    it("takes the product of the block on one lane of its belt, with the plates on the other", function()
+      local plans = planner.plan_tree(tree(100))
+
+      assert.are.same({"iron-plate", "plastic-bar"}, plans.plan.lanes)
+    end)
+  end)
+
+  describe("plan_tree, for a recipe whose last step takes a fluid that a block makes (a limit from outside the planner)", function()
+    -- A furnace makes 18.75 plates a minute and an assembler (speed 0.5, 0.5 s) makes 60 flasks of 2 plates. The fluid of the flasks comes from a block that makes
+    -- only so much, which the request says as `most_per_minute`: the planner does not know the block.
+    local iron_recipe = {energy = 3.2, ingredients = {amount_of(1, "iron-ore")}, products = {amount_of(1, "iron-plate")}}
+    local flask_recipe = {energy = 0.5, ingredients = {amount_of(2, "iron-plate")}, products = {amount_of(1, "flask")}}
+
+    local function tree(rate, most)
+      return {
+        rate_per_minute = rate, lane_items_per_minute = 450, most_per_minute = most,
+        root = {
+          stage = {product = "flask", recipe = flask_recipe, machine_speed = 0.5},
+          suppliers = {{stage = {product = "iron-plate", recipe = iron_recipe, machine_speed = 1, fuel = "coal"}, suppliers = {}}},
+        },
+      }
+    end
+
+    it("limits the rate by it when it is below what the belts carry", function()
+      assert.are.same({100, 225}, {planner.max_tree_rate(tree(10, 100)), planner.max_tree_rate(tree(10, nil))})
+    end)
+
+    it("changes nothing when it is above what the belts carry", function()
+      assert.are.equal(225, planner.max_tree_rate(tree(10, 1000)))
+    end)
+
+    it("refuses a rate above it, naming it as the most", function()
+      local plans, reason, max_rate = planner.plan_tree(tree(101, 100))
+
+      assert.are.same({nil, "rate-too-high", 100}, {plans, reason, max_rate})
+    end)
+
+    it("makes no more than it allows when the whole machines could", function()
+      local plans = planner.plan_tree(tree(21.6, 21.6))
+
+      assert.near(21.6, plans.plan.output_per_minute, 1e-9)
+      assert.are.equal(3, plans.suppliers[1].plan.machines)
+    end)
+
+    it("makes what the machines make when the limit is above it", function()
+      local plans = planner.plan_tree(tree(21.6, 1000))
+
+      assert.near(28.125, plans.plan.output_per_minute, 1e-9)
+    end)
+  end)
 end)

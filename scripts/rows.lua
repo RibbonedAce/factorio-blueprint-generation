@@ -56,6 +56,10 @@
 -- the column where the underground pipes that go under the belts to the machines start (see scripts/layout.lua). Its machines take one inserter from the belt or, for
 -- more than two items, one from each of two woven belts, with belt b in the column beside the inner one.
 --
+-- A final column that takes a fluid that machines make (the petroleum gas of a barrel, from refineries) has the block that makes it as the column right
+-- west of its pipes, with no arc: the pipe the fluid leaves by is joined to the trunk of the pipes of the column, along a row both reach, and there is no
+-- pump for it (a block that makes a fluid is a column of its own: see `supplier_column` and `add_link`).
+--
 -- A raw item that goes with a made one (wood next to cables) has no machines: its column is two
 -- wide, the belt and a spare column for the gadget of the arc before it, and its belt is the arc.
 -- See .agents/row-layout-plan.md for the reasons and the measurements.
@@ -67,6 +71,7 @@
 -- the belts that come in, with splitters and underground belts. It needs both of those researched.
 
 local constants = require("scripts.constants")
+local corner_entries = require("scripts.corner_entries")
 local entity_list = require("scripts.entity_list")
 local feeds = require("scripts.feeds")
 local grid = require("scripts.grid")
@@ -88,7 +93,11 @@ local north, east, south = defines.direction.north, defines.direction.east, defi
 
 -- One column of the blueprint, with the product it sends to its parent.
 ---@class bpgen.Column
----@field kind "raw"|"chain"|"final"  a belt of a raw item, a chain fed raw items, or the column that eats other columns' products
+---@field kind "raw"|"chain"|"final"|"plants"  a belt of a raw item, a chain fed raw items, the column that eats other columns' products, or a block made apart (see `bpgen.PlantsBlock`)
+---@field starts? bpgen.EntryStart[]  of a block made apart: where what comes in starts
+---@field sizes? table<string, integer>  of a block made apart: the tiles on a side of its machines
+---@field plants_leaves? bpgen.FeedLeaf[]  of a block made apart: what its belts of raw items take from the belts that come in (`build_pure` only)
+---@field supplier_column? bpgen.Column  of a final column that takes a fluid that a block makes: the column of that block, right west of the pipes of the final column, with no arc (what it makes comes by a pipe)
 ---@field belt "a"|"b"|"c"  the input belt of the parent that its product rides
 ---@field fed bpgen.StageLayout|bpgen.RawSupplier  the stage a belt of raw items feeds (a chain: its first); the stage of a final column
 ---@field stages? bpgen.StageLayout[]  the stages whose machines the column holds, nil for a raw item; a final column has the stage that takes what other columns make and the steps with one ingredient after it
@@ -153,9 +162,22 @@ local function add_across(entities, names, first_column, last_column, row)
   end
 end
 
+-- Whether a stage starts a final column of its own, the columns that make what it eats standing before it: it takes two or more
+-- things from other columns, or one from a block made apart (which is a column of its own, not a step of a chain), or it takes a fluid,
+-- whose pipes need columns beside its belt (see `bpgen.Shape.fluid_input`).
+---@param stage bpgen.StageLayout
+---@return boolean
+local function starts_final_column(stage)
+  local suppliers = stage.suppliers or {}
+  if #suppliers ~= 1 then
+    return #suppliers >= 2
+  end
+  return suppliers[1].plants ~= nil or (stage.shape ~= nil and stage.shape.fluid_input == true)
+end
+
 -- The stages of a column, from the first to `stage`: the stages down a straight chain of steps with one supplier each, which
--- starts at a stage fed raw items, or at a stage that takes two or more things from other columns (a final column that the
--- steps above it, each with one ingredient, stand beside).
+-- starts at a stage fed raw items, or at a stage that starts a final column (see `starts_final_column`: the steps above it, each
+-- with one ingredient, stand beside it).
 ---@param stage bpgen.StageLayout
 ---@return bpgen.StageLayout[]
 local function chain_of(stage)
@@ -163,11 +185,10 @@ local function chain_of(stage)
   local current = stage
   while current do
     table.insert(chain, 1, current)
-    local suppliers = current.suppliers or {}
-    if #suppliers >= 2 then
+    if starts_final_column(current) then
       break
     end
-    current = suppliers[1]
+    current = (current.suppliers or {})[1]
   end
   return chain
 end
@@ -227,7 +248,40 @@ local function mark_arcs(final)
   assert(final.belts_used < 3 or final.woven, "rows: a column takes from three belts only when they are woven")
 end
 
+-- The column of a block made apart: it has the entities, the poles and the product belt of the blocks of the other columns, so that the rest of
+-- this module places it, joins its poles and runs the arc of its product from it as for them; its belts of raw items and its pipes are `starts`.
+---@param stage bpgen.StageLayout  with `plants`
+---@param belt "a"|"b"|"c"
+---@return bpgen.Column
+local function plants_column(stage, belt)
+  local plants = stage.plants --[[@as bpgen.PlantsBlock]]
+  return {
+    kind = "plants", belt = belt, fed = stage, children = {}, starts = plants.starts, sizes = plants.sizes,
+    block = {
+      entities = plants.entities, pole_groups = plants.pole_groups, product_column = plants.product.column, width = plants.width,
+      height = plants.height, output_rows = {first = plants.product.last_row + 1, last = plants.product.last_row}, raw_belts = {}, fuel_feeds = {},
+    },
+  }
+end
+
 local column_of -- defined below: a final column is made of the columns of its suppliers
+
+-- Stops when a stage from `first` on has a block that makes a fluid: only the first stage of a final column that takes a fluid takes one.
+---@param stages bpgen.StageLayout[]
+---@param first integer
+local function refuse_fluid_suppliers(stages, first)
+  for index = first, #stages do
+    assert(not stages[index].fluid_supplier, "rows: a block that makes a fluid is taken only by the first stage of a column that takes a fluid")
+  end
+end
+
+-- The column of the block that makes the fluid a final column takes: it stands right west of the pipes of the final column and has no arc.
+---@param block bpgen.PlantsBlock
+---@return bpgen.Column
+local function supplier_column_of(block)
+  assert(block.product.fluid, "rows: a block that makes an item cannot make the fluid a column takes")
+  return plants_column({plants = block}, "a")
+end
 
 -- The column that takes what other columns make, with the columns of its suppliers, and the columns of the steps with one
 -- ingredient that stand after it, each beside the one before (`stages`, the first of which takes from the other columns).
@@ -238,6 +292,7 @@ local column_of -- defined below: a final column is made of the columns of its s
 ---@return bpgen.Column
 local function final_column(stages, belt, names, is_root)
   local first = stages[1]
+  refuse_fluid_suppliers(stages, 2)
   local children = {}
   for _, supplier in ipairs(first.suppliers or {}) do
     children[#children + 1] = column_of(supplier, names, false)
@@ -247,6 +302,10 @@ local function final_column(stages, belt, names, is_root)
     block = layout.chain_block(stages, names, {product_belt = is_root}), woven = first.shape.input_belts ~= nil,
     fluid = first.shape.fluid_input == true,
   }
+  if first.fluid_supplier then
+    assert(final.fluid, "rows: a column that takes no fluid has a block that makes one")
+    final.supplier_column = supplier_column_of(first.fluid_supplier)
+  end
   mark_arcs(final)
   return final
 end
@@ -258,25 +317,34 @@ end
 ---@return bpgen.Column
 function column_of(stage, names, is_root)
   local belt = (stage.belt == "b" or stage.belt == "c") and stage.belt or "a"
+  if stage.plants then
+    assert(not stage.plants.product.fluid, "rows: a block that makes a fluid cannot be the column that makes an item")
+    return plants_column(stage, belt)
+  end
   if stage.raw_item then
     return {kind = "raw", belt = belt, fed = stage, children = {}}
   end
   local stages = chain_of(stage)
-  if #(stages[1].suppliers or {}) >= 2 then
+  if starts_final_column(stages[1]) then
     return final_column(stages, belt, names, is_root)
   end
+  refuse_fluid_suppliers(stages, 1)
   return {
     kind = "chain", belt = belt, fed = stages[1], children = {}, stages = stages, wide_input = stages[1].shape.second_input_belt == true,
     block = layout.chain_block(stages, names, {product_belt = is_root}),
   }
 end
 
--- Lists the columns from the west: the columns of a stage's ingredients, then the stage.
+-- Lists the columns from the west: the columns of a stage's ingredients, the block that makes the fluid the stage takes (right west of its pipes),
+-- then the stage.
 ---@param column bpgen.Column
 ---@param columns bpgen.Column[]  the list so far
 local function flatten(column, columns)
   for _, child in ipairs(column.children) do
     flatten(child, columns)
+  end
+  if column.supplier_column then
+    flatten(column.supplier_column, columns)
   end
   columns[#columns + 1] = column
   column.index = #columns
@@ -319,6 +387,17 @@ local function place_beside_belt_a(column, cursor)
   return cursor
 end
 
+-- The first tile column east of a column that has a block: the one after its product belt, which is the rightmost column of a block of
+-- machines, and the one after the easternmost tile of a block made apart (a winding belt has a column east of the one the product leaves on).
+---@param column bpgen.Column  placed, with a block
+---@return integer
+local function east_edge(column)
+  if column.kind == "plants" then
+    return column.x0 + column.block.width
+  end
+  return column.x_source + 1
+end
+
 -- Gives every column its tile columns, side by side from column `start` (0 by default): a final column that takes a fluid, from
 -- woven belts or with a belt b for its long-handed inserters has columns of its own west of belt a (see
 -- `place_beside_belt_a`).
@@ -333,18 +412,37 @@ local function place_across(columns, start)
     else
       column.x0 = place_beside_belt_a(column, cursor)
       column.x_source = column.x0 + column.block.product_column
-      cursor = column.x_source + 1
+      cursor = east_edge(column)
     end
   end
 end
 
--- The belts of raw items, in the order of their rows: the one that comes down furthest east has the top row.
+-- The starts of the belts of raw items of a block made apart.
+---@param column bpgen.Column  a block made apart
+---@return bpgen.EntryStart[]
+local function belt_starts_of(column)
+  local belts = {}
+  for _, start in ipairs(column.starts or {}) do
+    if start.belt then
+      belts[#belts + 1] = start
+    end
+  end
+  table.sort(belts, function(first, second) return first.x < second.x end)
+  return belts
+end
+
+-- The belts of raw items, in the order of their rows: the one that comes down furthest east has the top row. A block made apart has one for each
+-- belt that comes into it.
 ---@param columns bpgen.Column[]
 ---@return bpgen.RawRun[]
 local function raw_runs_of(columns)
   local runs = {}
   for _, column in ipairs(columns) do
-    if column.kind ~= "final" then
+    if column.kind == "plants" then
+      for _, start in ipairs(belt_starts_of(column)) do
+        runs[#runs + 1] = {column = column, x = column.x0 + start.x, start = start}
+      end
+    elseif column.kind ~= "final" then
       runs[#runs + 1] = {column = column, x = column.x0 or column.x_source}
     end
   end
@@ -356,6 +454,23 @@ local function raw_runs_of(columns)
   return runs
 end
 
+-- The first row of a block made apart: under every belt of raw items that comes down at or east of its west edge, its own included: they run
+-- along the rows above, the one furthest east on the top row, and the ones east of the edge pass over some of the block. A block with a pipe leaves a
+-- row free under them, where the underground pipe from above comes out of the ground (see scripts/corner_entries.lua).
+---@param column bpgen.Column
+---@param runs bpgen.RawRun[]
+---@return integer
+local function plants_first_row(column, runs)
+  local under, has_pipe = 0, false
+  for _, run in ipairs(runs) do
+    under = under + (run.x >= column.x0 and 1 or 0)
+  end
+  for _, start in ipairs(column.starts) do
+    has_pipe = has_pipe or not start.belt
+  end
+  return under + (has_pipe and 1 or 0)
+end
+
 -- The first row of a column: under the belts of raw items that pass over it, which are those that come
 -- down east of it. A chain starts right under its own belt. A final column leaves a row free under them.
 ---@param column bpgen.Column
@@ -364,6 +479,9 @@ end
 local function first_row_of(column, runs)
   if column.kind == "chain" then
     return column.raw_row + 1
+  end
+  if column.kind == "plants" then
+    return plants_first_row(column, runs)
   end
   local over = 0
   for _, run in ipairs(runs) do
@@ -374,15 +492,80 @@ local function first_row_of(column, runs)
   return over > 0 and over + 1 or 0
 end
 
+-- The rows that have a plain pipe in a tile column of a block, in the frame of the block.
+---@param block bpgen.Block
+---@param names bpgen.SharedNames
+---@param x integer
+---@return table<integer, true>
+local function pipe_rows(block, names, x)
+  local found = {}
+  for _, entity in ipairs(block.entities) do
+    local tile = grid.top_left_tile(entity.position)
+    if entity.name == names.pipe and tile.x == x then
+      found[tile.y] = true
+    end
+  end
+  assert(next(found), "rows: there is no pipe in the column a block sends its fluid by, or the trunk of the pipes of the column that takes it")
+  return found
+end
+
+-- The first and the last of a set of rows.
+---@param set table<integer, true>
+---@return integer first
+---@return integer last
+local function span_of(set)
+  local first, last = math.huge, -math.huge
+  for row in pairs(set) do
+    first, last = math.min(first, row), math.max(last, row)
+  end
+  return first, last
+end
+
+---@param column bpgen.Column
+---@param by integer
+local function push_down(column, by)
+  column.top, column.bottom = column.top + by, column.bottom + by
+end
+
+-- Moves the column that takes a fluid from a block, or the block, down until the pipe the block sends the fluid out by and the trunk of the pipes
+-- of the column have a row in common (the machines of the column can be fewer than the pipe is long), so that the pipes can be joined.
+---@param final bpgen.Column  with a `supplier_column`, both with their first rows
+---@param names bpgen.SharedNames
+local function align_with_supplier(final, names)
+  local supplier = final.supplier_column --[[@as bpgen.Column]]
+  local trunk_first, trunk_last = span_of(pipe_rows(final.block, names, final.block.pipe_trunk.column))
+  local out_first, out_last = span_of(pipe_rows(supplier.block, names, supplier.block.product_column))
+  local pipe_below = supplier.top + out_first - (final.top + trunk_last)
+  local trunk_below = final.top + trunk_first - (supplier.top + out_last)
+  if pipe_below > 0 then
+    push_down(final, pipe_below)
+  elseif trunk_below > 0 then
+    push_down(supplier, trunk_below)
+  end
+end
+
+-- Aligns every column that takes a fluid from a block with that block (see `align_with_supplier`).
+---@param columns bpgen.Column[]  with their first rows
+---@param names bpgen.SharedNames
+local function align_suppliers(columns, names)
+  for _, column in ipairs(columns) do
+    if column.supplier_column then
+      align_with_supplier(column, names)
+    end
+  end
+end
+
 ---@param columns bpgen.Column[]
 ---@param runs bpgen.RawRun[]
-local function set_rows(columns, runs)
+---@param names bpgen.SharedNames
+local function set_rows(columns, runs, names)
   for _, column in ipairs(columns) do
     if column.block then
       column.top = first_row_of(column, runs)
       column.bottom = column.top + column.block.height
     end
   end
+  align_suppliers(columns, names)
 end
 
 -- The row where the product belt of a column starts, and the row of its last output.
@@ -528,6 +711,8 @@ local function add_raw_belts(entities, names, runs)
     if column.kind == "chain" then
       local last = column.top + column.block.raw_belts[1].row - 1
       add_run(entities, names, run.x, run.row + 1, last, south)
+    elseif column.kind == "plants" then
+      add_run(entities, names, run.x, run.row + 1, column.top + run.start.y - 1, south)
     end
   end
 end
@@ -641,6 +826,9 @@ local function machine_sizes(columns)
     for _, stage in ipairs(column.stages or {}) do
       sizes[stage.machine] = stage.shape.machine_size
     end
+    for machine, size in pairs(column.sizes or {}) do
+      sizes[machine] = size
+    end
   end
   return sizes
 end
@@ -668,10 +856,76 @@ local function pole_bridge(entities, columns, names)
   }
 end
 
+-- Whether the tiles of a row from tile column `first` to `last` are free (they are when there are none).
+---@param taken table<string, true>
+---@param first integer
+---@param last integer
+---@param y integer
+---@return boolean
+local function is_row_free(taken, first, last, y)
+  for x = first, last do
+    if taken[grid.key(x, y)] then
+      return false
+    end
+  end
+  return true
+end
+
+-- The rows of a set, from the top.
+---@param set table<integer, true>
+---@return integer[]
+local function sorted_rows(set)
+  local list = {}
+  for row in pairs(set) do
+    list[#list + 1] = row
+  end
+  table.sort(list)
+  return list
+end
+
+-- Joins the pipe of the block that makes the fluid a final column takes to the trunk of the pipes of the column: along the first row where both have a
+-- pipe and the tiles between them are free (a pole of the block can stand east of its pipe). Nothing to add when the pipe is right beside the trunk.
+-- The blocks are placed already, so their entities are where they are in the blueprint.
+---@param entities bpgen.Entity[]
+---@param names bpgen.SharedNames
+---@param taken table<string, true>
+---@param final bpgen.Column  with a `supplier_column`, placed
+local function add_link(entities, names, taken, final)
+  local supplier = final.supplier_column --[[@as bpgen.Column]]
+  local out_x, trunk_x = supplier.x0 + supplier.block.product_column, final.x0 + final.block.pipe_trunk.column
+  assert(trunk_x > out_x, "rows: the pipes of a column that takes a fluid are not east of the block that makes it")
+  local trunk_rows = pipe_rows(final.block, names, trunk_x)
+  for _, y in ipairs(sorted_rows(pipe_rows(supplier.block, names, out_x))) do
+    if trunk_rows[y] and is_row_free(taken, out_x + 1, trunk_x - 1, y) then
+      for x = out_x + 1, trunk_x - 1 do
+        entity_list.append(entities, {name = names.pipe, position = grid.position(x, y)})
+      end
+      return
+    end
+  end
+  error("rows: the pipe of a block that makes a fluid cannot be joined to the trunk of the pipes of the column that takes it")
+end
+
+-- Joins the pipe of every block that makes a fluid to the trunk of the column that takes it (see `add_link`).
+---@param entities bpgen.Entity[]
+---@param columns bpgen.Column[]  placed
+---@param names bpgen.SharedNames
+local function add_supplier_links(entities, columns, names)
+  for _, column in ipairs(columns) do
+    if column.supplier_column then
+      add_link(entities, names, grid.taken_tiles(entities, footprint_of(columns, names)), column)
+    end
+  end
+end
+
 -- The most tiles of pipe that one pump serves: a pipe system longer than that needs another pump.
 local MOST_PIPES_OF_A_PUMP = 320
 
 local PIPE_REACH = constants.PIPE_REACH
+
+-- The first entry of the pipes of the blocks made apart is this many rows above the first row of the blueprint, so that the display panel of the
+-- belt that comes in at its first row has room (see scripts/labels.lua).
+local ENTRY_TOP = -2
 
 -- The tops of the trunks of pipes of the columns that take a fluid, as tiles.
 ---@param columns bpgen.Column[]
@@ -679,7 +933,7 @@ local PIPE_REACH = constants.PIPE_REACH
 local function pipe_trunks_of(columns)
   local trunks = {}
   for _, column in ipairs(columns) do
-    local trunk = column.block and column.block.pipe_trunk
+    local trunk = column.block and not column.supplier_column and column.block.pipe_trunk
     if trunk then
       trunks[#trunks + 1] = {x = column.x0 + trunk.column, y = column.top + trunk.row}
     end
@@ -815,12 +1069,106 @@ end
 local function join_poles(columns, bridge, inlet_pole)
   local groups = {}
   for _, column in ipairs(columns) do
-    if column.block then
-      groups[#groups + 1] = column.block.poles
+    for _, group in ipairs(column.block and (column.block.pole_groups or {column.block.poles}) or {}) do
+      groups[#groups + 1] = group
     end
   end
   groups[#groups + 1] = inlet_pole and {inlet_pole} or {}
   poles.join(groups, bridge)
+end
+
+-- The start of a pipe of a block made apart, in the tiles of the blueprint, with the number of its column before its key.
+---@param column bpgen.Column
+---@param start bpgen.EntryStart
+---@return bpgen.EntryStart
+local function absolute_start(column, start)
+  local copy = {}
+  for key, value in pairs(start) do
+    copy[key] = value
+  end
+  copy.key = column.index .. ":" .. start.key
+  copy.joins = start.joins and (column.index .. ":" .. start.joins) or nil
+  copy.x, copy.y = column.x0 + start.x, column.top + start.y
+  return copy
+end
+
+-- Makes the starts of one fluid one entry: of the starts that no other joins (those that bring a fluid in), the later ones join the first, and so do
+-- the starts that joined them. The player brings each fluid once, and it divides itself where the pipes meet, as pipes do.
+---@param starts bpgen.EntryStart[]
+local function join_one_fluid(starts)
+  local first_of, joined_to = {}, {}
+  for _, start in ipairs(starts) do
+    if not start.joins then
+      local first = first_of[assert(start.fluid, "rows: a pipe of a block made apart does not say its fluid")]
+      if first then
+        joined_to[start.key] = first.key
+      else
+        first_of[start.fluid] = start
+      end
+    end
+  end
+  for _, start in ipairs(starts) do
+    start.joins = joined_to[start.key] or (start.joins and joined_to[start.joins]) or start.joins
+  end
+end
+
+-- The starts of the pipes of the blocks made apart, in the tiles of the blueprint, with the fluid of each entry by its key.
+---@param columns bpgen.Column[]  with their places
+---@return bpgen.EntryStart[] starts
+---@return table<string, string> fluid_of
+local function pipe_starts_of(columns)
+  local starts, fluid_of = {}, {}
+  for _, column in ipairs(columns) do
+    for _, start in ipairs(column.kind == "plants" and column.starts or {}) do
+      if not start.belt then
+        starts[#starts + 1] = absolute_start(column, start)
+      end
+    end
+  end
+  join_one_fluid(starts)
+  for _, start in ipairs(starts) do
+    if not start.joins then
+      fluid_of[start.key] = start.fluid
+    end
+  end
+  return starts, fluid_of
+end
+
+-- Brings in the pipes of the blocks made apart, at the top left corner where the belts come in: each fluid once (see `join_one_fluid`), on a row
+-- of its own above the blueprint (above the pipe of the water inlet, when it has one) and down to where it starts, under the belts that run over
+-- its column with an underground pipe (see scripts/corner_entries.lua). Gives the entries, from the top.
+---@param entities bpgen.Entity[]
+---@param columns bpgen.Column[]  with their places
+---@param names bpgen.SharedNames
+---@param inlet_pole? bpgen.Entity  the pole of the pump of the water inlet
+---@return bpgen.Supply[]
+local function add_block_pipes(entities, columns, names, inlet_pole)
+  local starts, fluid_of = pipe_starts_of(columns)
+  if #starts == 0 then
+    return {}
+  end
+  local taken, left = covered_by(entities, columns, names)
+  local top = inlet_pole and grid.top_left_tile(inlet_pole.position).y - 1 or ENTRY_TOP
+  local entries = corner_entries.add(entities, starts, {
+    top = top, taken = taken, west = left, pipe_to_ground = assert(names.pipe_to_ground, "rows: the names give no underground pipe for the pipes of a block"),
+  })
+  local supplies = {}
+  for index, entry in ipairs(entries) do
+    supplies[index] = {x = entry.x, y = entry.y, item = fluid_of[entry.key], type = "fluid"}
+  end
+  return supplies
+end
+
+-- Whether the blueprint has a block made apart.
+---@param columns bpgen.Column[]
+---@return boolean
+local function has_plants(columns)
+  for _, column in ipairs(columns) do
+    if column.kind == "plants" then
+      return true
+    end
+  end
+  return false
 end
 
 -- The stages fed raw items by the belts of raw items, from the top row down.
@@ -855,25 +1203,28 @@ end
 ---@param names bpgen.SharedNames
 ---@return bpgen.Entity[] entities
 ---@return (bpgen.StageLayout|bpgen.RawSupplier)[] raw_stages
+---@return bpgen.Supply[] entries  the pipes of the blocks made apart that come in, from the top (the belts are the raw stages')
 function rows.build(root, names)
   refuse_wide(root)
   local top = column_of(root, names, true)
   if top.kind == "chain" then
-    return top.block.entities, {top.fed}
+    return top.block.entities, {top.fed}, {}
   end
   local columns = {}
   flatten(top, columns)
   place_across(columns)
   local runs = raw_runs_of(columns)
-  set_rows(columns, runs)
+  set_rows(columns, runs, names)
   assign_arcs(top, columns)
   local entities = {}
   place_blocks(entities, columns, names)
   add_raw_belts(entities, names, runs)
   add_arcs(entities, names, top)
+  add_supplier_links(entities, columns, names)
   local inlet_pole = #pipe_trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
-  join_poles(columns, inlet_pole and pole_bridge(entities, columns, names) or nil, inlet_pole)
-  return entities, raw_stages_of(runs)
+  local entries = add_block_pipes(entities, columns, names, inlet_pole)
+  join_poles(columns, (inlet_pole or has_plants(columns)) and pole_bridge(entities, columns, names) or nil, inlet_pole)
+  return entities, raw_stages_of(runs), entries
 end
 
 -- The fuel that the stages of a chain burn, which comes down to the belt before the stage: a leaf for each, standing
@@ -896,26 +1247,54 @@ local function second_leaf_of(column)
   return {index = column.index - 0.5, feed = assert(column.fed.second_feed, "rows: a stage built wide has no second feed"), second_of = column}
 end
 
--- The chains and the raw columns among the columns, and the fuel their stages burn: the leaves, which take what they
--- need from belts that come in. A chain keeps its fuel leaves in `fuel_leaves`, and a chain built wide its second belt's
--- leaf in `second_leaf`.
+-- The leaves of a block made apart: one for each belt of raw items that comes into it, from the west, each in a place just after the one before
+-- (the column itself has none), so that the trunks take them in the order of the columns.
+---@param column bpgen.Column  a block made apart
+---@return bpgen.FeedLeaf[]
+local function plants_leaves_of(column)
+  local belts, leaves = belt_starts_of(column), {}
+  for position, start in ipairs(belts) do
+    leaves[position] = {
+      index = column.index + position / (#belts + 1), plants = column, start = start,
+      feed = assert(start.feed, "rows: a belt of raw items of a block made apart has no feed"),
+    }
+  end
+  return leaves
+end
+
+-- Adds the leaves of a chain or a raw column to the list: the column itself, with the leaf of its second belt before it when it is built wide and
+-- the leaves of its fuel after it.
+---@param column bpgen.Column
+---@param leaves bpgen.FeedLeaf[]
+local function add_chain_leaves(column, leaves)
+  column.feed = assert(column.fed.feed, "rows: a stage fed raw items has no feed")
+  column.drop_x = nil
+  column.fuel_leaves = column.block and fuel_leaves_of(column) or {}
+  if column.wide_input then
+    column.second_leaf = second_leaf_of(column)
+    leaves[#leaves + 1] = column.second_leaf
+  end
+  leaves[#leaves + 1] = column
+  for _, leaf in ipairs(column.fuel_leaves) do
+    leaves[#leaves + 1] = leaf
+  end
+end
+
+-- The chains and the raw columns among the columns, and the fuel their stages burn, and the belts of raw items of the blocks made apart: the
+-- leaves, which take what they need from belts that come in. A chain keeps its fuel leaves in `fuel_leaves`, and a chain built wide its second
+-- belt's leaf in `second_leaf`; a block made apart keeps its leaves in `plants_leaves`.
 ---@param columns bpgen.Column[]
 ---@return bpgen.FeedLeaf[]
 local function leaves_of(columns)
   local leaves = {}
   for _, column in ipairs(columns) do
-    if column.kind ~= "final" then
-      column.feed = assert(column.fed.feed, "rows: a stage fed raw items has no feed")
-      column.drop_x = nil
-      column.fuel_leaves = column.block and fuel_leaves_of(column) or {}
-      if column.wide_input then
-        column.second_leaf = second_leaf_of(column)
-        leaves[#leaves + 1] = column.second_leaf
-      end
-      leaves[#leaves + 1] = column
-      for _, leaf in ipairs(column.fuel_leaves) do
+    if column.kind == "plants" then
+      column.plants_leaves = plants_leaves_of(column)
+      for _, leaf in ipairs(column.plants_leaves) do
         leaves[#leaves + 1] = leaf
       end
+    elseif column.kind ~= "final" then
+      add_chain_leaves(column, leaves)
     end
   end
   return leaves
@@ -928,7 +1307,9 @@ end
 ---@param leaves bpgen.FeedLeaf[]
 local function set_drops(leaves)
   for _, leaf in ipairs(leaves) do
-    if leaf.owner then
+    if leaf.plants then
+      leaf.drop_x = leaf.plants.x0 + leaf.start.x
+    elseif leaf.owner then
       leaf.drop_x = leaf.owner.x0 + leaf.fuel.belt_column - (leaf.fuel.woven and 0 or 1)
     elseif leaf.second_of then
       leaf.drop_x = leaf.second_of.x_b
@@ -956,13 +1337,30 @@ end
 
 -- Gives every column its first row: a chain right under the last tile of the belt that comes down to it (see
 -- `chain_top`), a final column under the trunks that pass over it; a raw column learns the row its belt comes down to.
+-- The first row of a block made apart: under the lowest trunk that passes over its west edge, and so low that every belt of raw items that comes
+-- into it ends in its own first tile in the block or above it (the belt goes on down from the end of the belt that comes down from the band).
+---@param plan bpgen.FeedPlan
+---@param column bpgen.Column
+---@param ends table<bpgen.FeedLeaf, integer>
+---@return integer
+local function plants_top(plan, column, ends)
+  local top = inputs.first_row_under(plan, column.x0)
+  for _, leaf in ipairs(column.plants_leaves) do
+    top = math.max(top, ends[leaf] + 1 - leaf.start.y)
+  end
+  return top
+end
+
 ---@param plan bpgen.FeedPlan
 ---@param columns bpgen.Column[]
 ---@param ends table<bpgen.FeedLeaf, integer>  of every leaf, the row of the last tile of its belt
-local function set_pure_rows(plan, columns, ends)
+---@param names bpgen.SharedNames
+local function set_pure_rows(plan, columns, ends, names)
   for _, column in ipairs(columns) do
     if column.kind == "final" then
       column.top = inputs.first_row_under(plan, column.x_source)
+    elseif column.kind == "plants" then
+      column.top = plants_top(plan, column, ends)
     elseif column.block then
       column.top = chain_top(column, ends)
     else
@@ -972,6 +1370,7 @@ local function set_pure_rows(plan, columns, ends)
       column.bottom = column.top + column.block.height
     end
   end
+  align_suppliers(columns, names)
 end
 
 -- The belts that come down to a chain by themselves, each with the row of the block where its belt starts: its own first
@@ -999,7 +1398,11 @@ end
 ---@param ends table<bpgen.FeedLeaf, integer>
 local function add_chain_descents(entities, columns, names, ends)
   for _, column in ipairs(columns) do
-    if column.block and column.kind ~= "final" then
+    if column.kind == "plants" then
+      for _, leaf in ipairs(column.plants_leaves) do
+        add_run(entities, names, leaf.drop_x, ends[leaf] + 1, column.top + leaf.start.y - 1, south)
+      end
+    elseif column.block and column.kind ~= "final" then
       for _, descent in ipairs(descents_of(column)) do
         add_run(entities, names, descent.leaf.drop_x, ends[descent.leaf] + 1, column.top + descent.row - 1, south)
       end
@@ -1033,6 +1436,21 @@ local function fuel_tails(columns, names, ends)
   return tails
 end
 
+-- Finishes the blueprint of the design that takes one belt of each material: the water inlet of the columns that take a fluid, the pipes of the
+-- blocks made apart (added to `supplies`, after the belts) and the wires of the poles.
+---@param entities bpgen.Entity[]
+---@param columns bpgen.Column[]  with their places
+---@param names bpgen.SharedNames
+---@param supplies bpgen.Supply[]
+local function add_pipes_and_poles(entities, columns, names, supplies)
+  add_supplier_links(entities, columns, names)
+  local inlet_pole = #pipe_trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
+  for _, entry in ipairs(add_block_pipes(entities, columns, names, inlet_pole)) do
+    supplies[#supplies + 1] = entry
+  end
+  join_poles(columns, pole_bridge(entities, columns, names), inlet_pole)
+end
+
 -- The blueprint for `root` in the design that takes one belt of each material (see the top of the file and
 -- .agents/inputs-plan.md); `root` is as for `rows.build`, every stage fed raw items has its `feed`, and `names`
 -- has the splitter and the underground belt. Works for a single chain too.
@@ -1042,7 +1460,7 @@ end
 ---@param names bpgen.SharedNames
 ---@param options bpgen.InputOptions
 ---@return bpgen.Entity[] entities
----@return bpgen.Supply[] supplies
+---@return bpgen.Supply[] supplies  the belts, then the pipes of the blocks made apart (their `type` is "fluid")
 function rows.build_pure(root, names, options)
   local top = column_of(root, names, true)
   local columns = {}
@@ -1052,7 +1470,7 @@ function rows.build_pure(root, names, options)
   place_across(columns, inputs.start_column(plan))
   set_drops(leaves)
   local band, supplies, ends = inputs.lay(plan, names, options.underground_reach)
-  set_pure_rows(plan, columns, ends)
+  set_pure_rows(plan, columns, ends, names)
   if top.kind == "final" then
     assign_arcs(top, columns)
   end
@@ -1064,8 +1482,7 @@ function rows.build_pure(root, names, options)
   if top.kind == "final" then
     add_arcs(entities, names, top)
   end
-  local inlet_pole = #pipe_trunks_of(columns) > 0 and add_water_inlet(entities, columns, names) or nil
-  join_poles(columns, pole_bridge(entities, columns, names), inlet_pole)
+  add_pipes_and_poles(entities, columns, names, supplies)
   return entities, supplies
 end
 

@@ -49,6 +49,7 @@ local function every_message()
     fuel_needs_inputs = messages.fuel_needs_inputs("steel-plate"),
     belts_need_weave = messages.belts_need_weave("inserter"),
     fluid_single_input = messages.fluid_single_input("concrete"),
+    made_fluid = messages.made_fluid("petroleum-gas-barrel", "petroleum-gas"),
     fluid_unsupported = messages.fluid_unsupported("concrete"),
     fluid_needs_weave = messages.fluid_needs_weave("concrete"),
     fluid_row_recipe = messages.fluid_row_recipe("petroleum-gas"),

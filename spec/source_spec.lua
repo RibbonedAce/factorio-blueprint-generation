@@ -86,7 +86,13 @@ describe("source", function()
     it("lists the files of scripts/, sorted, with their text", function()
       local files = source.scripts()
 
-      assert.are.same({"chain.lua", "config.lua"}, {files[1].name, files[2].name})
+      local names, sorted, has_config = {}, {}, false
+      for _, file in ipairs(files) do
+        names[#names + 1], sorted[#sorted + 1] = file.name, file.name
+        has_config = has_config or file.name == "config.lua"
+      end
+      table.sort(sorted)
+      assert.are.same({sorted, true}, {names, has_config})
     end)
 
     it("reads a file whole, with its line breaks as one character", function()

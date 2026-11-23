@@ -9,8 +9,8 @@
 ---@class bpgen.Config
 ---@field entities {inserter: string, long_inserter: string, fast_inserter: string, lamp: string, panel: string, pipe: string, pipe_to_ground: string, pump: string, poles: string[], belts: bpgen.BeltTier[]}
 ---@field recipes table<string, true>  the recipes a player may ask for, by recipe name; the rate is of the product of the recipe
----@field fluid_chains table<string, string>  the recipe of the chain that makes a fluid that another recipe takes besides items, by the name of the fluid, built as a block beside the plants of that recipe
----@field fluid_makers table<string, string>  the recipe that makes a fluid that another recipe takes, by the name of the fluid, built as a row of machines ahead of it
+---@field fluid_chains table<string, string>  the recipe of the chain that makes a fluid that another recipe takes besides items, by the name of the fluid, built as a block beside the plants of that recipe, or beside the column of the last step of a recipe on belts that takes the fluid (a barrel of it)
+---@field fluid_makers table<string, string>  the recipe that makes a fluid that another recipe takes, by the name of the fluid, built as a row of machines ahead of it, or beside the column of the last step of a recipe on belts that takes the fluid (a barrel of it); a step lower in such a recipe that takes one of these fluids is refused
 ---@field pipe_to_ground_reach integer  the most tiles an underground pipe spans, from one end to the other
 ---@field fluid_pipeline_tiles integer  how many tiles a run of pipes may span along a side, the machines that are fed from it with it
 ---@field machines table<string, bpgen.MachineChoice|nil>  the machine for each recipe category, nil for a category with none

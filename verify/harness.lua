@@ -117,9 +117,9 @@ local function instance(environment, design)
   planner.plan_tree = function(tree_request) request = tree_request.root; return plan_tree(tree_request) end
   rows.build = function(root, names)
     note_machines(inst, root, request)
-    local entities, raw_stages = build(root, names)
+    local entities, raw_stages, entries = build(root, names)
     inst.inputs = raw_supplies(grid, entities, raw_stages, names.belt)
-    return entities, raw_stages
+    return entities, raw_stages, entries
   end
   rows.build_pure = function(root, names, options)
     note_machines(inst, root, request)

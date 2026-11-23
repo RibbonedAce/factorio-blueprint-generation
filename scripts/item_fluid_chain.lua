@@ -391,16 +391,17 @@ local function nested_starts_of(request, places)
   return starts
 end
 
--- The blueprint of a recipe whose items are both made on belts and whose fluid another chain makes (battery: iron plate and copper plate from
--- furnaces, and the sulfuric acid of the chain of `item_fluid_chain.build_block`), numbered from 1, starting at its top-left tile (0, 0). The
--- parts stand from west to east, all starting at the top row: the part of the first item (the head of the belt b), the part of the second, the
--- chain that makes the fluid, and the final plants. The belts of the two items reach the belt b in the way of `item_fluid_chain.build`: the
--- head goes through the lane gadget and along the arc, which the second side-loads from above. The pipe of the fluid that the chain makes
--- runs straight into the trunk of the final plants. `inlets` are the entries, with the key of the start of each and the name of its part
--- before it: "first:", "second:" and "chain:".
+-- The blocks of a recipe whose items are both made on belts and whose fluid another chain makes (battery: iron plate and copper plate from
+-- furnaces, and the sulfuric acid of the chain of `item_fluid_chain.build_block`) and the belts that join them, numbered from 1, starting at
+-- its top-left tile (0, 0), without the entries of what comes in and the joining of the poles: for a blueprint made of this one and more, which does
+-- those. The parts stand from west to east, all starting at the top row: the part of the first item (the head of the belt b), the part of the
+-- second, the chain that makes the fluid, and the final plants. The belts of the two items reach the belt b in the way of
+-- `item_fluid_chain.build`: the head goes through the lane gadget and along the arc, which the second side-loads from above. The pipe of the fluid
+-- that the chain makes runs straight into the trunk of the final plants. `starts` are where what comes in starts, with the name of the part of each
+-- before its key: "first:", "second:" and "chain:"; `groups` the poles of each part, each group wired inside.
 ---@param request bpgen.NestedChainBuild
----@return bpgen.NestedChain
-function item_fluid_chain.build_nested(request)
+---@return bpgen.NestedChainBlock
+function item_fluid_chain.build_nested_block(request)
   local final_block = item_fluid_plants.build(request.final_plants)
   local places = nested_places_of(request, final_block)
   local entities = {}
@@ -412,14 +413,24 @@ function item_fluid_chain.build_nested(request)
   add_second_belt(entities, request.final_plants.belt, places, request.second_part.product.last_row + 1)
   add_belt_b_tail(entities, request.final_plants.belt, places, final_block.last_row + 1)
   add_fluid_link(entities, request, places)
-  local inlets = bring_in(entities, nested_starts_of(request, places), request)
   local groups = {copies_of(request.first_part.poles, first_added), copies_of(request.second_part.poles, second_added)}
   for _, group in ipairs(request.fluid_chain.groups) do
     groups[#groups + 1] = copies_of(group, chain_added)
   end
   groups[#groups + 1], groups[#groups + 2] = copies_of(final_block.groups[1], final_added), copies_of(final_block.groups[2], final_added)
-  join_poles(entities, request, groups)
-  return {entities = entities, inlets = inlets, places = places, final = final_block}
+  return {entities = entities, starts = nested_starts_of(request, places), places = places, final = final_block, groups = groups}
+end
+
+-- The blueprint of `item_fluid_chain.build_nested_block` with the entries of what comes in and the poles joined into one network (see
+-- `item_fluid_chain.build` for the same of a chain). `inlets` are the entries, with the key of the start of each and the name of its part before it:
+-- "first:", "second:" and "chain:".
+---@param request bpgen.NestedChainBuild
+---@return bpgen.NestedChain
+function item_fluid_chain.build_nested(request)
+  local block = item_fluid_chain.build_nested_block(request)
+  local inlets = bring_in(block.entities, block.starts, request)
+  join_poles(block.entities, request, block.groups)
+  return {entities = block.entities, inlets = inlets, places = block.places, final = block.final}
 end
 
 return item_fluid_chain

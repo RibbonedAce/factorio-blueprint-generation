@@ -58,6 +58,7 @@ local ROWS_APART = 3
 ---@field y integer
 ---@field name string  prototype name of the pipe or the belt
 ---@field belt? boolean  a belt: the tiles run east along the row and south down the column, where a pipe has no direction
+---@field fluid? string  of a pipe: the fluid it brings, which the blocks of a blueprint made of several (see scripts/rows.lua) use to bring a fluid in once, however many take it
 ---@field feed? bpgen.Feed  of a belt of raw items that the band of scripts/shared_band.lua brings down: what it takes a minute; the band draws the belt as far as its first tile, so `corner_entries` is not asked for it
 ---@field joins? string  of a pipe: the key of the start of another pipe, of the same fluid, whose entry this one joins (see the head of this file)
 
@@ -75,6 +76,7 @@ end
 -- What a run of an entry is asked for.
 ---@class bpgen.EntryOptions
 ---@field top? integer  the first row of the blueprint: the entries come in above it (the top row of the starts by default)
+---@field west? integer  the column of the west edge of the blueprint, where the entries open to the west (0 by default)
 ---@field taken? table<string, true>  the tiles in use, as `grid.key`s: a pipe goes under them
 ---@field pipe_to_ground? string  the prototype name of the underground pipe, when `taken` is given
 
@@ -119,7 +121,7 @@ local function add_line(entities, start, row, options)
   else
     add_pipe_column(entities, start, row, start.y - 1, options)
   end
-  add_run(entities, start, {along = "row", across = row, first = 0, last = start.x - 1, direction = start.belt and east or nil})
+  add_run(entities, start, {along = "row", across = row, first = options.west or 0, last = start.x - 1, direction = start.belt and east or nil})
 end
 
 -- One entry: the starts that come in as one, the one the others join first.
