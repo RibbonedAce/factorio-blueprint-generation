@@ -170,6 +170,29 @@ local config = {
     -- An item made in plants from two items that are made on belts (iron plate, copper plate) and a fluid that a chain of its own makes (the
     -- sulfuric acid, see `fluid_chains`): the blueprint is all of it, from the raw ores and fluids (see scripts/item_fluid_chain.lua).
     ["battery"] = true,
+    -- Recipes that take an item made in plants (plastic bar, explosives, battery) or, for the last step, a fluid that machines make (petroleum gas,
+    -- sulfuric acid): the part that makes it stands beside the columns of the recipe (see scripts/plants_block.lua and scripts/rows.lua). The barrels are
+    -- made of steel, so only the design that brings in one belt of each material builds them.
+    ["bulk-inserter"] = true,
+    ["cliff-explosives"] = true,
+    ["accumulator"] = true,
+    ["speed-module"] = true,
+    ["efficiency-module"] = true,
+    ["productivity-module"] = true,
+    ["advanced-circuit"] = true,
+    ["rocket"] = true,
+    ["flamethrower-ammo"] = true,
+    ["modular-armor"] = true,
+    ["solar-panel-equipment"] = true,
+    ["battery-equipment"] = true,
+    ["belt-immunity-equipment"] = true,
+    ["night-vision-equipment"] = true,
+    ["energy-shield-equipment"] = true,
+    ["land-mine"] = true,
+    ["water-barrel"] = true,
+    ["crude-oil-barrel"] = true,
+    ["petroleum-gas-barrel"] = true,
+    ["sulfuric-acid-barrel"] = true,
   },
 
   -- The recipe of the chain that makes a fluid that a recipe takes besides items (battery takes sulfuric acid): the blueprint of that chain

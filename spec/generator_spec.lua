@@ -2003,7 +2003,7 @@ describe("generator", function()
     it("gives the message of the refusal when the item cannot be made", function()
       _G.prototypes = fake_prototypes{recipes = {}}
 
-      assert.are.same({"blueprint-generation.error-unsupported-pick"}, generator.max_rate_message("advanced-circuit"))
+      assert.are.same({"blueprint-generation.error-unsupported-pick"}, generator.max_rate_message("processing-unit"))
       assert.are.same({"blueprint-generation.error-no-recipe", "iron-plate"}, generator.max_rate_message("iron-plate"))
     end)
 
@@ -3061,7 +3061,7 @@ describe("generator", function()
     it("refuses the request when the item is not supported", function()
       _G.prototypes = fake_prototypes{}
 
-      local result, error_message = generator.generate("advanced-circuit", 10)
+      local result, error_message = generator.generate("processing-unit", 10)
 
       assert.is_nil(result)
       assert.are.same({"blueprint-generation.error-unsupported-pick"}, error_message)
