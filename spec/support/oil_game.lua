@@ -55,6 +55,13 @@ oil_game.RECIPES = {
   ["water-barrel"] = a_recipe{
     energy = 0.2, ingredients = {fluid("water", 50), item("barrel", 1)}, products = {item("water-barrel", 1)}, category = "crafting-with-fluid",
   },
+  -- The recipes that empty a barrel give it back with the fluid, so they make the barrel too: the game finds them when it looks for what makes a barrel.
+  ["empty-water-barrel"] = a_recipe{
+    energy = 0.2, ingredients = {item("water-barrel", 1)}, products = {fluid("water", 50), item("barrel", 1)}, category = "crafting-with-fluid",
+  },
+  ["empty-petroleum-gas-barrel"] = a_recipe{
+    energy = 0.2, ingredients = {item("petroleum-gas-barrel", 1)}, products = {fluid("petroleum-gas", 50), item("barrel", 1)}, category = "crafting-with-fluid",
+  },
   ["petroleum-gas-barrel"] = a_recipe{
     energy = 0.2, ingredients = {fluid("petroleum-gas", 50), item("barrel", 1)}, products = {item("petroleum-gas-barrel", 1)}, category = "crafting-with-fluid",
   },

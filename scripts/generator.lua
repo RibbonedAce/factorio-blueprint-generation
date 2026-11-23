@@ -257,7 +257,30 @@ end
 ---@field prototype LuaRecipePrototype
 ---@field choice bpgen.MachineChoice
 
--- The recipes that make `item_name` in a machine the config names.
+-- Whether a recipe that makes an item takes back something that is made from that item: the recipe that empties a filled barrel takes the filled
+-- barrel, which the recipe that fills a barrel makes from the barrel the first gives back. Such a recipe makes the item from what is made from it (a loop),
+-- so it is not what makes the item. When the item is the final product of the recipe the player picked, this is the final product being one of the
+-- ingredients of a step of its own tree.
+---@param prototype LuaRecipePrototype
+---@param item_name string  an item the recipe makes
+---@return boolean
+local function takes_back(prototype, item_name)
+  for _, ingredient in ipairs(prototype.ingredients) do
+    if ingredient.type == "item" then
+      local makers = prototypes.get_recipe_filtered({{filter = "has-product-item", elem_filters = {{filter = "name", name = ingredient.name}}}})
+      for _, maker in pairs(makers) do
+        for _, taken in ipairs(maker.ingredients) do
+          if taken.type == "item" and taken.name == item_name then
+            return true
+          end
+        end
+      end
+    end
+  end
+  return false
+end
+
+-- The recipes that make `item_name` in a machine the config names, leaving out those that take back what is made from it (see `takes_back`).
 ---@param item_name string
 ---@return bpgen.Candidate[]
 local function candidate_recipes(item_name)
@@ -265,7 +288,7 @@ local function candidate_recipes(item_name)
   local found = {}
   for _, prototype in pairs(prototypes.get_recipe_filtered(filters)) do
     local choice = machine_choice(prototype)
-    if choice then
+    if choice and not takes_back(prototype, item_name) then
       found[#found + 1] = {prototype = prototype, choice = choice}
     end
   end

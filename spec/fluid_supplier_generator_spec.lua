@@ -207,6 +207,19 @@ describe("a recipe on belts whose last step takes a fluid that machines make", f
     end)
   end)
 
+  describe("the recipes that empty a barrel", function()
+    it("do not make the barrel: it is made by its own recipe, from steel, whatever the game finds that gives a barrel back", function()
+      _G.prototypes = the_game()
+
+      for _, name in ipairs({"water-barrel", "petroleum-gas-barrel"}) do
+        local result, error_message = generator.generate(name, 10, fake_force{})
+
+        assert.is_not_nil(result, error_message and error_message[1])
+        assert.are.same({}, validator.validate(named(result.entities), with_medium_pole(catalog())))
+      end
+    end)
+  end)
+
   describe("a pipeline of only so many tiles", function()
     local tiles
 
